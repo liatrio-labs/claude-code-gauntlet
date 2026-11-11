@@ -165,8 +165,7 @@ export async function apply(tree, payload, dispatches) {
     return { ...finding, ...outcome, verdict: finding.validator_verdict ?? null,
       disposition, posts_inline,
       route,
-      rank_index: rank.get(finding.id) ?? null,
-      passes_filter: outcome.passes_filter };
+      rank_index: rank.get(finding.id) ?? null };
   });
   return { findings, changed_lines: payload.args.changedLines, stats: { validate: stage.stats, filter: filtered.stats }, gaps: stage.gaps };
 }

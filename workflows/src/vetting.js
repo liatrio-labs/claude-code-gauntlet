@@ -1,6 +1,7 @@
+import { verdictState } from './verdict.js';
 // Shared check identifiers keep holdback and report reasons aligned.
 export const UNVERIFIED_REASONS = {
-  validation: 'the validator did not establish this finding, so it was not skeptically validated',
+  validation: 'neither the validator nor the challenger established this finding',
   verify: 'the verify slice could not be proven against the dispatched document',
   challenge: {
     capped: 'the challenge cap was reached, so this finding was not challenge-verified',
@@ -11,7 +12,9 @@ export const UNVERIFIED_REASONS = {
 
 export function incompleteVetting(finding) {
   const missing = [];
-  if (finding.validation === 'skipped') missing.push('validation');
+  const independent = finding.challenge === 'survived' && ['confirmed', 'refuted_verified']
+    .includes(verdictState(finding.challenge_verdict, finding.challenge_refutation_check));
+  if (finding.validation === 'skipped' && !independent) missing.push('validation');
   if (finding.origin === 'unknown') missing.push('verify');
   return missing;
 }

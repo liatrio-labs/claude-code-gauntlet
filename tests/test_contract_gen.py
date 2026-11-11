@@ -172,7 +172,7 @@ assert.equal(findingPolicy(good).core,true);
             [],
             [],
             [],
-            "report_only",
+            "held_back",
         ),
     ],
     ids=["correctness", "duplication", "equivalent", "idiom", "unsupported"],
@@ -755,12 +755,16 @@ def test_shared_guidance_updates_agent_contracts(monkeypatch, symbol):
 
 @pytest.mark.parametrize("symbol", gen.VERIFICATION_SHARED)
 def test_verification_guidance_updates_all_consumers(monkeypatch, symbol):
+    registry = gen.load_registry(str(ROOT))
     original = gen.VERIFICATION_SHARED[symbol]
+    if symbol == "confidence":
+        original = original.format(**registry["anchorLimits"])
     replacement = "Updated verification evidence contract."
     monkeypatch.setitem(gen.VERIFICATION_SHARED, symbol, replacement)
-    targets = gen.rendered_targets(str(ROOT), gen.load_registry(str(ROOT)), "")
+    targets = gen.rendered_targets(str(ROOT), registry, "")
     for rel in gen.VERIFICATION_TARGETS:
         text = (ROOT / rel).read_text(encoding="utf-8")
+        assert original in text
         rendered = targets[rel](text)
         assert original not in rendered
         assert rendered.count(replacement) == 1

@@ -1,5 +1,5 @@
 {
-  "fn": "apply_replay_injection_scan",
+  "fn": "apply_injection_filter",
   "findings": [
     {
       "id": "RP1",

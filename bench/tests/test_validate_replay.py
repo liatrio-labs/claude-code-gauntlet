@@ -20,9 +20,9 @@ def test_product_replay_contracts():
     )
 
 
-def test_attribution_counts_distinct_bugs_and_unmatched_findings_and_spreads():
+def test_attribution_and_spreads_count_inline_posts_separately_from_filter_survival():
     source = replay.SourcePR(
-        "pr", {}, {}, (), (("bug-a", ("a", "b")), ("bug-b", ())), {}
+        "pr", {}, {}, (), (("bug-a", ("a", "b")), ("bug-b", ("d", "e"))), {}
     )
     first = replay.summarize(
         source,
@@ -30,21 +30,37 @@ def test_attribution_counts_distinct_bugs_and_unmatched_findings_and_spreads():
             "findings": [
                 dict(
                     id="a",
-                    verdict={"claim": "not_established"},
                     route="not-established",
-                    passes_filter=False,
+                    verdict={"claim": "not_established"},
+                    passes_filter=True,
+                    posts_inline=False,
                 ),
                 dict(
                     id="b",
-                    verdict={"claim": "confirmed", "consequence": "latent"},
                     route="posted-latent",
+                    verdict={"claim": "confirmed"},
                     passes_filter=True,
+                    posts_inline=True,
                 ),
                 dict(
                     id="c",
-                    verdict={"claim": "confirmed", "consequence": "present_failure"},
                     route="posted",
+                    verdict={"claim": "confirmed"},
                     passes_filter=True,
+                    posts_inline=True,
+                ),
+                dict(
+                    id="d", route="report-only", passes_filter=True, posts_inline=False
+                ),
+                dict(
+                    id="e",
+                    route="posted",
+                    disposition="body",
+                    passes_filter=True,
+                    posts_inline=False,
+                ),
+                dict(
+                    id="f", route="eliminated", passes_filter=False, posts_inline=False
                 ),
             ]
         },
@@ -54,25 +70,22 @@ def test_attribution_counts_distinct_bugs_and_unmatched_findings_and_spreads():
         known_bugs_passing=1,
         bug_outcomes={"bug-a": True, "bug-b": False},
         unmatched_passing=1,
-        findings=3,
+        findings=6,
         passing=2,
         filtered_out=1,
+        filter_survivors=5,
     )
     second = copy.deepcopy(first)
     second["findings"][0].update(
-        verdict={"claim": "confirmed", "consequence": "present_failure"},
-        route="posted",
-        passes_filter=True,
+        verdict={"claim": "confirmed"}, route="posted", posts_inline=True
     )
     spread = replay.spreads([("pr", first), ("pr", second)])[0]
     assert spread["routes"] == ["not-established", "posted"]
-    assert spread["verdicts"] == [
-        first["findings"][0]["verdict"],
-        second["findings"][0]["verdict"],
-    ]
     assert spread["route_flips"] == 1
-    assert spread["filter_pass_count"] == 1
-    assert spread["filter_flips"] == 1
+    assert spread["filter_pass_count"] == 2
+    assert spread["filter_flips"] == 0
+    assert spread["inline_count"] == 1
+    assert spread["inline_flips"] == 1
 
 
 def test_workflow_results_require_completed_record_for_exact_script(tmp_path):

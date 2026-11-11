@@ -65,9 +65,9 @@ import {pathToFileURL} from 'node:url';
 const [root, work, sha, base] = process.argv.slice(1);
 const load = n => import(pathToFileURL(`${root}/workflows/src/${n}.js`));
 const {verifyStage} = await load('verifyStage');
-const {validateStage, challengeStage} = await load('reviewStages');
-const {evaluateAdmission, admissionRequests, hasAdmission} = await load('admission');
-const {requiredAssessments} = await load('registry');
+const {challengeStage} = await load('reviewStages');
+const {evaluateAdmission, hasAdmission} = await load('admission');
+const {routeVerdict} = await load('verdict');
 const {disposeFindings} = await load('dispose');
 const {deliveryAllows} = await load('location');
 const {shellSplit} = await import(pathToFileURL(`${root}/workflows/test/helpers/shellWords.js`));
@@ -78,77 +78,39 @@ const precedent = ref('precedent','return existing_value;');
 const gap = {test_kind:'critical_gap',criticality:8,failure_scenario:'Complete behavior failure',
  searched_paths:['tests'],candidate_tests:[{...test,input:'current_value',assertion:'current_value'}],production_element:primary};
 const rows = [
- ['assertion','test_coverage',{...ref('tests/assertion','assert compute_value() == wrong_value;'),test_kind:'defective_test'},['confirmed_test_defect'],'admitted'],
- ['mock','test_coverage',{...ref('tests/mock','unused_mock.return_value = fixture_value;'),test_kind:'defective_test'},['confirmed_test_defect'],'admitted'],
- ['wait','test_coverage',{...ref('tests/wait','finish_operation();'),test_kind:'defective_test'},['confirmed_test_defect'],'admitted'],
- ['sound-test','test_coverage',{...test,test_kind:'defective_test'},['confirmed_test_defect'],'report_only','ordinary','confirmed_test_defect'],
- ['source-test','test_coverage',{test_kind:'defective_test'},['confirmed_test_defect'],'report_only'],
- ['gap','test_coverage',gap,['resolved_production_element','complete_searches','complete_behavioral_absence'],'admitted'],
- ['production','test_coverage',{test_kind:'production_defect'},['present_defect'],'admitted'],
- ['additional','test_coverage',{test_kind:'additional_case'},[],'report_only'],
- ['terminal-coverage','test_coverage',{...gap,test_kind:'additional_case'},['resolved_production_element','complete_searches','complete_behavioral_absence'],'report_only','coverage'],
- ['correctness','type_design',{quality_basis:'current_correctness'},['present_defect'],'admitted'],
- ['duplication','simplification',{quality_basis:'duplication',duplicate_of:precedent},['confirmed_duplication'],'admitted'],
- ['equivalent','type_design',{quality_basis:'simpler_equivalent',behavior_preserved:'Same behavior',suggestion:'Return the same value directly'},['concrete_equivalent','behavior_preserved'],'admitted'],
- ['idiom','simplification',{quality_basis:'stack_idiom',precedent},['applicable'],'admitted'],
- ['other','type_design',{quality_basis:'other'},[],'report_only'],
- ['terminal-test','type_design',{...test,quality_basis:'other'},['confirmed_test_defect'],'report_only','test_defect'],
- ['classification','bug',{},[],'held_back','unresolved'],
- ['cross-test','bug',{...test,effective_test_kind:'production_defect'},['confirmed_test_defect'],'admitted','test_defect'],
- ['cross-gap','bug',gap,['resolved_production_element','complete_searches','complete_behavioral_absence'],'admitted','coverage'],
- ['convention','convention',{...test,claude_md_rule:'Applicable rule'},[],'admitted'],
- ['seven','test_coverage',{...gap,criticality:7},['resolved_production_element','complete_searches','complete_behavioral_absence'],'report_only'],
- ['partial','test_coverage',gap,['resolved_production_element','complete_searches','complete_behavioral_absence'],'report_only','ordinary','complete_behavioral_absence'],
- ['non-production','test_coverage',gap,['resolved_production_element','complete_searches','complete_behavioral_absence'],'report_only','ordinary','resolved_production_element'],
- ['incomplete-search','test_coverage',gap,['resolved_production_element','complete_searches','complete_behavioral_absence'],'report_only','ordinary','complete_searches'],
- ['indirect','test_coverage',gap,['resolved_production_element','complete_searches','complete_behavioral_absence'],'report_only','ordinary','complete_behavioral_absence'],
- ['new-idiom','type_design',{quality_basis:'stack_idiom',precedent:ref('peer','return new_value;')},['applicable'],'report_only'],
- ['missing-idiom','type_design',{quality_basis:'stack_idiom'},['applicable'],'report_only'],
- ['bad-idiom','type_design',{quality_basis:'stack_idiom',precedent:ref('absent','unknown')},['applicable'],'held_back'],
- ['missing-duplicate','simplification',{quality_basis:'duplication'},['confirmed_duplication'],'report_only'],
- ['distinct-source','simplification',{quality_basis:'duplication',duplicate_of:precedent},['confirmed_duplication'],'report_only','ordinary','confirmed_duplication'],
- ['inapplicable','type_design',{quality_basis:'stack_idiom',precedent},['applicable'],'report_only','ordinary','applicable'],
- ['bad-duplicate','simplification',{quality_basis:'duplication',duplicate_of:ref('absent','unknown')},['confirmed_duplication'],'held_back'],
- ['no-fix','simplification',{quality_basis:'simpler_equivalent',behavior_preserved:'same'},['concrete_equivalent','behavior_preserved'],'report_only'],
- ['changed-behavior','simplification',{quality_basis:'simpler_equivalent',suggestion:'Return directly',behavior_preserved:'same'},['concrete_equivalent','behavior_preserved'],'report_only','ordinary','behavior_preserved'],
- ['not-equivalent','simplification',{quality_basis:'simpler_equivalent',suggestion:'Return directly',behavior_preserved:'same'},['concrete_equivalent','behavior_preserved'],'report_only','ordinary','concrete_equivalent'],
- ['no-production','bug',{...gap,production_element:undefined},['complete_searches'],'report_only','coverage'],
- ['bad-production','bug',{...gap,production_element:ref('absent','unknown')},['resolved_production_element','complete_searches','complete_behavioral_absence'],'held_back','coverage'],
- ['unfinished-search','test_coverage',{...gap,searched_paths:[]},['resolved_production_element','complete_searches','complete_behavioral_absence'],'held_back'],
- ['unread-search','test_coverage',{...gap,searched_paths:['absent']},['resolved_production_element','complete_searches','complete_behavioral_absence'],'held_back'],
- ['bad-candidate','test_coverage',{...gap,candidate_tests:[{...test,anchor:'wrong',input:'input',assertion:'assertion'}]},['resolved_production_element','complete_searches','complete_behavioral_absence'],'held_back'],
- ['missing-assessment','test_coverage',{test_kind:'production_defect'},[],'held_back'],
- ['rejected','type_design',{quality_basis:'current_correctness'},['present_defect'],'report_only','ordinary','present_defect'],
- ['unresolved','type_design',{quality_basis:'current_correctness'},['present_defect'],'held_back','ordinary','present_defect','unresolved'],
- ['foreign','type_design',{quality_basis:'current_correctness'},['present_defect'],'held_back','ordinary',null,'foreign'],
- ['duplicate','type_design',{quality_basis:'current_correctness'},['present_defect'],'held_back','ordinary',null,'duplicate'],
- ['kindless','test_coverage',{},[],'held_back'],
- ['untouched-test','test_coverage',{...ref('tests/old-check','assert untouched_value;'),test_kind:'defective_test'},['confirmed_test_defect'],'report_only'],
+ ['assertion','test_coverage',{...ref('tests/assertion','assert compute_value() == wrong_value;'),test_kind:'defective_test'},'admitted'],
+ ['mock','test_coverage',{...ref('tests/mock','unused_mock.return_value = fixture_value;'),test_kind:'defective_test'},'admitted'],
+ ['wait','test_coverage',{...ref('tests/wait','finish_operation();'),test_kind:'defective_test'},'admitted'],
+ ['sound','test_coverage',{...test,test_kind:'defective_test'},'report_only','no_practical_effect'],
+ ['source-test','test_coverage',{test_kind:'defective_test'},'report_only'],
+ ['gap','test_coverage',gap,'admitted'],
+ ['additional','test_coverage',{test_kind:'additional_case'},'report_only'],
+ ['other','type_design',{quality_basis:'other'},'admitted'],
+ ['seven','test_coverage',{...gap,criticality:7},'report_only'],
+ ['missing-duplicate','simplification',{quality_basis:'duplication'},'report_only'],
+ ['bad-duplicate','simplification',{quality_basis:'duplication',duplicate_of:ref('absent','unknown')},'held_back'],
+ ['new-idiom','type_design',{quality_basis:'stack_idiom',precedent:ref('peer','return new_value;')},'report_only'],
+ ['missing-idiom','type_design',{quality_basis:'stack_idiom'},'report_only'],
+ ['bad-idiom','type_design',{quality_basis:'stack_idiom',precedent:ref('absent','unknown')},'held_back'],
+ ['kindless','test_coverage',{},'held_back'],
+ ['untouched-test','test_coverage',{...ref('tests/old-check','assert untouched_value;'),test_kind:'defective_test'},'report_only'],
+ ['untyped','bug',{},'held_back'],
 ];
 const findings = rows.map(([id,dimension,extra])=>({id,dimension,...primary,title:id,description:'A retained source claim.',severity:'high',confidence:95,origin:'new',...extra}));
 const verified = await verifyStage({agent:async prompt=>{const c=shellSplit(prompt.split('\n').at(-1));execFileSync(c[0],c.slice(1),{cwd:work,env:process.env});return JSON.parse(readFileSync(c[c.indexOf('--output')+1],'utf8'));}},
  {findings,pluginRoot:root,python:'python',headShaShort:sha,nonce:'admission',limits:{},verify:{targetKind:'branch',baseBranch:base,diffPath:`${work}/saved.patch`,inputPathBase:`${work}/in`,outputPathBase:`${work}/out`}});
 assert.equal(verified.verified,true);
-// Existing checkpoints still use their recorded admission predicates.
-const validated = {findings:verified.findings};
-for(const f of validated.findings){
- const row=rows.find(r=>r[0]===f.id), requests=Object.keys(admissionRequests(f));
- const references={confirmed_test_defect:['primary'],present_defect:['primary'],resolved_production_element:['production_element'],complete_searches:['searched_paths:','candidate_tests:'],complete_behavioral_absence:['production_element','searched_paths:','candidate_tests:'],confirmed_duplication:['primary','duplicate_of'],concrete_equivalent:['primary'],behavior_preserved:['primary'],applicable:['primary','precedent']};
- let entries=row[3].map(predicate=>({predicate,status:predicate===row[6]?(row[7]==='unresolved'?'unresolved':'rejected'):'confirmed',references:requests.filter(key=>references[predicate].some(name=>name.endsWith(':')?key.startsWith(name):key===name))}));
- for(const predicate of requiredAssessments(f,row[5]||'ordinary'))if(!entries.some(e=>e.predicate===predicate))entries.push({predicate,status:'unresolved',references:requests.filter(key=>references[predicate].some(name=>name.endsWith(':')?key.startsWith(name):key===name))});
- if(row[7]==='foreign')entries[0].references=['foreign'];
- if(row[7]==='duplicate')entries.push(entries[0]);
- Object.assign(f,{validation:'validated',policy_subject:row[5]||'ordinary',reachability:'current',admission_assessments:entries});
- evaluateAdmission(f);assert.equal(f.admission.status,row[4],f.id);assert.ok(hasAdmission(f));
+for(const f of verified.findings){
+ const row=rows.find(r=>r[0]===f.id);
+ f.validation='validated';
+ if(f.id!=='untyped')f.verdict={claim:'confirmed',consequence:row[4]||'present_failure',justification:'Inspected source'};
+ routeVerdict(f);evaluateAdmission(f);
+ assert.equal(f.admission.status,row[3],f.id);assert.ok(hasAdmission(f));
 }
-const mapped=validated.findings.find(f=>f.id==='cross-test');
-assert.equal(mapped.effective_test_kind,'defective_test');assert.equal(mapped.test_kind,undefined);
-const challenged=await challengeStage({parallel:async ts=>Promise.all(ts.map(t=>t())),agent:async()=>({verdict:{claim:'confirmed',consequence:'present_failure',justification:'Inspected source'}})},{findings:validated.findings});
+const challenged=await challengeStage({parallel:async ts=>Promise.all(ts.map(t=>t())),agent:async()=>({verdict:{claim:'confirmed',consequence:'present_failure',justification:'Inspected source'}})},{findings:verified.findings});
 const out=disposeFindings(challenged);
 for(const f of [...out.findings,...out.unverified])assert.equal(deliveryAllows(f,'body'),f.admission.status==='admitted',f.id);
-assert.equal(out.findings.find(f=>f.id==='source-test').disposition,'report_only');
-const first=out.findings.find(f=>f.id==='gap');first.criticality=7;
-assert.equal(disposeFindings({findings:[{...first,origin:'unknown'}]}).unverified[0].disposition,'held_back');
+assert.equal(out.findings.find(f=>f.id==='untyped').challenge_verdict.claim,'confirmed');
 process.stdout.write(JSON.stringify({rows:rows.length,findings:out.findings.length}));
 """
     result = subprocess.run(
@@ -159,7 +121,7 @@ process.stdout.write(JSON.stringify({rows:rows.length,findings:out.findings.leng
         capture_output=True,
     )
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout)["rows"] == 46
+    assert json.loads(result.stdout)["rows"] == 17
 
 
 FLOW = r"""
@@ -192,7 +154,7 @@ const result = await verifyStage(ctx, { findings, pluginRoot: plugin, python: 'p
     inputPathBase: `${work}/slice-in`, outputPathBase: `${work}/slice-out`,
   } });
 if (!result.verified || calls !== 1) throw Error(JSON.stringify(result));
-const disposed = disposeFindings({ findings: result.findings.map(f=>evaluateAdmission({...f,validation:'validated',policy_subject:'ordinary',challenge:'survived'})) });
+const disposed = disposeFindings({ findings: result.findings.map(f=>evaluateAdmission({...f,verdict:{claim:'confirmed',consequence:'present_failure',justification:'Inspected source'},validation:'validated',challenge:'survived'})) });
 const payload = writerPayload({ findings: disposed.findings, postReview: disposed.findings,
   prIdentity: { owner: 'o', repo: 'r', pr_number: 5, sha_full: sha, platform: 'github', web_origin: 'https://github.com' },
   reviewBody: 'Summary' });

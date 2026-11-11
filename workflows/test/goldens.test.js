@@ -35,7 +35,6 @@ const FILTER_HANDLERS = {
     return { findings: input.findings };
   },
   apply_injection_filter: (input) => applyInjectionFilter(input.findings),
-  apply_replay_injection_scan: (input) => applyInjectionFilter(input.findings),
   apply_filter_pipeline: (input) => applyFilterPipeline(input.findings, input.generated_at),
   consolidate_cross_agent: (input) => {
     const { findings, consolidatedCount } = consolidateCrossAgent(input.findings);

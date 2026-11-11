@@ -102,7 +102,6 @@ export const DISPOSITION_RIGHTS = deepFreeze({
   eliminate: { inline: false, body: false, report: 'eliminated', fixTask: false, patch: false, fence: false, sourceLink: false },
 });
 export const DISPOSITIONS = deepFreeze(Object.keys(DISPOSITION_RIGHTS));
-export const RIGHT_ELIGIBILITY = deepFreeze({ body: { fixTask: ['current_defect', 'current_reachability', 'confirmed_location'] } });
 export const STAGE_COSTS = deepFreeze({ verify: { attempts: 2, singletonRetries: 3 }, validate: { retryBatchDivisor: 5 }, grouping: { attempts: 1 }, writer: { attempts: 2 }, discoveryPlan: { attempts: 2 * DISCOVERY_TRANSPORT_LIMITS.maxParts } });
 
 const SOURCE_REFERENCE = {
@@ -191,7 +190,7 @@ const QUALITY_ADMISSION = {
     duplication: { description: 'Duplicated behavior identified by duplicate_of.', required: ['duplicate_of'], predicates: ['resolved_duplicate', 'confirmed_duplication'], phase: 'semantic', tier: 'suggestion' },
     simpler_equivalent: { description: 'Simpler replacement preserving observable behavior.', required: ['behavior_preserved'], anyOf: ['suggestion', 'suggested_fix_code'], predicates: ['concrete_equivalent', 'behavior_preserved'], phase: 'semantic', tier: 'suggestion' },
     stack_idiom: { description: 'Behavior-preserving replacement grounded in existing repository precedent.', required: ['precedent'], predicates: ['resolved_precedent', 'precedent_not_added', 'applicable'], phase: 'semantic', tier: 'suggestion' },
-    other: { description: 'No demonstrated defect, duplication, simpler equivalent or applicable precedent.', required: [], predicates: [], phase: 'semantic', defaultDisposition: 'report_only', tier: 'suggestion' },
+    other: { description: 'No demonstrated defect, duplication, simpler equivalent or applicable precedent.', required: [], predicates: [], phase: 'semantic', tier: 'suggestion' },
   },
 };
 
@@ -327,9 +326,6 @@ export const ADMISSION_PREDICATES = deepFreeze({
   resolved_precedent: { fact: 'precedent' },
   precedent_not_added: { fact: 'precedent_not_added' },
   applicable: { references: ['primary', 'precedent'], description: 'The existing repository precedent applies here.' },
-  current_defect: { references: ['primary'], description: 'A current code defect, independently of coverage absence or quality preference.' },
-  current_reachability: { fact: 'reachability' },
-  confirmed_location: { fact: 'location' },
 });
 export const ASSESSED_PREDICATES = deepFreeze(Object.keys(ADMISSION_PREDICATES).filter((key) => ADMISSION_PREDICATES[key].references));
 const ASSESSMENT = { type: 'object', properties: {
@@ -478,24 +474,6 @@ export function findingPolicy(finding, effective = true) {
   const kind = selected?.admission?.kinds[stampedKind || subject?.kind || finding[selected.admission.field]];
   return { row: selected, kind, core: kind?.core ?? selected?.core ?? false,
     tier: kind?.tier ?? selected?.defaultTier, defaultDisposition: kind?.defaultDisposition ?? selected?.defaultDisposition };
-}
-
-// Both the return schema and runtime acceptance derive semantic requirements from the same rows.
-export function admissionPolicy(finding, policySubject, promoted = false) {
-  const original = findingPolicy({ ...finding, policy_subject: undefined }, false);
-  const promotion = original.row?.admission?.promotion;
-  const terminal = !promoted && original.kind?.defaultDisposition === 'report_only';
-  const policyFinding = promoted && promotion
-    ? { ...finding, policy_subject: 'ordinary', [original.row.admission.field]: promotion.kind }
-    : { ...finding, policy_subject: policySubject };
-  return { original, promotion, terminal, policyFinding,
-    ...(terminal ? original : findingPolicy(policyFinding, false)) };
-}
-
-export function requiredAssessments(finding, policySubject, promoted = false) {
-  const { promotion, kind } = admissionPolicy(finding, policySubject, promoted);
-  return [...new Set([promotion?.predicate, ...(kind?.predicates || [])])]
-    .filter((predicate) => ASSESSED_PREDICATES.includes(predicate));
 }
 
 export function normalizePipelineStamps(finding) {

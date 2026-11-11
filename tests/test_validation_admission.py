@@ -1,4 +1,4 @@
-"""Persisted delivery retains the missing-validation holdback after challenge."""
+"""An independent challenger can supply validation after a validator outage."""
 
 import subprocess
 from pathlib import Path
@@ -6,7 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_persisted_delivery_preserves_missing_validation():
+def test_persisted_delivery_recovers_missing_validation():
     script = r"""
 import assert from 'node:assert/strict';
 import { runWith } from './workflows/src/run.js';
@@ -20,14 +20,15 @@ ctx.agent = (prompt, dispatch) => dispatch.label.startsWith('validate-') ? null 
 const out = await runWith(ctx, args);
 assert.equal(out.ok, true);
 assert.equal(out.stats.validate.skipped, 2);
-assert.deepEqual(payload.postReview, []);
+assert.deepEqual(payload.postReview.map(f => f.id), ['F1','F2']);
 assert.deepEqual(payload.findings.map(f => f.id), ['F1','F2']);
 for (const f of payload.findings) {
   assert.equal(f.verdict.claim, 'confirmed');
   assert.equal(f.verdict_route, 'posted');
   assert.equal(f.validation, 'skipped');
-  assert.equal(f.disposition, 'held_back');
-  assert.ok(f.disposition_reasons.includes('validation_skipped'));
+  assert.equal(f.disposition, 'deliver');
+  assert.equal(f.validator_verdict, undefined);
+  assert.equal(f.challenge_verdict.claim, 'confirmed');
 }
 """
     result = subprocess.run(

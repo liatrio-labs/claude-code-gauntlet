@@ -339,12 +339,8 @@ def fill_discovery_shared(text: str) -> str:
     return _fill_shared(text, "discovery", DISCOVERY_SHARED, skip_absent=True)
 
 
-def fill_verification_shared(
-    text: str, *, limits: Mapping[str, int] | None = None
-) -> str:
+def fill_verification_shared(text: str, *, limits: Mapping[str, int]) -> str:
     """Keep verification decisions grounded in one shared evidence contract."""
-    if limits is None:
-        limits = load_registry(ENTRY_ROOT)["anchorLimits"]
     shared = {
         **VERIFICATION_SHARED,
         "confidence": VERIFICATION_SHARED["confidence"].format(**limits),

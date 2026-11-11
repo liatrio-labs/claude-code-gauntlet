@@ -81,5 +81,5 @@ for (const field of ['change_origin','change_relevance']) test(`reader schemas r
   assert.equal(out.findings[0].validation,'skipped');
   assert.equal(out.findings[0].change_origin,'pre_existing');
   assert.equal(out.findings[0].change_relevance,finding.change_relevance);
-  assert.ok(out.gaps.some((gap) => gap.includes('schema_rejected')));
+  assert.ok(out.gaps.some((gap) => gap.includes('additionalProperties')));
 });

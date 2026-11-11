@@ -73,22 +73,32 @@ process.stdout.write(JSON.stringify(rows.map(f=>evaluateAdmission(f))));
         path_role="source",
         validation="validated",
         policy_subject="ordinary",
-        reachability="current",
-        admission_assessments=[
-            {
-                "predicate": "current_defect",
-                "status": "confirmed",
-                "references": ["primary"],
-            }
-        ],
+        verdict={
+            "claim": "confirmed",
+            "consequence": "present_failure",
+            "justification": "Caller fails",
+        },
     )
     variants = [
         {},
         {"location_status": "relocated"},
-        {"reachability": "future_change_only"},
-        {"reachability": "uncertain"},
+        {
+            "verdict": {
+                "claim": "confirmed",
+                "consequence": "latent",
+                "justification": "Future caller",
+                "latent_condition": "New input",
+            }
+        },
+        {
+            "verdict": {
+                "claim": "confirmed",
+                "consequence": "no_practical_effect",
+                "justification": "Preference",
+            }
+        },
         {"location_status": "unconfirmed"},
-        {"admission_assessments": []},
+        {"verdict": None},
     ]
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
@@ -652,3 +662,24 @@ def test_fix_metadata_uses_the_verdict_without_requiring_discovery_confidence(
     context = json.loads(result.stdout)[0]["metadata"]["review_context"]
     assert context["verdict"] == verdict
     assert "confidence" not in context
+
+
+def test_verdict_is_json_metadata_and_cannot_supply_task_commands(
+    write_artifact, run_renderer, tmp_path
+):
+    marker = tmp_path / "must-not-exist"
+    payload = f"$(touch {marker})\n```\n<!-- model text -->"
+    verdict = {
+        "claim": "confirmed",
+        "consequence": "present_failure",
+        "justification": payload,
+        "verification": {"pre": [payload]},
+    }
+    write_artifact([make_finding(verdict=verdict)])
+    result = run_renderer()
+    assert result.returncode == 0, result.stderr
+    task = json.loads(result.stdout)[0]
+    assert task["metadata"]["review_context"]["verdict"] == verdict
+    assert payload not in task["description"]
+    assert payload not in json.dumps(task["metadata"]["verification"])
+    assert not marker.exists()

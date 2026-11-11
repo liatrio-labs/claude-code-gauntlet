@@ -34,7 +34,7 @@ test('ordinary findings retain admission across path roles', () => {
 });
 
 test('a rewritten report-only verdict cannot grant admission', () => {
-  const finding = evaluateAdmission(makeFinding('other', { dimension: 'simplification', quality_basis: 'other',
+  const finding = evaluateAdmission(makeFinding('other', { dimension: 'simplification', quality_basis: 'other', verdict: { claim: 'confirmed', consequence: 'no_practical_effect', justification: 'Preference' },
     admission_assessments: [{ predicate: 'present_defect', status: 'rejected', references: ['primary'] }] }));
   assert.equal(finding.admission.status, 'report_only');
   assert.ok(hasAdmission(finding));
@@ -110,9 +110,9 @@ test('live and replay admission agree after filtering strips an oversized equiva
 
 test('reference diagnostics distinguish absent evidence from dropped evidence by field', () => {
   for (const [dimension, extra, field, predicates] of [
-    ['simplification', { quality_basis: 'duplication' }, 'duplicate_of', ['resolved_duplicate', 'confirmed_duplication']],
-    ['type_design', { quality_basis: 'stack_idiom' }, 'precedent', ['resolved_precedent', 'precedent_not_added', 'applicable']],
-    ['bug', { policy_subject: 'coverage', test_kind: 'critical_gap', criticality: 8 }, 'production_element', ['resolved_production_element', 'complete_behavioral_absence']],
+    ['simplification', { quality_basis: 'duplication' }, 'duplicate_of', ['resolved_duplicate']],
+    ['type_design', { quality_basis: 'stack_idiom' }, 'precedent', ['resolved_precedent', 'precedent_not_added']],
+    ['bug', { policy_subject: 'coverage', test_kind: 'critical_gap', criticality: 8 }, 'production_element', ['resolved_production_element']],
   ]) {
     const unrelated = { field: 'candidate_tests', reason: `invalid ${field} reference`, action: 'reference dropped' };
     const missing = evaluateAdmission(makeFinding('missing', { dimension, ...extra, reference_diagnostics: [unrelated] }));
@@ -163,13 +163,16 @@ test('admission precedes challenge and placement on fresh and resumed runs', asy
   assert.equal(byId['off-diff'].body_fix_task_eligible, true);
   assert.equal(byId.future.disposition, 'held_back');
   assert.ok(byId.future.disposition_reasons.includes('challenge_cap'));
-  for (const id of ['extra', 'other', 'rejected', 'partial-gap']) {
+  for (const id of ['extra', 'partial-gap']) {
     assert.equal(byId[id].disposition, 'report_only', id);
     assert.equal(byId[id].challenge, 'admission_terminal');
     assert.equal(byId[id].delivery_group, undefined);
     assert.equal(byId[id].consolidation_key, undefined);
   }
-  assert.equal(byId.unresolved.disposition, 'held_back');
+  for (const id of ['other', 'rejected', 'unresolved']) {
+    assert.equal(byId[id].disposition, 'held_back');
+    assert.ok(byId[id].disposition_reasons.includes('challenge_cap'));
+  }
   assert.equal(byId['unsafe-precedent'].disposition, 'held_back');
   const raw = first.payload.checkpoints.phases.challenge;
   assert.equal(raw.findings[0].disposition, undefined);
@@ -192,7 +195,7 @@ test('admission precedes challenge and placement on fresh and resumed runs', asy
   assert.equal(fresh.payload.findings[0].admission.status, 'admitted');
   assert.equal(fresh.payload.findings[0].disposition, 'deliver');
   const convention = filterStage({ findings: [makeFinding('convention-tier', {
-    dimension: 'convention', agent: 'conventions-and-intent', claude_md_rule: 'Keep declarations ordered',
+    dimension: 'convention', agent: 'conventions-and-intent', verdict: undefined, claude_md_rule: 'Keep declarations ordered',
     title: 'Declaration order', description: 'This declaration conflicts with the cited repository rule for symbol placement.',
   })] });
   assert.equal(convention.filtered[0].verdict_route, 'not-established');
@@ -234,7 +237,7 @@ test('missing admission stamps cannot deliver any test kind', async (t) => {
     makeFinding('type-intent', { agent: 'type-design-analyzer', dimension: 'intent' }),
     makeFinding('simplifier-convention', { agent: 'code-simplifier', dimension: 'convention' }),
     makeFinding('forged-security', { agent: 'test-analyzer', dimension: 'security', origin_dimension: 'security' }),
-  ] };
+  ].map((f) => { delete f.verdict; delete f.verdict_route; return evaluateAdmission(f); }) };
   normalizePhaseFindings('challenge', checkpoint, true, { repoRoot: '/repo' });
   const legacy = disposeFindings(checkpoint);
   for (const record of checkpoint.findings.slice(-4)) await t.test(record.id, () => {
@@ -369,9 +372,11 @@ test('final disposition survives replay and persistence', async () => {
   const byId = new Map(fresh.payload.findings.map((f) => [f.id, f]));
   assert.deepEqual(byId.get('BOTH').disposition_reasons, ['validation_skipped', 'verify_unproven', 'held_back']);
   assert.deepEqual(byId.get('VERIFY').disposition_reasons, ['verify_unproven', 'held_back']);
-  assert.deepEqual(byId.get('VALIDATE').disposition_reasons, ['validation_skipped']);
+  assert.deepEqual(byId.get('VALIDATE').disposition_reasons, []);
+  assert.equal(byId.get('VALIDATE').validation, 'skipped');
+  assert.equal(byId.get('VALIDATE').challenge_verdict.claim, 'confirmed');
   assert.equal(byId.get('CLEAN').disposition, 'deliver');
-  assert.deepEqual(fresh.payload.postReview.map((f) => f.id), ['CLEAN']);
+  assert.deepEqual(fresh.payload.postReview.map((f) => f.id), ['CLEAN', 'VALIDATE']);
   assert.ok(fresh.payload.checkpoints.phases.challenge.findings.every((f) => !Object.hasOwn(f, 'disposition') && !Object.hasOwn(f, 'disposition_reasons')));
   const limited = await runAndCapture(validArgs({ measurementTrace: true, limits: { challengeCap: 1 } }), {
     nullAgentLabels: ['challenge-0'],
@@ -392,7 +397,7 @@ test('final disposition survives replay and persistence', async () => {
   const badProof = await runWith(badCtx, badArgs);
   assert.equal(badProof.stats.verified, false);
   assert.equal(badProof.stats.unverified, 2);
-  const scored = applyChallenges([makeFinding('NUMERIC'), makeFinding('SECURITY', { dimension: 'security', risk_level: 4 })],
+  const scored = applyChallenges([makeFinding('NUMERIC'), makeFinding('SECURITY', { dimension: 'security', risk_level: 4, verdict: { claim: 'confirmed', consequence: 'latent', justification: 'Future', latent_condition: 'New caller' } })],
     [{ id: 'NUMERIC', claim: 'refuted', justification: 'Guard', refutation_kind: 'guard_exists', refutation: {file:'guard',line_start:1,line_end:1,anchor:'return safe;'}, refutation_check: { verified: true } }, { id: 'SECURITY', claim: 'confirmed', consequence: 'latent', justification: 'Future', latent_condition: 'New caller' }]);
   assert.equal(scored.findings[0].severity, 'low');
   const raw = challengeOutput({ findings: [...scored.findings,

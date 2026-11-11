@@ -49,7 +49,7 @@ Outputs include:
 - `replay-NNN/PR/`: relocated context, input, source hashes and bug IDs, scripts, child commands,
   raw child output, Workflow records, full dispatch returns, and `outcomes.json` with every
   finding's validator fields, final filter record, pass/fail and reason, counts and bug hits.
-- `summary.json`: counts by PR and replay, plus totals for each replay.
+- `summary.json`: projected inline counts (`passing`, `known_bugs_passing`, `unmatched_passing`) by PR and replay; `filter_survivors` and `filtered_out` count filter survival and elimination separately.
 - `spread.json`: per-finding typed verdicts, routes, pass counts, and adjacent replay flips.
 
 `passes_filter` records survival of the filter. `posts_inline` records projected inline eligibility. `spread.json`

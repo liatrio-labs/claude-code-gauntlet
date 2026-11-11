@@ -231,10 +231,9 @@ def test_withheld_primary_summary_cross_runtime() -> None:
     assert "The PR claims" not in body
 
 
-@pytest.mark.parametrize("body_primary", [False, True])
 @pytest.mark.parametrize("platform", ["github", "gitlab"])
 def test_mixed_disposition_group_cross_runtime(
-    body_primary, platform, tmp_path, monkeypatch, capsys, forge_factory
+    platform, tmp_path, monkeypatch, capsys, forge_factory
 ):
     findings = [
         {
@@ -248,7 +247,11 @@ def test_mixed_disposition_group_cross_runtime(
             "title": f"{stamp} claim",
             "description": f"Evidence from {stamp}",
             "severity": "high",
-            "confidence": 99 if (stamp == "body") == body_primary else 90,
+            "verdict": {
+                "claim": "confirmed",
+                "consequence": "present_failure",
+                "justification": "Inspected caller failure",
+            },
             "agent": agent,
             "dimension": "bug",
             "diff_validation": {"in_diff": stamp == "deliver", "reason": stamp},

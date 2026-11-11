@@ -50,7 +50,6 @@ test('recorded validator returns reproduce every stored filter outcome and reaso
   for (const finding of result.findings) {
     assert.equal(finding.verdict.claim, returned.get(finding.id).claim);
     assert.equal(finding.reachability, undefined);
-    assert.equal(finding.passes_filter, finding.filter_reason === 'passed');
     assert.equal(finding.validation_justification, returned.get(finding.id).justification);
   }
 });

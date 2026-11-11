@@ -377,7 +377,7 @@ def launch(command, source, dest, auth, timeout):
 
 def summarize(source, result):
     findings = result["findings"]
-    passed = {f["id"] for f in findings if f["passes_filter"]}
+    passed = {f["id"] for f in findings if f["posts_inline"]}
     attributed = {fid for _, ids in source.bugs for fid in ids}
     bugs = {bug: bool(passed.intersection(ids)) for bug, ids in source.bugs}
     for finding in findings:
@@ -391,7 +391,8 @@ def summarize(source, result):
         "unmatched_passing": len(passed - attributed),
         "findings": len(findings),
         "passing": len(passed),
-        "filtered_out": len(findings) - len(passed),
+        "filtered_out": sum(not f["passes_filter"] for f in findings),
+        "filter_survivors": sum(f["passes_filter"] for f in findings),
     }
     return result
 
@@ -403,7 +404,8 @@ def spreads(results):
             groups.setdefault((url, finding["id"]), []).append(finding)
     output = []
     for (url, fid), rows in sorted(groups.items()):
-        passing = [f["passes_filter"] for f in rows]
+        passing = [f["posts_inline"] for f in rows]
+        survived = [f["passes_filter"] for f in rows]
         output.append(
             dict(
                 pr_url=url,
@@ -414,8 +416,10 @@ def spreads(results):
                 route_flips=sum(
                     a.get("route") != b.get("route") for a, b in pairwise(rows)
                 ),
-                filter_pass_count=sum(passing),
-                filter_flips=sum(a != b for a, b in pairwise(passing)),
+                inline_count=sum(passing),
+                inline_flips=sum(a != b for a, b in pairwise(passing)),
+                filter_pass_count=sum(survived),
+                filter_flips=sum(a != b for a, b in pairwise(survived)),
             )
         )
     return output
@@ -581,6 +585,7 @@ def main(argv=None):
                                 "findings",
                                 "passing",
                                 "filtered_out",
+                                "filter_survivors",
                             )
                         },
                     )
