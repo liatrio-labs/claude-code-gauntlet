@@ -761,8 +761,8 @@ test('whole batched transcription failures recover singletons and isolate one ba
 for (const [name, respell, altered] of [
   ['raw printable', (token) => token.replaceAll('%7C', '|'), false],
   ['safe percent escape', (token) => token.replace('main', '%6Dain'), false],
-  ['JSON escape', (token) => token.replace('%7C', String.raw`\u007c`), false],
-  ['percent decoded prematurely', (token) => token.replace('%257C', '%7C'), true],
+  ['JSON escape', (token) => token.replaceAll('%7C', String.raw`\u007c`), false],
+  ['percent decoded prematurely', (token) => token.replaceAll('%257C', '%7C'), true],
 ]) test(`Python decoded proofs govern JS retry: ${name}`, async () => {
   const findings = findingsFor(2);
   findings[1].anchor = 'pipe | literal %7C';
