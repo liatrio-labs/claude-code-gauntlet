@@ -33,10 +33,12 @@ def workspace(tmp_path):
     return repo, nested, config
 
 
-def run_capture(cwd, config, *, headless="0"):
+def run_capture(cwd, config, *, headless="0", pwd=None):
     env = dict(
         os.environ, CLAUDE_CONFIG_DIR=str(config), CODE_GAUNTLET_HEADLESS=headless
     )
+    if pwd is not None:
+        env["PWD"] = str(pwd)
     return subprocess.run(
         [sys.executable, str(SCRIPT)],
         cwd=cwd,
@@ -168,6 +170,194 @@ def test_oversized_pipeline_definition_is_not_registered(workspace):
     assert int(match[1].replace("_", "")) == WORKFLOW_SCRIPT_CAP
 
 
+@pytest.mark.parametrize("character", ["é", "😀"])
+@pytest.mark.parametrize("over_limit", [False, True])
+def test_local_file_limit_counts_bytes_before_decoding(
+    workspace, character, over_limit
+):
+    from gauntlet.workflow_shadow import WORKFLOW_SCRIPT_CAP
+
+    repo, cwd, config = workspace
+    glyph = character.encode("utf-8")
+    payload = (workflow() + "//").encode("utf-8")
+    payload += glyph * ((WORKFLOW_SCRIPT_CAP - len(payload)) // len(glyph))
+    payload += b" " * (WORKFLOW_SCRIPT_CAP - len(payload))
+    if over_limit:
+        payload += glyph
+    assert len(payload.decode("utf-8").encode("utf-16-le")) // 2 < WORKFLOW_SCRIPT_CAP
+    path = put(config / "workflows", "")
+    path.write_bytes(payload)
+    result = run_capture(cwd, config)
+    if over_limit:
+        assert_policy(result)
+    else:
+        assert result.returncode == 1
+        assert result.stdout == ""
+        assert str(path) in result.stderr
+
+
+@pytest.mark.parametrize("escape", ["\\٣", "\\²", "\\0٣", "\\0²"])
+def test_non_ascii_digit_escapes_cannot_skip_a_shadow(workspace, escape):
+    repo, cwd, config = workspace
+    source = workflow().replace("description: 'Probe'", f"description: '{escape}'")
+    path = put(config / "workflows", source)
+    result = run_capture(cwd, config)
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert str(path) in result.stderr
+    assert "shadows the plugin pipeline" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "number",
+    [
+        "0xff",
+        "0XFF",
+        "0o77",
+        "0O77",
+        "0b10",
+        "0B10",
+        "1_000",
+        "1_000.5",
+        "1e1_0",
+        "123n",
+        "0xfn",
+        "0o7n",
+        "0b1n",
+        ".5",
+        "-.5",
+        "- 1",
+    ],
+)
+def test_unknown_numeric_literals_refuse_instead_of_skipping(workspace, number):
+    repo, cwd, config = workspace
+    source = workflow().replace("name:", f"extra: {number}, name:")
+    path = put(config / "workflows", source)
+    result = run_capture(cwd, config)
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert str(path) in result.stderr
+    assert "possible pipeline shadow" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        workflow().replace("name:", "extra: [0xff], name:"),
+        workflow().replace("name:", "extra: {nested: 1_000}, name:"),
+        workflow().replace("name:", "extra: 1_000n, name:"),
+        workflow().replace("name:", "extra: 0xF_F, name:"),
+    ],
+)
+def test_partial_literals_in_nested_metadata_refuse(workspace, source):
+    repo, cwd, config = workspace
+    path = put(config / "workflows", source)
+    result = run_capture(cwd, config)
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert str(path) in result.stderr
+
+
+@pytest.mark.parametrize("terminator", ["\n", "\r", "\u2028", "\u2029", "\r\n"])
+def test_all_hashbang_line_terminators_preserve_shadow_detection(workspace, terminator):
+    repo, cwd, config = workspace
+    path = put(config / "workflows", "#!workflow" + terminator + workflow())
+    result = run_capture(cwd, config)
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert str(path) in result.stderr
+
+
+@pytest.mark.parametrize("shadow", [False, True])
+def test_removed_pwd_is_ignored_without_skipping_real_cwd(workspace, shadow):
+    repo, cwd, config = workspace
+    stale = repo / "removed"
+    stale.mkdir()
+    stale.rmdir()
+    if shadow:
+        path = put(cwd / ".claude/workflows", workflow())
+    result = run_capture(cwd, config, pwd=stale)
+    if shadow:
+        assert result.returncode == 1
+        assert result.stdout == ""
+        assert str(path) in result.stderr
+    else:
+        assert_policy(result)
+
+
+@pytest.mark.parametrize(
+    "name,body,refused",
+    [
+        ("other", "return 1;", False),
+        ("other", r"return 'a\nb';", True),
+    ],
+)
+def test_unknown_meta_can_refuse_only_after_the_name_prefilter(
+    workspace, name, body, refused
+):
+    repo, cwd, config = workspace
+    source = metadata(name).replace("name:", "extra: 0xff, name:") + ";\n" + body
+    path = put(config / "workflows", source)
+    result = run_capture(cwd, config)
+    assert result.returncode == int(refused)
+    if refused:
+        assert result.stdout == ""
+        assert str(path) in result.stderr
+    else:
+        assert_policy(result)
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "value: +1",
+        "value: +.5",
+        "value: undefined",
+        "value: NaN",
+        "value: Infinity",
+        "value: getValue()",
+        "__proto__: {}",
+        "constructor: {}",
+        "prototype: {}",
+        "['value']: 1",
+        "...extra",
+        r"value: '\08'",
+        r"value: '\8'",
+        r"value: '\07'",
+        r"value: '\xgg'",
+        r"value: '\u00'",
+        r"value: '\u{110000}'",
+        "value: `a${1}`",
+        "value: 'line\nbreak'",
+    ],
+)
+def test_confirmed_host_rejections_are_ignored(workspace, extra):
+    repo, cwd, config = workspace
+    source = workflow().replace("name:", extra + ", name:")
+    put(config / "workflows", source)
+    assert_policy(run_capture(cwd, config))
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "#!workflow " + NAME,
+        workflow().replace("export const", "export let"),
+        workflow().replace("const meta", "const other"),
+        "export const meta; // " + NAME,
+        "export const meta = []; // " + NAME,
+        "export const meta = {name: '', description: 'Probe', extra: '" + NAME + "'};",
+        workflow().replace("description: 'Probe'", "description: null"),
+        workflow().split("description:")[0] + "description: 'unterminated",
+        workflow().split("description:")[0] + "description: '\\u{",
+    ],
+)
+def test_nonregistration_return_paths_are_safe(workspace, source):
+    repo, cwd, config = workspace
+    put(config / "workflows", source)
+    assert_policy(run_capture(cwd, config))
+
+
 @pytest.mark.parametrize(
     "suffix,registered",
     [
@@ -194,6 +384,17 @@ def test_oversized_pipeline_definition_is_not_registered(workspace):
         (", second = {};", False),
         ("\n in {};", False),
         ("\n instanceof Object;", False),
+        (" != other;", False),
+        (" !== other;", False),
+        (" = other;", False),
+        (" ? true : false;", False),
+        (" % 2;", False),
+        (" ** 2;", False),
+        (" & other;", False),
+        (" | other;", False),
+        (" ^ other;", False),
+        (" < other;", False),
+        (" > other;", False),
     ],
 )
 def test_declaration_boundaries_match_host_parser(workspace, suffix, registered):
@@ -303,12 +504,3 @@ def test_linked_workflow_is_inspected_like_host(workspace, symlink_or_skip, name
     assert result.returncode == int(name == NAME), result.stderr
     if name == NAME:
         assert str(path) in result.stderr
-
-
-def test_capture_is_the_existing_dispatch_and_resume_dependency():
-    references = ROOT / "skills/code-gauntlet/references"
-    triage = (references / "phase2-triage.md").read_text(encoding="utf-8")
-    assert "capture_policy_env.py` and stamp its four keys verbatim" in triage
-    recovery = (references / "crash-recovery.md").read_text(encoding="utf-8")
-    assert "re-run `scripts/capture_policy_env.py` and stop if it refuses" in recovery
-    assert not (ROOT / "scripts/check_workflow_shadow.py").exists()

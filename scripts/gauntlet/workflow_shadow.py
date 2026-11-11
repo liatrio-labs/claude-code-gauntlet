@@ -18,6 +18,8 @@ _SPACE = re.compile(
 _IDENTIFIER = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*")
 _NUMBER = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]*)?(?:[eE][+-]?[0-9]+)?")
 _ESCAPES = dict(zip("nrtbfv", "\n\r\t\b\f\v", strict=True))
+_ASCII_DIGITS = frozenset("0123456789")
+_LINE_TERMINATOR = re.compile(r"[\n\r\u2028\u2029]")
 
 
 class MetadataError(ValueError):
@@ -25,7 +27,7 @@ class MetadataError(ValueError):
 
 
 class NotWorkflow(ValueError):
-    """Syntax that the host cannot register as literal workflow metadata."""
+    """An explicit host rejection, never unsupported or partially parsed syntax."""
 
 
 class LiteralMetadata:
@@ -49,7 +51,7 @@ class LiteralMetadata:
 
     def require(self, token: str) -> None:
         if not self.take(token):
-            raise NotWorkflow("not a pure literal metadata declaration")
+            raise MetadataError("unsupported or incomplete literal metadata")
 
     def identifier(self) -> str:
         self.space()
@@ -99,10 +101,10 @@ class LiteralMetadata:
                     self.offset = end + braced
                 elif (
                     char == "0"
-                    and not self.source[self.offset : self.offset + 1].isdigit()
+                    and self.source[self.offset : self.offset + 1] not in _ASCII_DIGITS
                 ):
                     value += "\0"
-                elif char.isdigit():
+                elif char in _ASCII_DIGITS:
                     raise NotWorkflow("numeric string escape is invalid in a module")
                 elif char in "\n\r\u2028\u2029":
                     if (
@@ -159,6 +161,8 @@ class LiteralMetadata:
                 self.require(",")
                 if self.take("]"):
                     return items
+        if char == "+":
+            raise NotWorkflow("positive unary expressions are not literal metadata")
         match = _NUMBER.match(self.source, self.offset)
         if match:
             self.offset = match.end()
@@ -172,9 +176,10 @@ class LiteralMetadata:
 def workflow_name(source: str) -> str | None:
     parser = LiteralMetadata(source)
     if source.startswith("#!"):
-        parser.offset = source.find("\n")
-        if parser.offset < 0:
+        terminator = _LINE_TERMINATOR.search(source)
+        if terminator is None:
             return None
+        parser.offset = terminator.start()
     for word in ("export", "const", "meta"):
         parser.space()
         char = source[parser.offset : parser.offset + 1]
@@ -187,14 +192,15 @@ def workflow_name(source: str) -> str | None:
             return None
         if parser.identifier() != word:
             return None
-    parser.require("=")
+    if not parser.take("="):
+        return None
     metadata = parser.value()
     end = parser.offset
     if not parser.take(";") and parser.offset != len(source):
         char = source[parser.offset]
         # These tokens extend the initializer or add another declarator, so the
         # host's AST fallback cannot see one pure literal meta declaration.
-        newline = re.search(r"[\n\r\u2028\u2029]", source[end : parser.offset])
+        newline = _LINE_TERMINATOR.search(source[end : parser.offset])
         prefix_update = newline and source[parser.offset : parser.offset + 2] in {
             "++",
             "--",
@@ -240,6 +246,8 @@ def check_directory(directory: Path) -> None:
             info = path.stat()
         except FileNotFoundError:
             continue
+        # The host rejects file bytes before decoding; its later UTF-16 cap is
+        # not the registration limit for local workflow files.
         if not stat.S_ISREG(info.st_mode) or info.st_size > WORKFLOW_SCRIPT_CAP:
             continue
         try:
@@ -275,10 +283,9 @@ def check_workflow_shadow() -> None:
         try:
             if os.path.samefile(logical, cwd):
                 directories.extend(workflow_directories(Path(logical), config_dir))
-        except OSError as exc:
-            raise CliError(
-                f"{logical}: cannot inspect logical working directory"
-            ) from exc
+        except (OSError, ValueError):
+            # PWD is only a hint: an unverified alias cannot add a workflow source.
+            pass
     for directory in dict.fromkeys(directories):
         try:
             check_directory(directory)
