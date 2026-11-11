@@ -79,7 +79,7 @@ def test_window_cli_binds_rule_and_captures_each_source(
         assert (window.wave_id, window.rule_sha256) == ("wave", digest(value))
         assert [t.treatment_git_sha for t in window.arms.values()] == shas
         for treatment in window.arms.values():
-            assert treatment.agent_efforts.get("orchestrator") == child_effort
+            assert treatment.child_effort == child_effort
 
 
 @pytest.mark.parametrize(

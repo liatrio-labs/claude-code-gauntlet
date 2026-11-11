@@ -145,7 +145,14 @@ def make_naive_expecting_auth(expected):
     """A _invoke_naive fake that refuses any child_auth other than *expected*."""
 
     def _naive(
-        worktree, pr, run_dir, diff_text, bench_entry, timeout_s, child_auth="api"
+        worktree,
+        pr,
+        run_dir,
+        diff_text,
+        bench_entry,
+        timeout_s,
+        child_auth="api",
+        child_effort=None,
     ):
         assert child_auth == expected, (
             f"_invoke_naive got child_auth={child_auth!r}, want {expected!r}"

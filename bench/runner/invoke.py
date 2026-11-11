@@ -37,6 +37,7 @@ from gauntlet.config import (
 from gauntlet.registry import KNOB_REGISTRY, MODEL_ALIASES
 
 from bench.runner.contracts import (
+    EFFORT_KEYS,
     _is_superseded,
     _load_dotenv_key,
     _owner,
@@ -647,8 +648,10 @@ def _claude_auth_env(base_env, child_auth):
 
 
 def scrub_ambient(env):
-    """Remove every CODE_GAUNTLET_* variable and return the clean env and names removed."""
-    removed = sorted(name for name in env if name.startswith("CODE_GAUNTLET_"))
+    """Remove ambient bench/effort overrides and return the clean env and names removed."""
+    removed = sorted(
+        name for name in env if name.startswith("CODE_GAUNTLET_") or name in EFFORT_KEYS
+    )
     clean = {name: value for name, value in env.items() if name not in removed}
     return clean, removed
 

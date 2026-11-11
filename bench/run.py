@@ -533,6 +533,7 @@ def _invoke_naive(
     bench_entry,
     timeout_s,
     child_auth=ledger.API_AUTH_MODE,
+    child_effort=None,
 ):
     """Run the bare single-pass anchor review; return an :class:`invoke.InvokeResult`.
 
@@ -578,8 +579,8 @@ def _invoke_naive(
     ) or manifest.get("child_model")
     if requested_model not in (None, "inherit"):
         cmd += ["--model", requested_model]
-    if manifest.get("child_effort") is not None:
-        cmd += ["--effort", manifest["child_effort"]]
+    if child_effort is not None:
+        cmd += ["--effort", child_effort]
     prompt = _naive_prompt(pr, diff_text, bench_entry)
 
     proc = subprocess.Popen(
@@ -865,6 +866,7 @@ def _run_prs(
                     bench_data.get(url, {}),
                     timeout_s,
                     child_auth=child_auth,
+                    child_effort=child_effort,
                 )
             else:
                 result = invoke.invoke_review(
@@ -1575,6 +1577,19 @@ def main(argv=None):
             if (args.resume or args.retry_failed)
             else None
         )
+        if (
+            prior_manifest is not None
+            and args.child_effort is not None
+            and args.child_effort != prior_manifest.get("child_effort")
+        ):
+            print(
+                f"--child-effort {args.child_effort} contradicts the effort run "
+                f"{args.resume or args.retry_failed} recorded "
+                f"({prior_manifest.get('child_effort')}); resume without the flag, "
+                "or start a new run.",
+                file=sys.stderr,
+            )
+            return 2
         for key in ("unseal_holdout", "contamination", "rule"):
             value = getattr(args, key) or (prior_manifest or {}).get(key)
             setattr(args, key, str(Path(value).resolve()) if value else None)

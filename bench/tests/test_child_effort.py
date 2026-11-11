@@ -106,9 +106,9 @@ def test_new_run_records_effort_and_builds_child_command(
 @pytest.mark.parametrize("anchor", [None, "naive"])
 @pytest.mark.parametrize("mode", ["resume", "retry-failed"])
 @pytest.mark.parametrize("recorded", ["low", None, "legacy"])
-@pytest.mark.parametrize("cli_effort", [None, "max"])
+@pytest.mark.parametrize("cli_effort", [None, "low", "max"])
 def test_existing_run_reuses_manifest_effort(
-    child_commands, mode, recorded, cli_effort, anchor
+    child_commands, mode, recorded, cli_effort, anchor, monkeypatch, capsys
 ):
     argv = ["--tier", "smoke", "--child-model", "sonnet"]
     if anchor:
@@ -128,6 +128,22 @@ def test_existing_run_reuses_manifest_effort(
     argv = ["--" + mode, directory.name]
     if cli_effort is not None:
         argv += ["--child-effort", cli_effort]
+    if cli_effort is not None and cli_effort != ("low" if recorded == "low" else None):
+        monkeypatch.setattr(
+            run,
+            "check_prereqs",
+            lambda **kwargs: pytest.fail("preflight before refusal"),
+        )
+        monkeypatch.setattr(
+            run,
+            "decision_hook",
+            lambda *args, **kwargs: pytest.fail("hook before refusal"),
+        )
+        assert run.main(argv) == 2
+        assert "--child-effort" in capsys.readouterr().err
+        assert path.read_bytes() == before
+        assert len(child_commands) == 1
+        return
     assert run.main(argv) == 1
     assert path.read_bytes() == before
     assert len(child_commands) == 2
@@ -158,6 +174,30 @@ def test_orphan_resume_records_effort_for_later_retries(child_commands):
     assert run.main(["--resume", directory.name, "--child-effort", "low"]) == 1
     manifest = json.loads((directory / "run.json").read_text(encoding="utf-8"))
     assert manifest["child_effort"] == "low"
-    assert run.main(["--retry-failed", directory.name, "--child-effort", "max"]) == 1
+    assert run.main(["--retry-failed", directory.name, "--child-effort", "low"]) == 1
     assert len(child_commands) == 2
     assert all(cmd[-2:] == ["--effort", "low"] for cmd in child_commands)
+
+
+@pytest.mark.parametrize("anchor", [None, "naive"])
+def test_run_prs_passes_its_effort_to_both_child_paths(child_commands, anchor):
+    argv = ["--tier", "smoke", "--child-model", "sonnet", "--child-effort", "low"]
+    if anchor:
+        argv += ["--anchor", anchor]
+    assert run.main(argv) == 1
+    directory = next(run.RUNS_ROOT.iterdir())
+    epoch = run.load_epoch()
+    run._run_prs(
+        directory,
+        [URL],
+        run.checkpoint.Checkpoint(directory),
+        epoch.shas,
+        set(),
+        60,
+        anchor,
+        {},
+        child_model="sonnet",
+        child_effort="high",
+    )
+    assert len(child_commands) == 2
+    assert child_commands[-1][-2:] == ["--effort", "high"]

@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from bench.runner import provenance
 from bench.runner.contracts import (
+    EFFORT_KEYS,
     AuthMode,
     ScoreRef,
     artifact_allowed,
@@ -47,11 +48,6 @@ require_clean_treatment = provenance.require_clean_treatment
 ChildEffort = Literal["low", "medium", "high", "xhigh", "max"]
 CheckpointStatus = Literal["pending", "ok", "timeout", "invalid", "drifted", "failed"]
 ValidityState = Literal["valid", "invalid", "pending", "operational_failure"]
-EFFORT_KEYS = (
-    "CLAUDE_CODE_EFFORT_LEVEL",
-    "CLAUDE_CODE_SUBAGENT_EFFORT",
-    "MAX_THINKING_TOKENS",
-)
 MODEL_OVERRIDE_KEYS = (
     "CLAUDE_CODE_SUBAGENT_MODEL",
     "CLAUDE_CODE_SUBAGENT_EFFORT_LEVEL",
@@ -104,6 +100,14 @@ class Treatment:
     allowed_auxiliary_model_ids: tuple[str, ...]
     agent_efforts: dict[str, str | None]
     bench_policy_sha256: str
+    child_effort: ChildEffort | None = None
+
+    def wire(self):
+        value = asdict(self)
+        # Unset effort must preserve the identity of windows captured with child defaults.
+        if self.child_effort is None:
+            del value["child_effort"]
+        return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,7 +116,7 @@ class RunFingerprint:
     treatment: Treatment
 
     def wire(self):
-        return asdict(self)
+        return {"controls": asdict(self.controls), "treatment": self.treatment.wire()}
 
 
 def fingerprint_from_wire(value):
@@ -155,7 +159,10 @@ class MeasurementWindow:
     candidate_arm: str = "candidate"
 
     def wire(self):
-        return asdict(self)
+        return {
+            **asdict(self),
+            "arms": {name: arm.wire() for name, arm in self.arms.items()},
+        }
 
 
 def timestamp(value):
@@ -324,11 +331,9 @@ def capture_fingerprint(
             treatment_sha(root),
             models,
             tuple(sorted(auxiliary_models)),
-            {
-                **agent_efforts(root),
-                **({"orchestrator": child_effort} if child_effort is not None else {}),
-            },
+            agent_efforts(root),
             digest(policy),
+            child_effort,
         ),
     )
     return fingerprint_from_wire(fp.wire())
@@ -370,13 +375,13 @@ class AttemptRecord:
     sequence: int
 
     def wire(self):
-        return asdict(self)
+        return {**asdict(self), "validity": self.validity.wire()}
 
 
 def attempt_from_wire(value):
     result = decode(AttemptRecord, value)
     if result.validity.observed:
-        fingerprint_from_wire(asdict(result.validity.observed))
+        fingerprint_from_wire(result.validity.observed.wire())
     if result.sequence < 1 or timestamp(result.started_at) > timestamp(
         result.completed_at
     ):
@@ -811,7 +816,11 @@ def run_provenance(
             "golden_sha256": epoch.golden_sha256,
             "auth_mode": child_auth,
             "requested_models": {"orchestrator": child_model},
-            "child_effort": child_effort,
+            **(
+                {"treatment": {"child_effort": child_effort}}
+                if child_effort is not None
+                else {}
+            ),
         }
 
 
