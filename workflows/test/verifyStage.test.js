@@ -103,20 +103,30 @@ for (const row of TRUSTED_ROWS) {
   });
 }
 
+const degradedGap = (groups, slice, total, firstReason) =>
+  `verify: UNVERIFIED \u2014 slice ${slice}: `
+  + groups.map(([reason, ids]) => `${reason} [ids: ${ids.map((id) => JSON.stringify(id)).join(', ')}]`).join('; ')
+  + (firstReason === undefined ? '' : `; first attempt: ${firstReason}`)
+  + `; ${groups.reduce((count, [, ids]) => count + ids.length, 0)} of ${total} finding(s) in stage marked origin=unknown, surfaced-classification skipped, held back to the report`;
+
 const UNTRUSTED_ROWS = [
   { name: 'origin drift rejects the original script proof',
+    retryReason: 'receipt nonce mismatch (got n-1.0.r1, expected n-1.0.r2.0)',
     options: (f) => ({ deltas: deltasFor(f, { F0: { origin: 'surfaced' } }), checksum: 'fnv1a32:0xc35f3d60' }),
     reason: 'delta content proof mismatch (receipt fnv1a32:0xc35f3d60, recomputed fnv1a32:0xb75055cd) \u2014 the echoed values are not the ones the script wrote',
   },
   { name: 'absent delta proof is untrusted',
+    retryReason: 'receipt nonce mismatch (got n-1.0.r1, expected n-1.0.r2.0)',
     mutate: (env) => { delete env.receipt.deltas_checksum; },
     reason: 'receipt carries no deltas_checksum (content proof missing)',
   },
   { name: 'fabricated elimination keeps the claimed eliminated finding',
+    retryReason: 'receipt nonce mismatch (got n-1.0.r1, expected n-1.0.r2.0)',
     options: () => ({ overrides: { F1: { verified: false } } }),
     reason: 'delta F1: eliminated without the elimination_reason stamp (fabricated elimination \u2014 the verify script always stamps a real one)',
   },
   { name: 'missing delta array is untrusted',
+    retryReason: 'receipt nonce mismatch (got n-1.0.r1, expected n-1.0.r2.0)',
     mutate: (env) => { env.result = {}; },
     reason: 'result missing deltas array',
   },
@@ -126,6 +136,7 @@ const UNTRUSTED_ROWS = [
   },
   { name: 'null envelope is retried and disclosed', envelope: () => null, reason: 'executor returned no envelope' },
   { name: 'wrong receipt sha is untrusted',
+    retryReason: 'receipt nonce mismatch (got n-1.0.r1, expected n-1.0.r2.0)',
     options: () => ({ sha: 'wrong' }),
     reason: 'receipt sha mismatch (got wrong)',
   },
@@ -146,8 +157,9 @@ const UNTRUSTED_ROWS = [
       '/out/phase4-output-abc123.slice0.json', '/out/phase4-output-abc123.slice1.json',
       '/out/phase4-output-abc123.slice1.r1.json', '/out/phase4-output-abc123.slice1.r2.0.json', '/out/phase4-output-abc123.slice2.json',
     ],
-    reason: 'receipt nonce mismatch (got WRONG, expected n-1.1.r1)',
-    firstReason: 'receipt nonce mismatch (got WRONG, expected n-1.1)',
+    reason: 'receipt nonce mismatch (got WRONG, expected n-1.1)',
+    retryReason: 'receipt nonce mismatch (got WRONG, expected n-1.1.r2.0)',
+    degradedIds: ['F2', 'F3'],
     slice: 1,
   },
 ];
@@ -175,9 +187,11 @@ for (const row of UNTRUSTED_ROWS) {
       assert.deepEqual(outputs, row.outputs);
       assert.notEqual(outputs[2], outputs[1], 'retry preserves the first attempt output path');
     }
-    assert.equal(out.gaps.length, 1);
-    assert.ok(out.gaps[0].includes(row.firstReason || row.reason), out.gaps[0]);
-    assert.match(out.gaps[0], /singleton retry cap=1 reached/);
+    const [singletonId, cappedId] = row.degradedIds || ['F0', 'F1'];
+    assert.deepEqual(out.gaps, [degradedGap([
+      [row.retryReason || row.reason, [singletonId]],
+      ['singleton retry cap=1 reached after batched retry', [cappedId]],
+    ], row.slice || 0, findings.length, row.retryReason ? row.reason : undefined)]);
   });
 }
 
@@ -398,9 +412,10 @@ test('sibling-slice substitution keeps every finding and degrades only the subst
   const out = await verifyStage(ctx, verifyInput(findings, { limits: { verifySliceSize: 2 } }));
   assert.equal(out.verified, false);
   assert.deepEqual(out.findings.map((f) => [f.id, f.origin]), [['F0', 'unknown'], ['F1', 'unknown'], ['F2', 'new'], ['F3', 'new']]);
-  assert.equal(out.gaps.length, 1);
-  assert.match(out.gaps[0], /receipt nonce mismatch/);
-  assert.match(out.gaps[0], /first attempt: status=failed \(transient\)/);
+  assert.deepEqual(out.gaps, [degradedGap([
+    ['receipt nonce mismatch (got n-1.0.r1, expected n-1.0.r2.0)', ['F0']],
+    ['singleton retry cap=1 reached after batched retry', ['F1']],
+  ], 0, 4, 'status=failed (transient)')]);
 });
 
 test('shell quoting preserves paths with spaces, apostrophes and special branch names', async () => {
@@ -529,12 +544,26 @@ test('location deltas require shape and content proofs', async () => {
   }
 });
 
-for (const [name, damage] of [
-  ['sha', (env) => { env.receipt.sha = 'wrong'; }],
-  ['nonce', (env) => { env.receipt.nonce = 'wrong'; }],
-  ['diff source', (env) => { env.receipt.diff_source.read = false; }],
-  ['failed executor', () => ({ status: 'failed', stderr: 'inline slice-input rejected' })],
-  ['delta proof', (env) => { env.receipt.deltas_checksum = BAD_PROOF; }],
+for (const [name, damage, groups, firstReason] of [
+  ['sha', (env) => { env.receipt.sha = 'wrong'; }, [
+    ['receipt sha mismatch (got wrong)', ['F0', 'F1', 'F2']],
+  ]],
+  ['nonce', (env) => { env.receipt.nonce = 'wrong'; }, [
+    ['receipt nonce mismatch (got wrong, expected n-1.0.r2.0)', ['F0']],
+    ['receipt nonce mismatch (got wrong, expected n-1.0.r2.1)', ['F1']],
+    ['receipt nonce mismatch (got wrong, expected n-1.0.r2.2)', ['F2']],
+  ], 'receipt nonce mismatch (got wrong, expected n-1.0)'],
+  ['diff source', (env) => { env.receipt.diff_source.read = false; }, [
+    ['receipt diff_source mismatch or unreadable', ['F0', 'F1', 'F2']],
+  ]],
+  ['failed executor', () => ({ status: 'failed', stderr: 'inline slice-input rejected' }), [
+    ['status=failed (inline slice-input rejected)', ['F0', 'F1', 'F2']],
+  ]],
+  ['delta proof', (env) => { env.receipt.deltas_checksum = BAD_PROOF; }, [
+    ['delta content proof mismatch (receipt fnv1a32:0xdeadbeef, recomputed fnv1a32:0x639396a7) \u2014 the echoed values are not the ones the script wrote', ['F0']],
+    ['delta content proof mismatch (receipt fnv1a32:0xdeadbeef, recomputed fnv1a32:0xa8cb9e84) \u2014 the echoed values are not the ones the script wrote', ['F1']],
+    ['delta content proof mismatch (receipt fnv1a32:0xdeadbeef, recomputed fnv1a32:0xb74ffce5) \u2014 the echoed values are not the ones the script wrote', ['F2']],
+  ], 'delta content proof mismatch (receipt fnv1a32:0xdeadbeef, recomputed fnv1a32:0x34f57d6b) \u2014 the echoed values are not the ones the script wrote'],
 ]) test(`bounded whole-attempt recovery caps singleton failures: ${name}`, async () => {
   const findings = findingsFor(25);
   const ctx = verifyCtx((_index, _attempt, call) => {
@@ -548,10 +577,10 @@ for (const [name, damage] of [
   assert.deepEqual(ctx.parallelCalls, [3]);
   assert.equal(out.verified, false);
   assert.equal(out.inputProof.degradedFindings, 25);
-  assert.equal(out.gaps.length, 1);
-  assert.match(out.gaps[0], /ids: "F0"/);
-  assert.ok(out.gaps[0].includes('"F1"'));
-  assert.match(out.gaps[0], /"F24"/);
+  assert.deepEqual(out.gaps, [degradedGap([
+    ...groups,
+    ['singleton retry cap=3 reached after batched retry', findings.slice(3).map((f) => f.id)],
+  ], 0, 25, firstReason)]);
 });
 
 test('bounded local recovery batches first, caps parallel singletons, and preserves evidence and decisions', async () => {
@@ -723,7 +752,9 @@ test('singleton recovery retains record coverage across the JSON host boundary',
     retried: 1, retriedMismatch: 1, retriedFindings: 3 });
 });
 
-for (const tokenProof of [BAD_PROOF, null]) test(`token spelling alone does not taint proven content: ${tokenProof}`, async () => {
+for (const [name, tokenProof] of [
+  ['wrong', BAD_PROOF], ['null', null], ['missing', undefined],
+]) test(`token spelling alone does not taint proven content: ${name}`, async () => {
   const ctx = verifyCtx((_index, _attempt, call) => {
     const env = envelopeForCall(call);
     env.receipt.inline_checksum = tokenProof;
@@ -754,8 +785,10 @@ test('whole batched transcription failures recover singletons and isolate one ba
     located(findings[2]), unresolved({ ...findings[3], origin: 'unknown' })]);
   assert.equal(out.verified, false);
   assert.deepEqual(out.inputProof, { ...ZERO, slices: 1, retriedFindings: 4, degradedFindings: 2, mismatched: 1 });
-  assert.match(out.gaps[0], /record proof missing or mismatched.*ids: "F1"/);
-  assert.match(out.gaps[0], /singleton retry cap=3 reached.*ids: "F3"/);
+  assert.deepEqual(out.gaps, [degradedGap([
+    ['record proof missing or mismatched for 1 of 1 finding(s)', ['F1']],
+    ['singleton retry cap=3 reached after batched retry', ['F3']],
+  ], 0, 4, 'status=failed (inline slice-input rejected)')]);
 });
 
 for (const [name, respell, altered] of [
