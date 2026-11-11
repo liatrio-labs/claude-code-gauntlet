@@ -945,6 +945,25 @@ def _resolve_child_model(tool, child_model):
     return "inherit"
 
 
+def _child_effort_for(args, run_id=None):
+    """Resolve and validate one effort for preflight, provenance, and dispatch."""
+    run_id = run_id or args.resume or args.retry_failed
+    manifest = _read_run_manifest(run_id) if run_id else None
+    if manifest is None:
+        return args.child_effort
+    # Missing effort in a legacy manifest means the child default, just like null.
+    recorded = manifest.get("child_effort")
+    if recorded is not None and recorded not in get_args(validity.ChildEffort):
+        raise ValueError(f"run {run_id} recorded unknown child_effort {recorded!r}")
+    if args.child_effort is not None and args.child_effort != recorded:
+        description = f"effort {recorded}" if recorded is not None else "no effort"
+        raise ValueError(
+            f"--child-effort {args.child_effort} contradicts run {run_id}, which recorded "
+            f"{description}; resume without the flag, or start a new run."
+        )
+    return recorded
+
+
 def _resolve_child_auth(child_auth):
     """Effective child-auth mode for a NEW run: an explicit flag wins, else the API key.
 
@@ -1035,11 +1054,9 @@ def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
             if args.anchor == "naive"
             else _resolve_child_model(args.tool, args.child_model)
         ),
+        # The naive anchor also spends a child session whose effort must survive retries.
         "child_effort": args.child_effort,
-        # Recorded for EVERY run, including a naive anchor: a naive
-        # anchor still authenticates (_invoke_naive credentials its child through the same
-        # build_env), so a null here would leave the run's auth provenance -- and with it
-        # whether its cost is billable API spend -- unrecoverable at scoring time.
+        # Every child authenticates, so scoring needs the credential mode for every run.
         "child_auth": child_auth,
         "fidelity": args.fidelity,
         "invocation": invocation,
@@ -1207,10 +1224,7 @@ def _resume(run_id, args, retry):
         or manifest.get("child_model")
         or _resolve_child_model(args.tool, args.child_model)
     )
-    # A missing effort in a legacy manifest means the child default, just like null.
-    child_effort = (
-        manifest.get("child_effort") if manifest_path.exists() else args.child_effort
-    )
+    child_effort = _child_effort_for(args, run_id)
     # And again for the credential mode, where the stakes are higher than a label: letting
     # a flag override the recorded mode would bill half a run's PRs one way and half the
     # other, under a single ledger row that can only carry one auth_mode. Resolved from
@@ -1577,19 +1591,7 @@ def main(argv=None):
             if (args.resume or args.retry_failed)
             else None
         )
-        if (
-            prior_manifest is not None
-            and args.child_effort is not None
-            and args.child_effort != prior_manifest.get("child_effort")
-        ):
-            print(
-                f"--child-effort {args.child_effort} contradicts the effort run "
-                f"{args.resume or args.retry_failed} recorded "
-                f"({prior_manifest.get('child_effort')}); resume without the flag, "
-                "or start a new run.",
-                file=sys.stderr,
-            )
-            return 2
+        _child_effort_for(args)
         for key in ("unseal_holdout", "contamination", "rule"):
             value = getattr(args, key) or (prior_manifest or {}).get(key)
             setattr(args, key, str(Path(value).resolve()) if value else None)
@@ -1634,9 +1636,7 @@ def main(argv=None):
             )
             args._provenance = validity.run_provenance(
                 child_model=model,
-                child_effort=prior.get("child_effort")
-                if prior_manifest is not None
-                else args.child_effort,
+                child_effort=_child_effort_for(args),
                 child_auth=child_auth,
                 timeout_s=timeout_s,
                 epoch_id=args.golden_epoch,

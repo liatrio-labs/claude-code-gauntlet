@@ -484,7 +484,8 @@ python3 bench/run.py --tier subset --measurement-window window.json \
   --child-model MODEL_ID --arm baseline --run-index 0
 ```
 
-A windowed run must pass the same `--child-effort` used to create its window, omitting it when the window left effort unset.
+A new windowed run must pass the same `--child-effort` used to create its window, omitting it when unset; resume takes effort from the run manifest.
+The child env never carries `CLAUDE_CODE_EFFORT_LEVEL`, `CLAUDE_CODE_SUBAGENT_EFFORT` or `MAX_THINKING_TOKENS`, so effort comes only from the flag and the agents' own files.
 The requested tier or explicit PR list must match the window's PR set. Ambient
 model, effort and provider overrides are refused before mirror work. Each PR
 rechecks window identity and treatment before mirror work; the pinned CLI is

@@ -103,18 +103,12 @@ def test_new_run_records_effort_and_builds_child_command(
         assert "--model" not in cmd
 
 
-@pytest.mark.parametrize("anchor", [None, "naive"])
-@pytest.mark.parametrize("mode", ["resume", "retry-failed"])
-@pytest.mark.parametrize("recorded", ["low", None, "legacy"])
-@pytest.mark.parametrize("cli_effort", [None, "low", "max"])
-def test_existing_run_reuses_manifest_effort(
-    child_commands, mode, recorded, cli_effort, anchor, monkeypatch, capsys
-):
+def _existing_run(mode, recorded, anchor=None):
     argv = ["--tier", "smoke", "--child-model", "sonnet"]
     if anchor:
         argv += ["--anchor", anchor]
     if recorded == "low":
-        argv += ["--child-effort", recorded]
+        argv += ["--child-effort", "low"]
     assert run.main(argv) == 1
     directory = next(run.RUNS_ROOT.iterdir())
     path = directory / "run.json"
@@ -122,36 +116,86 @@ def test_existing_run_reuses_manifest_effort(
         manifest = json.loads(path.read_text(encoding="utf-8"))
         del manifest["child_effort"]
         path.write_text(json.dumps(manifest), encoding="utf-8")
-    before = path.read_bytes()
     if mode == "resume":
         run.checkpoint.Checkpoint(directory).mark(URL, "pending")
-    argv = ["--" + mode, directory.name]
-    if cli_effort is not None:
-        argv += ["--child-effort", cli_effort]
-    if cli_effort is not None and cli_effort != ("low" if recorded == "low" else None):
-        monkeypatch.setattr(
-            run,
-            "check_prereqs",
-            lambda **kwargs: pytest.fail("preflight before refusal"),
-        )
-        monkeypatch.setattr(
-            run,
-            "decision_hook",
-            lambda *args, **kwargs: pytest.fail("hook before refusal"),
-        )
-        assert run.main(argv) == 2
-        assert "--child-effort" in capsys.readouterr().err
-        assert path.read_bytes() == before
-        assert len(child_commands) == 1
-        return
-    assert run.main(argv) == 1
+    return directory, path
+
+
+@pytest.mark.parametrize("anchor", [None, "naive"])
+@pytest.mark.parametrize("mode", ["resume", "retry-failed"])
+@pytest.mark.parametrize(
+    "recorded,flags,expected_tail",
+    [
+        ("low", [], ["--model", "sonnet", "--effort", "low"]),
+        ("low", ["--child-effort", "low"], ["--model", "sonnet", "--effort", "low"]),
+        (None, [], ["--model", "sonnet"]),
+        ("legacy", [], ["--model", "sonnet"]),
+    ],
+)
+def test_existing_run_reuses_manifest_effort(
+    child_commands, mode, recorded, flags, expected_tail, anchor
+):
+    directory, path = _existing_run(mode, recorded, anchor)
+    before = path.read_bytes()
+    assert run.main(["--" + mode, directory.name, *flags]) == 1
     assert path.read_bytes() == before
     assert len(child_commands) == 2
-    cmd = child_commands[-1]
-    if recorded == "low":
-        assert cmd[-4:] == ["--model", "sonnet", "--effort", "low"]
+    assert child_commands[-1][-len(expected_tail) :] == expected_tail
+
+
+@pytest.mark.parametrize("mode", ["resume", "retry-failed"])
+@pytest.mark.parametrize(
+    "recorded,flag,message",
+    [
+        ("low", "max", "recorded effort low"),
+        (None, "low", "recorded no effort"),
+        (None, "max", "recorded no effort"),
+        ("legacy", "low", "recorded no effort"),
+        ("legacy", "max", "recorded no effort"),
+    ],
+)
+def test_existing_run_refuses_conflicting_effort(
+    child_commands, mode, recorded, flag, message, monkeypatch, capsys
+):
+    directory, path = _existing_run(mode, recorded)
+    before = path.read_bytes()
+    monkeypatch.setattr(
+        run, "check_prereqs", lambda **kwargs: pytest.fail("preflight before refusal")
+    )
+    monkeypatch.setattr(
+        run, "decision_hook", lambda *args, **kwargs: pytest.fail("hook before refusal")
+    )
+    assert run.main(["--" + mode, directory.name, "--child-effort", flag]) == 2
+    error = capsys.readouterr().err
+    assert "--child-effort" in error
+    assert message in error
+    assert "(None)" not in error
+    assert path.read_bytes() == before
+    assert len(child_commands) == 1
+
+
+@pytest.mark.parametrize("boundary", ["resume", "retry-failed", "window", "direct"])
+@pytest.mark.parametrize("invalid", ["ultra", ["low"]])
+def test_existing_run_refuses_unknown_manifest_effort(
+    child_commands, boundary, invalid, capsys
+):
+    directory, path = _existing_run("resume", None)
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["child_effort"] = invalid
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    if boundary == "direct":
+        with pytest.raises(ValueError, match="unknown child_effort"):
+            run._resume(directory.name, run.parse_args([]), retry=False)
     else:
-        assert "--effort" not in cmd
+        flags = (
+            ["--measurement-window", "absent-window.json"]
+            if boundary == "window"
+            else []
+        )
+        mode = "resume" if boundary == "window" else boundary
+        assert run.main(["--" + mode, directory.name, *flags]) == 2
+        assert "unknown child_effort" in capsys.readouterr().err
+    assert len(child_commands) == 1
 
 
 @pytest.mark.parametrize("parser", [run.parse_args, windows.parse_args])
@@ -180,7 +224,8 @@ def test_orphan_resume_records_effort_for_later_retries(child_commands):
 
 
 @pytest.mark.parametrize("anchor", [None, "naive"])
-def test_run_prs_passes_its_effort_to_both_child_paths(child_commands, anchor):
+def test_run_prs_uses_parameter_when_manifest_effort_differs(child_commands, anchor):
+    """A manifest reread must not override the caller's resolved effort at dispatch."""
     argv = ["--tier", "smoke", "--child-model", "sonnet", "--child-effort", "low"]
     if anchor:
         argv += ["--anchor", anchor]

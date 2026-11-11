@@ -816,11 +816,6 @@ def run_provenance(
             "golden_sha256": epoch.golden_sha256,
             "auth_mode": child_auth,
             "requested_models": {"orchestrator": child_model},
-            **(
-                {"treatment": {"child_effort": child_effort}}
-                if child_effort is not None
-                else {}
-            ),
         }
 
 

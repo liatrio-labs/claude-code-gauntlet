@@ -608,7 +608,7 @@ def test_capture_fingerprint_keeps_session_effort_out_of_agent_namespace(
 
 @pytest.mark.parametrize("mode", ["captured", "degraded", "window"])
 @pytest.mark.parametrize("effort", [None, "low"])
-def test_run_provenance_places_effort_in_treatment_on_every_path(
+def test_run_provenance_records_only_complete_treatment(
     monkeypatch, fingerprint, window, mode, effort
 ):
     observed = replace(
@@ -642,8 +642,10 @@ def test_run_provenance_places_effort_in_treatment_on_every_path(
         arm="baseline",
     )
     assert "child_effort" not in result
-    if effort is None:
-        assert "child_effort" not in result.get("treatment", {})
+    if mode == "degraded":
+        assert "treatment" not in result
+    elif effort is None:
+        assert "child_effort" not in result["treatment"]
     else:
         assert result["treatment"]["child_effort"] == effort
     if mode == "window":
