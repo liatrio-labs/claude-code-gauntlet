@@ -298,8 +298,8 @@ def test_mixed_disposition_group_cross_runtime(
     assert len(comments) == 1
     assert primary["title"] in comments[0]["body"]
     assert child["title"] not in comments[0]["body"]
-    assert "Corroborating finding" not in comments[0]["body"]
-    assert all(f["title"] not in summary for f in members)
+    assert summary.count(primary["title"]) == 1
+    assert child["title"] not in summary
 
 
 def test_pipeline_fields_reach_poster(

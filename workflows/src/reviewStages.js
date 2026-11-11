@@ -334,7 +334,7 @@ export async function challengeStage(ctx, input) {
 // Persisting the selected set lets delivery consume the policy decision without independently filtering or ranking it.
 export function selectDelivery(survivors, cap, tier) {
   const pool = deliveryGroups(survivors || []).filter(({ primary, corroborators }) => (
-    tier !== 'main_only' || (groupDelivery(primary, corroborators).report_tag ?? primary.report_destination) === 'main'
+    tier !== 'main_only' || groupDelivery(primary, corroborators).report_tag === 'main'
   ));
   // Rank a tolerant projection, preserving assessed findings and whole groups for persistence.
   const rankable = pool.map(({ primary, corroborators }) => groupDelivery(

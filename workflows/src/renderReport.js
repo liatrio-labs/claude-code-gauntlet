@@ -123,9 +123,13 @@ export function dimensionsSummaryTable(input, dimensions = DIMENSIONS) {
   return ['| Dimension | Agent | Findings | Notes |', '|-----------|-------|----------|-------|', ...rows].join('\n');
 }
 
-function consolidateForReport(findings, delivery = false) {
+function consolidateForReport(findings, delivery = false, sources = new WeakMap()) {
   return deliveryGroups(findings).map(({ primary, corroborators }) => {
-    if (delivery) return groupDelivery(primary, corroborators);
+    if (delivery) {
+      const finding = groupDelivery(primary, corroborators);
+      sources.set(finding, primary);
+      return finding;
+    }
     if (!corroborators.length) return primary;
     return {
       ...primary,
@@ -596,9 +600,9 @@ function plainReportObject(value) {
   }
 }
 
-function summaryIndex(rawFindings, findingsView, input, projected) {
+function summaryIndex(rawFindings, findingsView, input, projected, sources) {
   const reported = findingsView.order.flatMap((severity) => findingsView.buckets.get(severity));
-  if (!Array.isArray(input.delivered)) return { indexed: reported, reasons: [], references: new Map(reported.map((f) => [f, typeof f.id === 'string' && f.id ? f.id : projected.indexOf(f)])) };
+  if (!Array.isArray(input.delivered)) return { indexed: reported, reasons: [], references: new Map(reported.map((f) => [f, typeof f.id === 'string' && f.id ? f.id : projected.indexOf(sources.get(f) ?? f)])) };
   const originals = Array.isArray(input.findings) ? input.findings : [];
   const delivered = input.delivered.filter(plainReportObject);
   const deliveredOriginals = new Set(delivered);
@@ -622,18 +626,18 @@ function summaryIndex(rawFindings, findingsView, input, projected) {
     }
   }
   pairs.sort((left, right) => deliveryOrder.get(left.original) - deliveryOrder.get(right.original));
-  const deliveredUnits = new Map(consolidateForReport(pairs.map((pair) => pair.finding), true).map((finding) => (
-    [reportUnitKey(finding, originalByProjected.get(finding)), finding]
+  const deliveredUnits = new Map(consolidateForReport(pairs.map((pair) => pair.finding), true, sources).map((finding) => (
+    [reportUnitKey(finding, originalByProjected.get(sources.get(finding) ?? finding)), finding]
   )));
   // Keep report group order but select the delivered subset's primary so the index agrees with posted issues.
   const indexed = reported.map((finding) => deliveredUnits.get(
-    reportUnitKey(finding, originalByProjected.get(finding)),
+    reportUnitKey(finding, originalByProjected.get(sources.get(finding) ?? finding)),
   )).filter(Boolean);
   const omittedUnits = [...unitMembers].filter(([key]) => !deliveredUnits.has(key)).map(([, members]) => members);
   const reasons = [];
   const unitTier = (members) => {
     const delivered = groupDelivery(members[0], members.slice(1));
-    return delivered.report_tag ?? delivered.report_destination;
+    return delivered.report_tag;
   };
   if (typeof input.deliveryCap === 'number' && omittedUnits.some((members) => (
     input.deliveryTier !== 'main_only' || unitTier(members) === 'main'
@@ -647,7 +651,7 @@ function summaryIndex(rawFindings, findingsView, input, projected) {
   }
   if (!reasons.length && omittedUnits.length) reasons.push('not selected for this review');
   const references = new Map(indexed.map((finding) => [finding,
-    typeof finding.id === 'string' && finding.id ? finding.id : delivered.indexOf(originalByProjected.get(finding)),
+    typeof finding.id === 'string' && finding.id ? finding.id : delivered.indexOf(originalByProjected.get(sources.get(finding) ?? finding)),
   ]));
   return { indexed, reasons, references };
 }
@@ -665,12 +669,13 @@ function summaryBlock(builder, input, findingsRight = 'body') {
   const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
   const { projected, rawFindings, rawUnverified } = partitionByDisposition(inp, findingsRight);
   const local = findingsRight === 'report';
-  const findings = consolidateForReport(rawFindings, !local);
+  const sources = new WeakMap();
+  const findings = consolidateForReport(rawFindings, !local, sources);
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
   const counts = local ? localCountsSentence(findings, rawFindings.length, unverified, findingsView) : countsSentence(findings, findingsView);
   builder.add(counts);
-  const selection = summaryIndex(rawFindings, findingsView, local ? { ...inp, delivered: undefined } : inp, projected);
+  const selection = summaryIndex(rawFindings, findingsView, local ? { ...inp, delivered: undefined } : inp, projected, sources);
   const indexed = selection.indexed.filter((finding) => local || deliveryAllows(finding, 'inline'));
   const bodyCount = selection.indexed.length - indexed.length;
   const reasons = [...selection.reasons];

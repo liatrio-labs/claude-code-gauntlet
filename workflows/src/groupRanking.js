@@ -11,11 +11,11 @@ function groupSeverityRank(finding) {
   return index < 0 ? 0 : SEVERITY_ORDER.length - index;
 }
 
-export function chooseGroupLead(members, modelLead) {
-  const key = (f) => [groupTier(f), groupSeverityRank(f), deliveryAllows(f, 'inline') ? 1 : 0,
-    f.id === modelLead ? 1 : 0, asConfidence(f.confidence), findingPolicy(f).core ? 1 : 0, asText(f.description).length];
-  const security = members.filter((f) => (f.dimension ?? '').toLowerCase() === 'security');
-  return [...(security.length ? security : members)].sort((a, b) => {
+export function chooseGroupLead(members) {
+  const key = (f) => [groupSeverityRank(f), (f.dimension ?? '').toLowerCase() === 'security' ? 1 : 0,
+    groupTier(f), deliveryAllows(f, 'inline') ? 1 : 0, asConfidence(f.confidence),
+    findingPolicy(f).core ? 1 : 0, asText(f.description).length];
+  return [...members].sort((a, b) => {
     const ka = key(a), kb = key(b);
     for (let i = 0; i < ka.length; i++) if (ka[i] !== kb[i]) return kb[i] - ka[i];
     return 0;
@@ -24,7 +24,6 @@ export function chooseGroupLead(members, modelLead) {
 
 
 export function groupDelivery(primary, corroborators = []) {
-  if (!corroborators.length) return primary;
   const members = [primary, ...corroborators];
   const severity = SEVERITY_ORDER[SEVERITY_ORDER.length - Math.max(...members.map(groupSeverityRank))] ?? 'low';
   const tier = members.some((f) => groupTier(f)) ? 'main' : 'suggestion';

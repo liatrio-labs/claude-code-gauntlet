@@ -640,7 +640,13 @@ def test_body_disposition_digest_and_malformed_reasons(posting):
         posting(review("github", body_findings, review_body=""), diff=DIFF)
     )
     assert comments == []
-    assert digest.count("### security\n") == digest.count("### bug\n") == 0
+    assert [line for line in digest.splitlines() if line.startswith("#")] == [
+        "### ⚔️ Code Gauntlet",
+        "### 3 issues described here",
+        "#### `foo.py:2`",
+        "#### `foo.py:2`",
+        "#### `foo.py:2`",
+    ]
     assert all(digest.count(f"Body claim {i}") == 1 for i in range(3))
     malformed = located(disposition="deliver", disposition_reasons="forged")
     summary, comments = surfaces(
@@ -1385,11 +1391,8 @@ def test_review_input_defaults_and_unknown_fields(platform, posting):
         review(owner="other", repo="other", pr_number=9, sha="bbbbbbb", review_body=""),
     ],
 )
-def test_review_input_overrides_and_report(data, posting, tmp_path):
-    report = tmp_path / "report.md"
-    report.write_text(
-        "# Review\n\n## Summary\n\nFrom report\n\n## Findings\n", encoding="utf-8"
-    )
+def test_review_input_overrides_and_deprecated_report(data, posting, tmp_path):
+    report = tmp_path / "missing-report.md"
     run = posting(
         data,
         arguments=(*GH_ARGS, "--report", str(report)),
@@ -1580,7 +1583,7 @@ def test_gitlab_group_site_addenda_count_all_reviewers_without_relisting_deliver
         "- `new-0.txt:1`",
         "- `new-1.txt:1`",
     ]
-    assert "### 1 issue could not be attached" in body
+    assert "### 1 issue described here" in body
     notes[0]["body"] = body
     repeated = posting(
         review("gitlab", extended),

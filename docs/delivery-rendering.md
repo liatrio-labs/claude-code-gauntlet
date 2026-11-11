@@ -26,11 +26,12 @@ platform-shrunk apply range withholds the replacement code while retaining the p
 
 ## Issue grouping
 
-Accepted groups stay indivisible. Groups containing security findings choose a security lead;
-otherwise the shared lead ranking applies. Posted severity is the highest member severity, and
-any main-tier member makes the whole group main tier. Selection, caps and public counts use
+Accepted groups stay indivisible. The shared lead ranking uses severity first, then security,
+tier, inline placement, confidence, core status, and description length. Posted severity is the
+highest member severity, and any main-tier member makes the whole group main tier. Selection, caps and public counts use
 these group values; findings keep their own assessed severity and tier in checkpoints and the
-local report. Each issue posts only its lead sections. Additional sites combine other members'
+local report. Each issue posts its lead sections. Folded security titles appear on one prepared
+`Security claim` line. Additional sites combine other members'
 confirmed ranges and all confirmed sites, deduplicated without the lead range. Two or more
 distinct agents add an anonymous reviewer count. Unanchored groups render once under the lead
 location. GitLab addenda list only undelivered locations and count the full group's distinct
@@ -200,12 +201,14 @@ in the checkpoint's challenge entry. The report renders any severity value outsi
 The PR summary starts with `Found N issues in this change: <severity breakdown>.` Suggested
 improvements get a separate count sentence. Held-back and unverified findings stay in the local
 report. Each selected issue whose lead can post inline gets one index bullet. Unanchored issues
-appear only in the Python-rendered section, under `### N issues could not be attached to a changed
-line, so they are described here`, with singular grammar for one issue. The poster removes a
+appear in the Python-rendered section under `### N issues described here`. This section also
+holds new site coverage for issues already posted inline. The poster removes a
 previously indexed lead when its anchor fails at delivery. The workflow supplies `review_summary`
 with prepared counts, ordered `{lead_id, bullet}` records, and remainder data. The poster filters
-by id and preserves each bullet verbatim; unknown ids or missing delivered-lead bullets stop delivery.
-Legacy `--report` inputs render their own summary from findings with group severity and tier;
+by id and preserves contained text verbatim. Python requires its outbound preparation to leave
+all supplied summary text unchanged. Any containment or contract failure omits the index, uses
+code-generated counts, and records a gap without blocking inline comments.
+Bare findings arrays render their own summary from findings with group severity and tier;
 they never extract public text from the local report.
 
 Selection uses original object identity; issue identity uses `delivery_group.issue_key`, falling

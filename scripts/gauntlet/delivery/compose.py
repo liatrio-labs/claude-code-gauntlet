@@ -315,6 +315,15 @@ def render_group_sections(
         body += "\n\n**Additional sites:**\n" + "\n".join(
             f"- {prepare_location(location_text(site))}" for site in sites
         )
+    claims = list(
+        dict.fromkeys(
+            (prepare_line(member.get("title", "")) or "Finding")
+            for member in corroborators
+            if str(member.get("dimension", "")).lower() == "security"
+        )
+    )
+    if claims:
+        body += "\n\n**Security claim:** " + "; ".join(claims)
     agents = {
         agent.strip().lower()
         for finding in (primary, *corroborators)
@@ -348,10 +357,7 @@ def _plural(count: int, singular: str, plural: str | None = None) -> str:
 
 
 def _skipped_frame(n: int) -> str:
-    return (
-        f"---\n\n### {n} {_plural(n, 'issue')} could not be attached to a changed line, "
-        f"so {'it is' if n == 1 else 'they are'} described here"
-    )
+    return f"---\n\n### {n} {_plural(n, 'issue')} described here"
 
 
 def _digest_pieces(entries: Sequence[SkippedEntry]) -> str:
@@ -491,6 +497,13 @@ def render_summary(
         seen.add(ref)
     if expected - seen:
         raise ReportShapeError("Missing summary bullet for a delivered lead.")
+    texts = [
+        summary["counts"],
+        *summary["reasons"],
+        *(row["bullet"] for row in summary["index"]),
+    ]
+    if any(prepare_prose(text) != text for text in texts):
+        raise ReportShapeError("Uncontained summary text.")
     blocked = {
         _summary_ref(group[0].finding, group[0].finding_index)
         for group in skipped_groups
@@ -517,6 +530,8 @@ def render_summary(
         body += "\n\n" + registry.PUBLIC_SUMMARY["remainder"].format(
             count=omitted, issues=_plural(omitted, "issue"), reasons="; ".join(reasons)
         )
+    if prepare_prose(body) != body:
+        raise ReportShapeError("Uncontained summary text.")
     return body
 
 

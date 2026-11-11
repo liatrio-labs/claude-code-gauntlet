@@ -693,3 +693,8 @@ def test_full_report_predicates(surface):
     assert "{finding.body}" not in text
     assert "suggested_fix_code" not in text
     assert "not apply-checked" not in text
+
+
+def test_grouper_has_an_explicit_empty_tool_list():
+    frontmatter = read("agents/grouper.md").split("---", 2)[1]
+    assert re.search(r"(?m)^tools: \[\]$", frontmatter)

@@ -455,7 +455,7 @@ SKIPPED_SECTIONS_CASES = {
                 {"title": "@title <b>", "body": "token " + "ghp_" + "A" * 24},
             )
         ],
-        "---\n\n### 1 issue could not be attached to a changed line, so it is described here"
+        "---\n\n### 1 issue described here"
         + (
             "\n\n#### `src/app.py (location unconfirmed)`\n\n**\U0001f4a1 [LOW] \uff20title &lt;b>**"
             "\n\ntoken [REDACTED]"
@@ -499,7 +499,7 @@ def test_summary_omission_keeps_whole_issue_groups() -> None:
     assert tuple(
         (entry.location, entry.title) for entry in composed.omitted_entries
     ) == (("foo.py:99", "Huge"),)
-    assert "2 issues could not be attached to a changed line" in composed.body
+    assert "2 issues described here" in composed.body
     assert "_1 of these 2 issues did not fit in this comment._" in composed.body
     assert "hidden prose" not in composed.body
     assert "small prose" in composed.body
@@ -641,9 +641,7 @@ def test_skipped_frame_before_inline_posts() -> None:
         findings_count=1,
         sha="a" * 40,
     ).body
-    assert "1 issue could not be attached to a changed line" in section
-    assert "inline comment was posted" not in section
-    assert "inline comments were posted" not in section
+    assert "### 1 issue described here" in section.splitlines()
     assert "#### `src/app.py (location unconfirmed)`" in section
 
 
@@ -663,7 +661,7 @@ def test_summary_prose_folds_before_skipped_groups() -> None:
     assert tuple((e.location, e.title) for e in composed.omitted_entries) == (
         ("foo.py:99", "Skipped"),
     )
-    assert "1 issue could not be attached to a changed line" in composed.body
+    assert "1 issue described here" in composed.body
     assert "1 of these 1 issue did not fit in this comment" in composed.body
     assert len(composed.body.encode("utf-8")) <= 1000
     assert composed.body.endswith(
@@ -680,7 +678,7 @@ def test_summary_admission_reserves_review_bytes() -> None:
         PLATFORM_BODY_LIMITS["github"]["surfaces"]["summary"], {"bytes": 1000}
     ):
         composed = compose.compose_review_body(
-            "x" * 400,
+            "x" * 450,
             groups,
             platform="github",
             findings_count=2,
@@ -703,4 +701,8 @@ def test_body_digest_omits_large_issues_without_dimension_headings() -> None:
     )
     assert omitted is None
     assert first is not None and first.startswith("\n\n#### `foo.py:99`\n\n")
-    assert second is not None and "\n\n### bug" not in first + second
+    assert second is not None
+    assert [line for line in (first + second).splitlines() if line.startswith("#")] == [
+        "#### `foo.py:99`",
+        "#### `foo.py:99`",
+    ]

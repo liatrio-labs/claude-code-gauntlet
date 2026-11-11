@@ -1,3 +1,4 @@
+import { asText } from './wire.js';
 import { modelFor } from './registry.js';
 
 export function groupingPrompt(findings) {
@@ -14,8 +15,8 @@ export function groupingPrompt(findings) {
 export function groupingSchema(ids) {
   const id = { type: 'string', enum: ids };
   return { type: 'object', properties: { groups: { type: 'array', items: {
-    type: 'object', properties: { finding_ids: { type: 'array', items: id }, lead_id: id },
-    required: ['finding_ids', 'lead_id'], additionalProperties: false,
+    type: 'object', properties: { finding_ids: { type: 'array', items: id } },
+    required: ['finding_ids'], additionalProperties: false,
   } } }, required: ['groups'], additionalProperties: false };
 }
 
@@ -28,7 +29,7 @@ export async function groupFindings(ctx, findings, policy = {}) {
       model: modelFor('code-gauntlet:grouper', policy), schema: groupingSchema(grouping_ids),
     });
     return { grouping_ids, grouping_reply: grouping_reply ?? null };
-  } catch {
-    return { grouping_ids, grouping_reply: null, grouping_error: 'dispatch failed' };
+  } catch (error) {
+    return { grouping_ids, grouping_reply: null, grouping_error: `dispatch failed: ${asText(error?.message || error) || 'unknown error'}` };
   }
 }

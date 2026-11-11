@@ -76,7 +76,7 @@ export function disposeFindings(challenged) {
       members: [primary, ...corroborators], consolidation_key: primary.consolidation_key,
     })) : accepted.groups;
   for (const group of candidates) {
-    const primary = chooseGroupLead(group.members, group.lead_id);
+    const primary = chooseGroupLead(group.members);
     for (const member of group.members) {
       member.consolidation_key = group.consolidation_key ?? primary.id;
       member.consolidation_primary = member === primary;
@@ -140,17 +140,15 @@ export function acceptGroupingReply(reply, ids, findings) {
   const known = new Set(ids);
   const seen = new Set();
   for (const group of reply.groups) {
-    if (!object(group) || !Array.isArray(group.finding_ids)
-      || Object.keys(group).some((key) => !['finding_ids', 'lead_id'].includes(key))) return reject('invalid group');
+    if (!object(group) || !Array.isArray(group.finding_ids)) return reject('invalid group');
     for (const id of group.finding_ids) {
       if (!known.has(id)) return reject('unknown id');
       if (seen.has(id)) return reject('overlapping id');
       seen.add(id);
     }
-    if (group.finding_ids.length && !group.finding_ids.includes(group.lead_id)) return reject('foreign lead');
   }
   const byId = new Map(findings.map((f) => [f.id, f]));
   return { error: null, groups: reply.groups.map((group) => ({
-    lead_id: group.lead_id, members: group.finding_ids.map((id) => byId.get(id)).filter(Boolean),
+    members: group.finding_ids.map((id) => byId.get(id)).filter(Boolean),
   })).filter((group) => group.members.length >= 2) };
 }

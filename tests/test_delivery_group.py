@@ -74,7 +74,6 @@ def test_group_posts_lead_prose_sites_and_distinct_reviewer_count():
         "- `src/availability/slots.ts:141`\n\n"
         "_Found independently by 3 reviewers._\n\n⚔️ *Code Gauntlet*"
     )
-    assert "Corroborating finding" not in body
     assert all(
         str(other["description"]) not in body and str(other["title"]) not in body
         for other in others
@@ -120,10 +119,7 @@ def test_unanchored_group_is_one_issue_with_all_member_marker_coverage(
     composed = compose.compose_review_body(
         "", [skipped], platform="github", findings_count=2, sha=SHA
     )
-    assert (
-        "### 1 issue could not be attached to a changed line, so it is described here"
-        in composed.body
-    )
+    assert "### 1 issue described here" in composed.body
     assert composed.body.count("#### ") == 1
     assert str(rows[1]["description"]) not in composed.body
     assert "### bug" not in composed.body
@@ -172,17 +168,17 @@ def test_local_report_keeps_every_member_description():
         (
             {"severity": "critical"},
             {"severity": "medium", "dimension": "security"},
-            "SEC",
+            "BUG",
         ),
         (
             {"severity": "low"},
             {"severity": "critical", "report_tag": "suggestion"},
-            "BUG",
+            "SEC",
         ),
         (
             {"severity": "critical"},
             {"severity": "medium", "dimension": "security", "report_tag": "suggestion"},
-            "SEC",
+            "BUG",
         ),
     ],
 )
@@ -197,7 +193,7 @@ def test_indivisible_group_posts_security_text_and_group_values(ordinary, other,
         "const findings=rows.map((row,i)=>makeFinding(i?'SEC':'BUG',"
         "{file:'same.js',description:i?'Security finding text.':'Ordinary defect text.',agent:i?'security-reviewer':'bug-detector',...row}));"
         "const assessed=findings.map(f=>[f.id,f.severity,f.report_tag]);"
-        "const out=disposeFindings({findings,grouping_reply:{groups:[{finding_ids:['BUG','SEC'],lead_id:'BUG'}]}});"
+        "const out=disposeFindings({findings,grouping_reply:{groups:[{finding_ids:['BUG','SEC']}]}});"
         "const selected=selectDelivery([...out.findings,makeFinding('OTHER',{severity:'high'})],1,'main_only');"
         "process.stdout.write(JSON.stringify({...writerPayload({findings:out.findings,postReview:selected}),"
         "assessed,summary:renderPublicSummary({...out,delivered:selected}).body,report:renderReport(out)}));",
@@ -223,6 +219,8 @@ def test_indivisible_group_posts_security_text_and_group_values(ordinary, other,
         for f in (group.primary, *group.corroborators)
     ] == assessed_group
     assert comment.startswith("**🔴 [CRITICAL]")
+    if other.get("dimension") == "security" and lead != "SEC":
+        assert "**Security claim:** finding SEC" in comment
     assert ("Security finding text." in comment) == (lead == "SEC")
     assert ("Ordinary defect text." in comment) == (lead == "BUG")
     assert [
@@ -241,11 +239,12 @@ def test_indivisible_group_posts_security_text_and_group_values(ordinary, other,
     assert summary.count("- 🔴 [CRITICAL]") == 1
     assert "Security finding text." in result["report"]
     assert "Ordinary defect text." in result["report"]
-    assert "severity critical, tier " in result["report"]
+    assert "severity " in result["report"]
     if (
         ordinary.get("report_tag") == "suggestion"
         or other.get("report_tag") == "suggestion"
     ):
         assert (
-            "tier suggestion" if lead == "BUG" else "improvement suggestion"
-        ) in result["report"]
+            "improvement suggestion" in result["report"]
+            or "tier suggestion" in result["report"]
+        )

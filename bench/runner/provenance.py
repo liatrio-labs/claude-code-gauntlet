@@ -266,7 +266,11 @@ def _reconstruct_body_summary(
                 "findings": findings,
                 "review_body": review_body,
                 "sha": sha,
-                "review_summary": review_summary,
+                **(
+                    {"review_summary": review_summary}
+                    if review_summary is not None
+                    else {}
+                ),
             },
         ),
         skipped_groups,

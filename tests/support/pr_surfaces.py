@@ -88,7 +88,7 @@ const findings=JSON.parse(source).map(f=>evaluateAdmission({...f,description:f.b
  origin:'new',validation:f.validation??'validated',challenge:'survived',path_role:'source',
  policy_subject:'ordinary',diff_validation:f.diff_validation??{in_diff:true},dimension:f.dimension??'bug',confidence:90}));
 const out=disposeFindings({findings,grouping_reply:{groups:[{
- finding_ids:findings.slice(0,4).map(f=>f.id),lead_id:findings[0].id}]}});
+ finding_ids:findings.slice(0,4).map(f=>f.id)}]}});
 const input=reportInput({findings:out.findings,unverified:out.unverified,delivered:out.findings});
 const {body:summary_body,...review_summary}=renderPublicSummary(input);
 process.stdout.write(JSON.stringify({summary_body,review_summary,report:renderReport(input),

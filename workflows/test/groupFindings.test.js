@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { applyChallenges } from '../src/applyChallenges.js';
 import { disposeFindings, acceptGroupingReply } from '../src/dispose.js';
 import { selectDelivery } from '../src/reviewStages.js';
-import { chooseGroupLead } from '../src/groupRanking.js';
+import { chooseGroupLead, groupDelivery } from '../src/groupRanking.js';
 import { groupFindings, groupingPrompt, groupingSchema } from '../src/groupFindings.js';
 import { makeFinding, makeCtx, assertValidSchema } from './helpers/pipelineMock.js';
 import { validArgs } from './helpers/argsFixtures.js';
@@ -14,17 +14,17 @@ import { slimPersistedCheckpoints } from '../src/checkpoints.js';
 const members = () => [107, 114, 125, 141].map((line, i) => makeFinding(`F${line}`, {
   file: 'src/slots.ts', line_start: line, line_end: line, agent: i === 1 ? 'security-reviewer' : 'bug-detector',
 }));
-const reply = { groups: [{ finding_ids: members().map((f) => f.id), lead_id: 'F107' }] };
+const reply = { groups: [{ finding_ids: members().map((f) => f.id) }] };
 
 test('meaning groups distant sites and one-agent repeats after the challenge', async () => {
-  const findings = [...members(), makeFinding('F107B', { file: 'src/slots.ts', line_start: 107, line_end: 107, agent: 'security-reviewer' })];
-  const modelReply = { groups: [{ finding_ids: findings.map((f) => f.id), lead_id: 'F107' }] };
+  const findings = [...members(), makeFinding('F107B', { file: 'src/slots.ts', line_start: 107, line_end: 107, agent: 'security-reviewer', confidence: 80 })];
+  const modelReply = { groups: [{ finding_ids: findings.map((f) => f.id) }] };
   findings[3].challenge = 'contested';
   const grouping = await groupFindings({ agent: async (prompt, dispatch) => {
     assert.match(prompt, /^Findings:\n- F107 \| src\/slots.ts:107/);
     assert.equal(dispatch.agentType, 'code-gauntlet:grouper');
     assertValidSchema(dispatch.schema);
-    assert.deepEqual(dispatch.schema.properties.groups.items.properties.lead_id.enum, findings.map((f) => f.id));
+    assert.deepEqual(dispatch.schema.properties.groups.items.properties.finding_ids.items.enum, findings.map((f) => f.id));
     return modelReply;
   } }, findings);
   const out = disposeFindings({ findings, ...grouping });
@@ -59,11 +59,10 @@ test('invalid grouping falls back without dropping members, including dispatch f
     assert.deepEqual(out.findings.map((f) => f.delivery_group), [expectedStamp, expectedStamp]);
   };
   for (const grouping_reply of [undefined, null, [], {}, { groups: null }, { groups: [], extra: 1 },
-    { groups: [null] }, { groups: [{ finding_ids: ['F107'], lead_id: 'foreign' }] },
-    { groups: [{ finding_ids: ['F107', 'F114'], lead_id: 'foreign' }] },
-    { groups: [{ finding_ids: ['F107', 'unknown'], lead_id: 'F107' }] },
-    { groups: [{ finding_ids: ['F107', 'F114'], lead_id: 'F107' }, { finding_ids: ['F114', 'F107'], lead_id: 'F114' }] },
-    { groups: [{ finding_ids: ['F107', 'F107'], lead_id: 'F107' }] },
+    { groups: [null] },
+    { groups: [{ finding_ids: ['F107', 'unknown'] }] },
+    { groups: [{ finding_ids: ['F107', 'F114'] }, { finding_ids: ['F114', 'F107'] }] },
+    { groups: [{ finding_ids: ['F107', 'F107'] }] },
   ]) {
     const out = disposeFindings({ findings, grouping_reply });
     assertPositional(out);
@@ -73,7 +72,7 @@ test('invalid grouping falls back without dropping members, including dispatch f
   const failed = await groupFindings({ agent: async () => { throw Error('offline'); } }, findings);
   const out = disposeFindings({ findings, ...failed });
   assertPositional(out);
-  assert.deepEqual(out.gaps, ['grouping: dispatch failed; same-lines grouping used']);
+  assert.deepEqual(out.gaps, ['grouping: dispatch failed: offline; same-lines grouping used']);
 });
 
 test('replay filters removed ids after validating the whole grouping reply', () => {
@@ -88,22 +87,22 @@ test('replay filters removed ids after validating the whole grouping reply', () 
   assert.equal(acceptGroupingReply(reply, grouping_ids, []).groups.length, 0);
 });
 
-test('lead ordering prioritizes tier, severity, placement, model, confidence, core, then completeness', () => {
+test('lead ordering uses severity, security, tier, placement, confidence, core, completeness', () => {
   const [a, b] = members().slice(0, 2).map((f) => ({ ...f, disposition: 'deliver' }));
-  for (const [left, right, expected] of [
-    [{ ...a, severity: 'medium' }, b, b.id],
-    [{ ...a, disposition: 'body' }, b, b.id],
-    [a, b, a.id],
-  ]) assert.equal(chooseGroupLead([left, right], a.id).id, expected);
-  assert.equal(chooseGroupLead([a, b], b.id).id, b.id);
-  const withoutModel = (x, y) => chooseGroupLead([x, y], 'absent').id;
-  assert.equal(withoutModel({ ...a, confidence: 80 }, b), b.id);
-  assert.equal(withoutModel({ ...a, dimension: 'comment_accuracy' }, b), b.id);
-  assert.equal(withoutModel(a, { ...b, description: b.description + ' more' }), b.id);
-  assert.equal(withoutModel(a, b), a.id);
-  const out = disposeFindings({ findings: [{ ...a, severity: 'medium' }, b],
-    grouping_reply: { groups: [{ finding_ids: [a.id, b.id], lead_id: a.id }] } });
-  assert.equal(out.groups[0].lead_id, b.id);
+  for (const [left, right] of [
+    [{ ...a, severity: 'medium', dimension: 'security' }, b],
+    [a, { ...b, dimension: 'security', report_tag: 'suggestion' }],
+    [{ ...a, report_tag: 'suggestion' }, b],
+    [{ ...a, disposition: 'body' }, b],
+    [{ ...a, confidence: 80 }, b],
+    [{ ...a, dimension: 'comment_accuracy' }, b],
+    [a, { ...b, description: b.description + ' more' }],
+  ]) assert.equal(chooseGroupLead([left, right]).id, b.id);
+  assert.equal(chooseGroupLead([a, b]).id, a.id);
+  const singleton = groupDelivery({ severity: 'high', admission: { tier: 'suggestion' } });
+  assert.equal(singleton.report_tag, 'suggestion');
+  assert.equal(singleton.report_destination, 'suggestion');
+  assert.equal(singleton.severity, 'high');
 });
 
 test('prompt bounds folded text and a singleton skips dispatch', async () => {
@@ -121,6 +120,7 @@ test('prompt bounds folded text and a singleton skips dispatch', async () => {
   const ids = schema.properties.groups.items.properties.finding_ids;
   assert.equal(Object.hasOwn(ids, 'minItems'), false);
   assert.equal(Object.hasOwn(ids, 'uniqueItems'), false);
+  assert.deepEqual(Object.keys(schema.properties.groups.items.properties), ['finding_ids']);
 });
 
 test('challenge checkpoint persists grouping and resume never dispatches it again', async () => {
@@ -159,7 +159,7 @@ for (const grouping of ['model', 'positional']) for (const [name, overrides] of 
   const strong = makeFinding('STRONG', { file: 'priority.js', agent: 'security-reviewer', severity: 'low', diff_validation: { in_diff: false }, ...overrides });
   const inline = makeFinding('INLINE', { file: 'priority.js', agent: 'bug-detector', severity: 'low', report_tag: name === 'tier' ? 'suggestion' : 'main' });
   const out = disposeFindings({ findings: [inline, strong], grouping_reply: grouping === 'model' ? {
-    groups: [{ finding_ids: ['INLINE', 'STRONG'], lead_id: 'INLINE' }],
+    groups: [{ finding_ids: ['INLINE', 'STRONG'] }],
   } : null });
   assert.equal(out.groups.length, 1);
   assert.equal(out.groups[0].lead_id, 'STRONG');
@@ -174,11 +174,11 @@ for (const grouping of ['model', 'positional']) for (const [name, overrides] of 
 });
 
 
-test('short groups are harmless while their ids and lead still validate', () => {
+test('short groups are harmless and legacy lead hints are ignored', () => {
   const findings = members();
   const out = disposeFindings({ findings, grouping_reply: { groups: [
-    { finding_ids: [], lead_id: 'ignored' }, { finding_ids: ['F107'], lead_id: 'F107' },
-    { finding_ids: ['F125', 'F141'], lead_id: 'F125' },
+    { finding_ids: [] }, { finding_ids: ['F107'] },
+    { finding_ids: ['F125', 'F141'], lead_id: 'ignored' },
   ] } });
   assert.equal(out.stats.grouping, 'model');
   assert.equal(out.groups.length, 3);
@@ -186,15 +186,15 @@ test('short groups are harmless while their ids and lead still validate', () => 
 });
 
 for (const path of ['model', 'positional']) for (const [name, left, right, expectedLead] of [
-  ['security text under maximum severity', { severity: 'critical' }, { severity: 'medium', dimension: 'security' }, 'MEMBER'],
-  ['main tier with critical suggestion', { severity: 'low', report_tag: 'main' }, { severity: 'critical', report_tag: 'suggestion' }, 'LEAD'],
-  ['planted non-security lead cannot hide or understate security', { severity: 'critical' }, { severity: 'medium', dimension: 'security', report_tag: 'suggestion' }, 'MEMBER'],
+  ['security text under maximum severity', { severity: 'critical' }, { severity: 'medium', dimension: 'security' }, 'LEAD'],
+  ['main tier with critical suggestion', { severity: 'low', report_tag: 'main' }, { severity: 'critical', report_tag: 'suggestion' }, 'MEMBER'],
+  ['planted non-security lead cannot hide or understate security', { severity: 'critical' }, { severity: 'medium', dimension: 'security', report_tag: 'suggestion' }, 'LEAD'],
 ]) test(`${path}: indivisible group preserves ${name}`, () => {
   const findings = [makeFinding('LEAD', { confidence: 99, file: 'shared.js', description: 'Ordinary defect text', agent: 'bug-detector', ...left }),
     makeFinding('MEMBER', { file: 'shared.js', description: 'Security or suggestion text', agent: 'security-reviewer', ...right })];
   const assessed = findings.map((f) => [f.id, f.severity, f.report_tag]);
   const out = disposeFindings({ findings, grouping_reply: path === 'model' ? {
-    groups: [{ finding_ids: ['LEAD', 'MEMBER'], lead_id: 'LEAD' }],
+    groups: [{ finding_ids: ['LEAD', 'MEMBER'] }],
   } : null });
   assert.equal(out.groups.length, 1);
   assert.equal(out.groups[0].lead_id, expectedLead);
@@ -216,7 +216,7 @@ for (const path of ['model', 'positional']) for (const [name, left, right, expec
 });
 
 
-for (const [mode, reason] of [['invalid', 'missing or non-object reply'], ['throwing', 'dispatch failed']]) {
+for (const [mode, reason] of [['invalid', 'missing or non-object reply'], ['throwing', 'dispatch failed: offline']]) {
   test(`run reports ${mode} grouper fallback without losing findings`, async () => {
     const findings = members();
     const args = validArgs({ persist: { returnPrimaries: true } });

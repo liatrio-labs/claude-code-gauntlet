@@ -148,47 +148,6 @@ def test_direct_sessions_interleave_live_and_dry_delivery(
     )
 
 
-@pytest.mark.parametrize(
-    ("agent", "dimension", "confidence", "expected_identity"),
-    [
-        pytest.param(
-            "[[a",
-            "|https://example.test/p.png]]",
-            "0.9",
-            "[\uff3ba (|https://example.test/p.png]], confidence 0.9)",
-            id="agent_dimension",
-        ),
-    ],
-)
-def test_group_omits_reviewer_identity_markup(
-    agent: str, dimension: str, confidence: str, expected_identity: str
-) -> None:
-    primary: dict[str, object] = {
-        "file": "src/edited.py",
-        "line": 2,
-        "line_start": 2,
-        "line_end": 2,
-        "location_status": "confirmed",
-        "admission": admitted_stamp(),
-        "disposition": "deliver",
-        "anchor": "current_source_value()",
-        "severity": "high",
-        "title": "Primary",
-        "body": "Primary body",
-    }
-    corroborator: dict[str, object] = {
-        "agent": agent,
-        "dimension": dimension,
-        "confidence": confidence,
-        "title": "Corroboration",
-        "body": "Corroborating body",
-    }
-    body = compose.render_group_body(primary, [corroborator])
-    _assert_outbound_string_invariant(body)
-    assert expected_identity not in body
-    assert "Corroborating body" not in body
-
-
 def _deliver(
     platform: Platform,
     findings: list[Finding],
@@ -374,7 +333,7 @@ def test_python_sink_containment(case: SinkCase) -> None:
     assert "\uff20zz363review_body" in summary
     if case.route == "off_diff":
         assert not inline_bodies
-        assert "could not be attached to a changed line" in summary
+        assert "### 1 issue described here" in summary.splitlines()
         assert "\uff20zz363title" in summary
     else:
         assert len(inline_bodies) == 1

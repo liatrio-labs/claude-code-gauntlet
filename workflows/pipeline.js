@@ -2700,18 +2700,17 @@ function groupSeverityRank(finding) {
   const index = SEVERITY_ORDER.indexOf(asText(finding.severity).trim().toLowerCase());
   return index < 0 ? 0 : SEVERITY_ORDER.length - index;
 }
-function chooseGroupLead(members, modelLead) {
-  const key = (f) => [groupTier(f), groupSeverityRank(f), deliveryAllows(f, 'inline') ? 1 : 0,
-    f.id === modelLead ? 1 : 0, asConfidence(f.confidence), findingPolicy(f).core ? 1 : 0, asText(f.description).length];
-  const security = members.filter((f) => (f.dimension ?? '').toLowerCase() === 'security');
-  return [...(security.length ? security : members)].sort((a, b) => {
+function chooseGroupLead(members) {
+  const key = (f) => [groupSeverityRank(f), (f.dimension ?? '').toLowerCase() === 'security' ? 1 : 0,
+    groupTier(f), deliveryAllows(f, 'inline') ? 1 : 0, asConfidence(f.confidence),
+    findingPolicy(f).core ? 1 : 0, asText(f.description).length];
+  return [...members].sort((a, b) => {
     const ka = key(a), kb = key(b);
     for (let i = 0; i < ka.length; i++) if (ka[i] !== kb[i]) return kb[i] - ka[i];
     return 0;
   })[0];
 }
 function groupDelivery(primary, corroborators = []) {
-  if (!corroborators.length) return primary;
   const members = [primary, ...corroborators];
   const severity = SEVERITY_ORDER[SEVERITY_ORDER.length - Math.max(...members.map(groupSeverityRank))] ?? 'low';
   const tier = members.some((f) => groupTier(f)) ? 'main' : 'suggestion';
@@ -3844,7 +3843,7 @@ function disposeFindings(challenged) {
       members: [primary, ...corroborators], consolidation_key: primary.consolidation_key,
     })) : accepted.groups;
   for (const group of candidates) {
-    const primary = chooseGroupLead(group.members, group.lead_id);
+    const primary = chooseGroupLead(group.members);
     for (const member of group.members) {
       member.consolidation_key = group.consolidation_key ?? primary.id;
       member.consolidation_primary = member === primary;
@@ -3904,18 +3903,16 @@ function acceptGroupingReply(reply, ids, findings) {
   const known = new Set(ids);
   const seen = new Set();
   for (const group of reply.groups) {
-    if (!object(group) || !Array.isArray(group.finding_ids)
-      || Object.keys(group).some((key) => !['finding_ids', 'lead_id'].includes(key))) return reject('invalid group');
+    if (!object(group) || !Array.isArray(group.finding_ids)) return reject('invalid group');
     for (const id of group.finding_ids) {
       if (!known.has(id)) return reject('unknown id');
       if (seen.has(id)) return reject('overlapping id');
       seen.add(id);
     }
-    if (group.finding_ids.length && !group.finding_ids.includes(group.lead_id)) return reject('foreign lead');
   }
   const byId = new Map(findings.map((f) => [f.id, f]));
   return { error: null, groups: reply.groups.map((group) => ({
-    lead_id: group.lead_id, members: group.finding_ids.map((id) => byId.get(id)).filter(Boolean),
+    members: group.finding_ids.map((id) => byId.get(id)).filter(Boolean),
   })).filter((group) => group.members.length >= 2) };
 }
 // --- outboundText.js ---
@@ -4586,9 +4583,13 @@ function dimensionsSummaryTable(input, dimensions = DIMENSIONS) {
   });
   return ['| Dimension | Agent | Findings | Notes |', '|-----------|-------|----------|-------|', ...rows].join('\n');
 }
-function consolidateForReport(findings, delivery = false) {
+function consolidateForReport(findings, delivery = false, sources = new WeakMap()) {
   return deliveryGroups(findings).map(({ primary, corroborators }) => {
-    if (delivery) return groupDelivery(primary, corroborators);
+    if (delivery) {
+      const finding = groupDelivery(primary, corroborators);
+      sources.set(finding, primary);
+      return finding;
+    }
     if (!corroborators.length) return primary;
     return {
       ...primary,
@@ -5004,9 +5005,9 @@ function plainReportObject(value) {
     return false;
   }
 }
-function summaryIndex(rawFindings, findingsView, input, projected) {
+function summaryIndex(rawFindings, findingsView, input, projected, sources) {
   const reported = findingsView.order.flatMap((severity) => findingsView.buckets.get(severity));
-  if (!Array.isArray(input.delivered)) return { indexed: reported, reasons: [], references: new Map(reported.map((f) => [f, typeof f.id === 'string' && f.id ? f.id : projected.indexOf(f)])) };
+  if (!Array.isArray(input.delivered)) return { indexed: reported, reasons: [], references: new Map(reported.map((f) => [f, typeof f.id === 'string' && f.id ? f.id : projected.indexOf(sources.get(f) ?? f)])) };
   const originals = Array.isArray(input.findings) ? input.findings : [];
   const delivered = input.delivered.filter(plainReportObject);
   const deliveredOriginals = new Set(delivered);
@@ -5030,17 +5031,17 @@ function summaryIndex(rawFindings, findingsView, input, projected) {
     }
   }
   pairs.sort((left, right) => deliveryOrder.get(left.original) - deliveryOrder.get(right.original));
-  const deliveredUnits = new Map(consolidateForReport(pairs.map((pair) => pair.finding), true).map((finding) => (
-    [reportUnitKey(finding, originalByProjected.get(finding)), finding]
+  const deliveredUnits = new Map(consolidateForReport(pairs.map((pair) => pair.finding), true, sources).map((finding) => (
+    [reportUnitKey(finding, originalByProjected.get(sources.get(finding) ?? finding)), finding]
   )));
   const indexed = reported.map((finding) => deliveredUnits.get(
-    reportUnitKey(finding, originalByProjected.get(finding)),
+    reportUnitKey(finding, originalByProjected.get(sources.get(finding) ?? finding)),
   )).filter(Boolean);
   const omittedUnits = [...unitMembers].filter(([key]) => !deliveredUnits.has(key)).map(([, members]) => members);
   const reasons = [];
   const unitTier = (members) => {
     const delivered = groupDelivery(members[0], members.slice(1));
-    return delivered.report_tag ?? delivered.report_destination;
+    return delivered.report_tag;
   };
   if (typeof input.deliveryCap === 'number' && omittedUnits.some((members) => (
     input.deliveryTier !== 'main_only' || unitTier(members) === 'main'
@@ -5054,7 +5055,7 @@ function summaryIndex(rawFindings, findingsView, input, projected) {
   }
   if (!reasons.length && omittedUnits.length) reasons.push('not selected for this review');
   const references = new Map(indexed.map((finding) => [finding,
-    typeof finding.id === 'string' && finding.id ? finding.id : delivered.indexOf(originalByProjected.get(finding)),
+    typeof finding.id === 'string' && finding.id ? finding.id : delivered.indexOf(originalByProjected.get(sources.get(finding) ?? finding)),
   ]));
   return { indexed, reasons, references };
 }
@@ -5070,12 +5071,13 @@ function summaryBlock(builder, input, findingsRight = 'body') {
   const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
   const { projected, rawFindings, rawUnverified } = partitionByDisposition(inp, findingsRight);
   const local = findingsRight === 'report';
-  const findings = consolidateForReport(rawFindings, !local);
+  const sources = new WeakMap();
+  const findings = consolidateForReport(rawFindings, !local, sources);
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
   const counts = local ? localCountsSentence(findings, rawFindings.length, unverified, findingsView) : countsSentence(findings, findingsView);
   builder.add(counts);
-  const selection = summaryIndex(rawFindings, findingsView, local ? { ...inp, delivered: undefined } : inp, projected);
+  const selection = summaryIndex(rawFindings, findingsView, local ? { ...inp, delivered: undefined } : inp, projected, sources);
   const indexed = selection.indexed.filter((finding) => local || deliveryAllows(finding, 'inline'));
   const bodyCount = selection.indexed.length - indexed.length;
   const reasons = [...selection.reasons];
@@ -5636,7 +5638,7 @@ async function challengeStage(ctx, input) {
 }
 function selectDelivery(survivors, cap, tier) {
   const pool = deliveryGroups(survivors || []).filter(({ primary, corroborators }) => (
-    tier !== 'main_only' || (groupDelivery(primary, corroborators).report_tag ?? primary.report_destination) === 'main'
+    tier !== 'main_only' || groupDelivery(primary, corroborators).report_tag === 'main'
   ));
   const rankable = pool.map(({ primary, corroborators }) => groupDelivery(
     coerceReportFindings([primary])[0], coerceReportFindings(corroborators),
@@ -7645,8 +7647,8 @@ function groupingPrompt(findings) {
 function groupingSchema(ids) {
   const id = { type: 'string', enum: ids };
   return { type: 'object', properties: { groups: { type: 'array', items: {
-    type: 'object', properties: { finding_ids: { type: 'array', items: id }, lead_id: id },
-    required: ['finding_ids', 'lead_id'], additionalProperties: false,
+    type: 'object', properties: { finding_ids: { type: 'array', items: id } },
+    required: ['finding_ids'], additionalProperties: false,
   } } }, required: ['groups'], additionalProperties: false };
 }
 async function groupFindings(ctx, findings, policy = {}) {
@@ -7658,8 +7660,8 @@ async function groupFindings(ctx, findings, policy = {}) {
       model: modelFor('code-gauntlet:grouper', policy), schema: groupingSchema(grouping_ids),
     });
     return { grouping_ids, grouping_reply: grouping_reply ?? null };
-  } catch {
-    return { grouping_ids, grouping_reply: null, grouping_error: 'dispatch failed' };
+  } catch (error) {
+    return { grouping_ids, grouping_reply: null, grouping_error: `dispatch failed: ${asText(error?.message || error) || 'unknown error'}` };
   }
 }
 // --- measurementReplay.js ---

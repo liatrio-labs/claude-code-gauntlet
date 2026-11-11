@@ -174,6 +174,7 @@ class SummaryPlan:
     summary: compose.ComposedBody
     sha: str
     budget_error: str | None
+    gap: str | None = None
 
 
 class DeliverySession:
@@ -521,7 +522,10 @@ def plan_summary(
     platform: Platform,
 ) -> SummaryPlan:
     sha = resolve_marker_sha(data)
+    gap = None
     try:
+        if "review_summary" in data and data["review_summary"] is None:
+            raise compose.ReportShapeError("Invalid review_summary contract.")
         summary = compose.compose_review_body(
             data.get("review_body", ""),
             skipped_groups,
@@ -532,9 +536,18 @@ def plan_summary(
             sha=sha,
         )
     except compose.ReportShapeError as exc:
-        die(str(exc))
+        gap = f"summary: {exc}; issue index omitted"
+        summary = compose.compose_review_body(
+            compose.legacy_summary(data["findings"])["counts"],
+            skipped_groups,
+            platform=platform,
+            findings_count=len(data["findings"]),
+            sha=sha,
+        )
     error = _body_budget_error(summary.body, platform, "summary")
-    return SummaryPlan(summary, sha, error + "; nothing was posted." if error else None)
+    return SummaryPlan(
+        summary, sha, error + "; nothing was posted." if error else None, gap
+    )
 
 
 def _delivery_marker_suffix(sha: object, keys: Sequence[str]) -> str:
@@ -659,6 +672,8 @@ def post_github(
         comments.append(comment)
 
     finalized = plan_summary(data, skipped_groups, platform="github")
+    if finalized.gap:
+        session.warn_skip(finalized.gap)
     summary = finalized.summary
     payload: GitHubReviewPayload = {
         "body": summary.body,
@@ -905,6 +920,8 @@ def post_gitlab(
         finalized = plan_summary(
             {**data, "sha": sha}, summary_groups, platform="gitlab"
         )
+    if finalized.gap:
+        session.warn_skip(finalized.gap)
     composed = finalized.summary
     summary_keys: list[str] = []
     summary_sites: list[str] = []
@@ -1065,7 +1082,8 @@ def _parser() -> Parser:
     parser.add_argument(
         "--report",
         metavar="PATH",
-        help="Read the rendered report Summary section as review_body when absent.",
+        help="Deprecated compatibility option; PATH is ignored. "
+        "Summaries are rendered from findings.",
     )
     parser.add_argument("--owner", help="Override the wrapper owner field.")
     parser.add_argument("--repo", help="Override the wrapper repo field.")
@@ -1108,13 +1126,8 @@ def _execute(args: argparse.Namespace) -> int:
         value = getattr(args, name)
         if value is not None:
             raw[name] = value
-    legacy_report = (
-        args.report and not raw.get("review_body") and not raw.get("review_summary")
-    )
-    if legacy_report and not os.path.isfile(args.report):
-        die(f"Report file not found: {args.report}")
     data = validate_review_input(raw)
-    if legacy_report:
+    if not raw.get("review_body") and "review_summary" not in raw:
         data["review_summary"] = compose.legacy_summary(data["findings"])
 
     platform = data.get("platform")

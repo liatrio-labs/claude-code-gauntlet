@@ -64,7 +64,7 @@ export function measurementScenario(mode = 'return', overrides = {}, options = {
       ctx.calls.push({ prompt, ...dispatch });
       const ids = dispatch.schema.properties.groups.items.properties.lead_id.enum;
       return { groups: ['GROUP', 'CORROBORATOR'].every((id) => ids.includes(id))
-        ? [{ finding_ids: ['GROUP', 'CORROBORATOR'], lead_id: 'CORROBORATOR' }] : [] };
+        ? [{ finding_ids: ['GROUP', 'CORROBORATOR'] }] : [] };
     }
     if (label.startsWith('challenge-')) {
       ctx.calls.push({ prompt, ...dispatch });
