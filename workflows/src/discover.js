@@ -1,12 +1,12 @@
 // Summary and discovery stages, finding schemas, and scope flags.
-import { AGENT_TYPE_TEST_ANALYZER, DIMENSIONS, DISCOVERY_REVIEWERS, DISPATCH_RESULTS, modelFor, DISCOVERY_FINDING_PROP_TYPES, FINDING_REQUIRED, conditionalSchemaActive } from './registry.js';
+import { AGENT_TYPE_TEST_ANALYZER, DIMENSIONS, DISCOVERY_REVIEWERS, discoveryReviewer, DISPATCH_RESULTS, modelFor, DISCOVERY_FINDING_PROP_TYPES, FINDING_REQUIRED, conditionalSchemaActive } from './registry.js';
 import { computeLightEligible } from './knobs.js';
 import { LIMIT_DEFAULTS } from './registry.js';
 import { effectiveBucketSize } from './capacity.js';
-import { deepClone } from './wire.js';
+import { deepClone, untrustedJson } from './wire.js';
 import { checkRemovedTestAudit } from './removedTests.js';
 import { stampDiscovery, recordStage, measurementDecisions, traceDecision } from './measurementTrace.js';
-import { coverageLedger, findingInRegions, gapHunterPrompt } from './coverageLedger.js';
+import { coverageLedger, findingInRegions, gapHunterPrompt, selectGapAssignment, boundedCoverageLedger } from './coverageLedger.js';
 import { validateFindings } from './mergeFindings.js';
 
 // StructuredOutput requires an object wrapper around summary prose.
@@ -68,14 +68,14 @@ function summarizePrompt(inp, files) {
   const ctxLine = inp.contextLine || '';
   // The supplied changedLines count is authoritative; deriving it from the diff can make summary and report totals disagree.
   const countLine = summaryCountLine(inp);
-  return `${ctxLine}Changed files: ${files.join(', ')}.${countLine}`;
+  return `${ctxLine}${countLine}\n${untrustedJson({ changed_files: files }, 'changed-files')}`;
 }
 
 // The merge prompt needs the same count pin because it can otherwise reintroduce drift after bucket summaries.
 function summarizeMergePrompt(inp, partials) {
   const joined = partials.map((p) => p.summary || '').filter(Boolean).join('\n---\n');
   const countLine = summaryCountLine(inp);
-  return `Partial summaries:${countLine}\n${joined}`;
+  return `Merge the supplied partial summaries.${countLine}\n${untrustedJson({ summaries: joined }, 'partial-summaries')}`;
 }
 
 // Only fields required by every sibling dimension can safely constrain a shared dispatch.
@@ -119,10 +119,11 @@ export function agentSpecs(dims = DIMENSIONS, reviewers = dims === DIMENSIONS ? 
     spec.dispatch = 'parallel';
     return spec;
   });
-  return [...primary, ...reviewers.map((row) => {
+  return [...primary, ...reviewers.map((raw) => {
+    const row = discoveryReviewer(raw);
     const lane = agentSpecs(dims.filter((d) => d.dimension === row.dimension), [])[0];
     if (!lane) throw new Error(`Unknown discovery lane: ${row.dimension}`);
-    return { ...deepClone(lane), ...row, dimensions: [row.dimension] };
+    return { ...deepClone(lane), ...row, dimensions: [row.dimension], conditionalFlags: [row.conditionalFlag] };
   })];
 }
 
@@ -211,10 +212,9 @@ export function findingSchema(spec, policy) {
       },
       complete: { type: 'boolean', description: 'Whether investigation is finished.' },
       total_seen: { type: 'number', description: 'Number of candidates examined, including unreported ones.' },
-      read_regions: { type: 'array', items: { type: 'string' }, uniqueItems: true, description: 'Discovery region IDs actually inspected, including regions with no finding. Omit unread regions; loading the shared context alone is not investigation.' },
       ...deepClone(resultFields),
     },
-    required: ['findings', 'complete', 'total_seen', 'read_regions', ...Object.keys(resultFields)],
+    required: ['findings', 'complete', 'total_seen', ...Object.keys(resultFields)],
   };
 }
 
@@ -260,29 +260,33 @@ export async function discover(ctx, input) {
   const results = await ctx.parallel(thunks);
 
   const ledger = coverageLedger(inp.discoveryPlan, specs, results, inp.repoRoot, inp.contextLines);
-  const assigned = ledger.status === 'available'
-    ? inp.discoveryPlan.regions.filter((r) => ledger.uncovered.includes(r.id)) : [];
   const hunters = activeSpecs.filter((spec) => spec.dispatch === 'uncovered');
+  const assignment = selectGapAssignment(inp.contextPath, inp.discoveryPlan, ledger, inp.riskTable, hunters.length > 0);
+  const assigned = assignment.regions;
+  ledger.omitted = assignment.omitted;
+  ledger.assigned_bytes = assignment.bytes;
+  ledger.omitted_fact_packets = assignment.omitted_fact_packets;
   if (assigned.length && inp.contextPath) {
     const hunterResults = await ctx.parallel(hunters.map((spec) => () => ctx.agent(
-      gapHunterPrompt(inp.contextPath, inp.discoveryPlan, assigned), {
+      gapHunterPrompt(inp.contextPath, inp.discoveryPlan, assigned, assignment.facts), {
         label: spec.agentType, agentType: spec.agentType, model: modelFor(spec.agentType, policy), schema: findingSchema(spec, policy),
       })));
     hunters.forEach((spec, i) => {
       specs.push(spec);
       results.push(hunterResults[i]);
       ledger.hunters.push({ agent: spec.agentType, assigned: assigned.map((r) => r.id),
-        status: Array.isArray(hunterResults[i]?.findings) ? (hunterResults[i].complete === false ? 'incomplete' : 'complete') : 'failed',
-        read_regions: hunterResults[i]?.read_regions || [] });
+        status: Array.isArray(hunterResults[i]?.findings) ? (hunterResults[i].complete === false ? 'incomplete' : 'complete') : 'failed' });
     });
   }
 
-  const finalCoverage = coverageLedger(inp.discoveryPlan, specs, results, inp.repoRoot, inp.contextLines);
-  ledger.remaining_uncovered = finalCoverage.uncovered;
+  const finalResults = results.map((result, i) => specs[i].dispatch === 'uncovered' && Array.isArray(result?.findings)
+    ? { findings: result.findings.filter((f) => findingInRegions(f, assigned, inp.repoRoot)) } : result);
+  ledger.remaining_uncovered = coverageLedger(inp.discoveryPlan, specs, finalResults, inp.repoRoot, inp.contextLines).uncovered;
+  const ledgerGaps = [];
+  if (inp.discoveryPlan !== undefined && ledger.status !== 'available') ledgerGaps.push('discovery coverage unavailable: invalid or unavailable region plan');
+  if (assigned.length && !inp.contextPath) ledgerGaps.push('gap hunter: uncovered regions could not be dispatched without contextPath');
   const gaps = [];
-  if (inp.discoveryPlan && ledger.status !== 'available') gaps.push('discovery coverage unavailable: invalid or unavailable region plan');
-  if (assigned.length && !inp.contextPath) gaps.push('discovery coverage: uncovered regions could not be dispatched without contextPath');
-  if (ledger.invalid_receipts.length) gaps.push('discovery coverage: unknown region IDs in reviewer read receipts were ignored');
+  const hunterGaps = [];
   const findings = [];
   const intake = [];
   const rejected = [];
@@ -295,6 +299,7 @@ export async function discover(ctx, input) {
   // Failed parallel members become null in place, preserving positional attribution to the dispatched specs.
   results.forEach((res, i) => {
     const spec = specs[i];
+    const channelGaps = spec.dispatch === 'uncovered' ? hunterGaps : gaps;
     let auditLosses = [];
     if (spec.agentType === AGENT_TYPE_TEST_ANALYZER && inventory.status === 'available' && res) {
       const checked = checkRemovedTestAudit(inventory, res.removed_test_audit, inp.repoRoot);
@@ -309,14 +314,15 @@ export async function discover(ctx, input) {
       const conditionalNote = schemaActive && (spec.conditionalRequired || []).length
         ? ' (dispatch carried the conditional per-dimension schema)'
         : '';
-      gaps.push(`${spec.agentType}: agent returned null (dispatch failed) — dimensions ${spec.dimensions.join('/')} not covered${conditionalNote}`);
+      channelGaps.push(spec.dispatch === 'uncovered' ? `${spec.agentType}: assigned gap investigation failed`
+        : `${spec.agentType}: agent returned null (dispatch failed) — dimensions ${spec.dimensions.join('/')} not covered${conditionalNote}`);
       if (spec.dispatch === 'parallel') degradedDims.push(...spec.dimensions);
       return;
     }
     const list = Array.isArray(res.findings) ? res.findings : null;
     if (list === null) {
       // A malformed result provides no usable coverage and must degrade like a null result.
-      gaps.push(`${spec.agentType}: malformed result (no findings array)`);
+      channelGaps.push(`${spec.agentType}: malformed result (no findings array)`);
       if (spec.dispatch === 'parallel') degradedDims.push(...spec.dimensions);
       return;
     }
@@ -335,24 +341,26 @@ export async function discover(ctx, input) {
       }
       if (spec.dispatch === 'uncovered' && !findingInRegions(f, assigned, inp.repoRoot)) {
         rejected.push(f);
-        decisions.push(traceDecision(f, 'out_of_scope', 'gap hunter finding is outside assigned regions'));
-        gaps.push(`${spec.agentType}: finding outside assigned regions rejected`);
+        decisions.push(traceDecision(f, 'discover_scope', 'gap hunter finding is outside assigned regions'));
+        channelGaps.push(`${spec.agentType}: finding outside assigned regions rejected`);
         continue;
       }
       const checked = validateFindings([f], decisions);
-      if (checked.rejected.length) gaps.push(...checked.warnings.map((warning) => `${spec.agentType}: ${warning}`));
+      if (checked.rejected.length) channelGaps.push(...checked.warnings.map((warning) => `${spec.agentType}: ${warning}`));
       rejected.push(...checked.rejected);
       findings.push(...checked.valid);
     }
     const nearCap = discoveryCap != null && (res.total_seen >= discoveryCap || list.length >= discoveryCap);
     if (res.complete === false || nearCap) {
-      gaps.push(`${spec.agentType}: possibly incomplete (complete=${res.complete === false ? 'false' : 'true'}, total_seen=${res.total_seen}) — dimensions ${spec.dimensions.join('/')}`);
+      channelGaps.push(spec.dispatch === 'uncovered' ? `${spec.agentType}: assigned gap investigation incomplete`
+        : `${spec.agentType}: possibly incomplete (complete=${res.complete === false ? 'false' : 'true'}, total_seen=${res.total_seen}) — dimensions ${spec.dimensions.join('/')}`);
     }
   });
 
-  if (trace) trace.coverage_ledger = deepClone(ledger);
+  if (trace) trace.coverage_ledger = boundedCoverageLedger(ledger);
   if (trace) recordStage(trace, 'discover', intake, {
     decisions, coverage: gaps.length ? 'partial' : 'complete', cap: discoveryCap, cap_hit: gaps.some((gap) => gap.includes('possibly incomplete')) });
+  gaps.push(...ledgerGaps, ...hunterGaps);
 
   if (inventory.omitted > 0) removedTestAudit.omitted = inventory.omitted;
   if (removedTestAudit.status !== 'ran-clean') {
@@ -408,6 +416,6 @@ function discoverPrompt(inp, spec) {
   const ctxLine = inp.contextLine || '';
   const base = `${ctxLine}Repository: ${inp.repoRoot || '.'}.`;
   const audit = spec.agentType === AGENT_TYPE_TEST_ANALYZER
-    ? ` Removed-test inventory: ${JSON.stringify(inp.removedTests || { status: 'unavailable', items: [] })}` : '';
+    ? `\n${untrustedJson(inp.removedTests || { status: 'unavailable', items: [] }, 'removed-test-inventory')}` : '';
   return `${base}${spec.promptExtra ? ` ${spec.promptExtra}` : ''}${audit}`;
 }

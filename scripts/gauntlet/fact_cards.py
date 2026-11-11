@@ -4,20 +4,21 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import re
+import time
 from collections import Counter
-from collections.abc import Iterable
 from pathlib import Path
 from typing import Literal, TypedDict
 
-from gauntlet import proc
-from gauntlet.diff import AnnotatedDiff
-from gauntlet.location import SourceAdapter
+from gauntlet.diff import AnnotatedDiff, split_diff_lines
+from gauntlet.location import SnapshotFile, SourceAdapter
 from gauntlet.paths import NON_SOURCE_DIRS, is_test_path
 from gauntlet.registry import READ_PLAN_LINE_PREFIX_BYTES, READ_PLAN_MAX_BYTES
 
 MAX_FILES = 4000
+MAX_LISTING_BYTES = 1024 * 1024
+MAX_SCAN_SECONDS = 5.0
+MAX_CALL_LINE_BYTES = 4096
 MAX_SCAN_BYTES = 16 * 1024 * 1024
 MAX_FILE_BYTES = 256 * 1024
 _CALL = re.compile(r"\b([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*\(")
@@ -33,12 +34,27 @@ class FactCard(TypedDict):
     detail: str
 
 
+class ScanStatus(TypedDict):
+    available: bool
+    listing_truncated: bool
+    deadline_reached: bool
+    excluded: int
+    oversize: int
+    file_limit: int
+    byte_limit: int
+    unreadable: int
+    selected_files: int
+    selected_bytes: int
+    diff_limited: bool
+
+
 class FactCards(TypedDict):
     cards: list[FactCard]
     budget_bytes: int
     used_bytes: int
     omitted: int
     scan_limited: bool
+    scan: ScanStatus
 
 
 def source_path(file: str) -> bool:
@@ -71,40 +87,23 @@ def source_path(file: str) -> bool:
     )
 
 
-def _files(source: SourceAdapter) -> Iterable[str]:
-    if source.target_kind != "local":
-        if source.captured_head is None:
-            return
-        try:
-            result = proc.run_bytes(
-                ["git", "ls-tree", "-rz", "--name-only", source.captured_head],
-                cwd=str(source.root),
-                timeout=5,
-            )
-        except (OSError, proc.TimeoutExpired):
-            return
-        if result.returncode == 0:
-            for raw in result.stdout.split(b"\0"):
-                file = raw.decode("utf-8", "surrogateescape")
-                if file and source_path(file):
-                    yield file
-        return
-    for directory, dirs, files in os.walk(source.root, followlinks=False):
-        relative = Path(directory).relative_to(source.root)
-        dirs[:] = sorted(
-            d
-            for d in dirs
-            if source_path(str(relative / d)) and not (Path(directory) / d).is_symlink()
-        )
-        for name in sorted(files):
-            file = (relative / name).as_posix()
-            if source_path(file) and not (Path(directory) / name).is_symlink():
-                yield file
-
-
 def build_fact_cards(
     source: SourceAdapter, annotated: AnnotatedDiff, diff_bytes: int
 ) -> FactCards:
+    deadline = time.monotonic() + MAX_SCAN_SECONDS
+    scan: ScanStatus = {
+        "available": False,
+        "listing_truncated": False,
+        "deadline_reached": False,
+        "excluded": 0,
+        "oversize": 0,
+        "file_limit": 0,
+        "byte_limit": 0,
+        "unreadable": 0,
+        "selected_files": 0,
+        "selected_bytes": 0,
+        "diff_limited": False,
+    }
     budget = min(
         READ_PLAN_MAX_BYTES - READ_PLAN_LINE_PREFIX_BYTES - 1,
         max(4096, diff_bytes // 4),
@@ -112,27 +111,31 @@ def build_fact_cards(
     result: FactCards = {
         "cards": [],
         "budget_bytes": budget,
-        "used_bytes": 256,
+        "used_bytes": 512,
         "omitted": 0,
         "scan_limited": False,
+        "scan": scan,
     }
     changed = set(annotated.files)
     call_files: dict[str, set[str]] = {}
-    added: list[str] = []
-    removed: list[str] = []
+    old_calls: set[str] = set()
     for index, line in enumerate(
-        annotated.content.decode("utf-8", "replace").splitlines(), 1
+        split_diff_lines(annotated.content.decode("utf-8", "replace"))[0], 1
     ):
+        if time.monotonic() >= deadline:
+            scan["deadline_reached"] = scan["diff_limited"] = True
+            break
+        if len(line.encode("utf-8")) > MAX_CALL_LINE_BYTES:
+            scan["diff_limited"] = True
+            continue
         if re.match(r"N\d+ \+\|", line):
             text = line.split("|", 1)[1]
-            added.append(text)
             for call in _CALL.findall(text):
                 call_files.setdefault(call, set()).add(annotated.entries[index]["file"])
         elif re.match(r"O\d+ -\|", line):
-            removed.append(line.split("|", 1)[1])
-    old_calls = set(_CALL.findall("\n".join(removed)))
+            old_calls.update(_CALL.findall(line.split("|", 1)[1]))
     calls = sorted(
-        set(_CALL.findall("\n".join(added))) - old_calls,
+        set(call_files) - old_calls,
         key=lambda call: ("." not in call, call),
     )[:32]
     receivers = {call.split(".")[-2].lower() for call in calls if "." in call}
@@ -140,7 +143,55 @@ def build_fact_cards(
     neighbors: list[FactCard] = []
     callees: list[FactCard] = []
     siblings: list[FactCard] = []
-    loaded: dict[str, tuple[str, ...]] = {}
+    inventory = source.tracked_files(
+        source_path,
+        deadline=deadline,
+        max_listing_bytes=MAX_LISTING_BYTES,
+        priority_directories=sorted(
+            {f.rpartition("/")[0] for f in changed if "/" in f}
+        ),
+    )
+    scan["available"] = inventory.available
+    scan["listing_truncated"] = inventory.truncated
+    scan["excluded"] = inventory.excluded
+    directories = {f.rpartition("/")[0] for f in changed}
+    paths = sorted(
+        inventory.files,
+        key=lambda item: (
+            item.file not in changed,
+            Path(item.file).stem.lower() not in receivers,
+            item.file.rpartition("/")[0] not in directories,
+            is_test_path(item.file),
+            item.file,
+        ),
+    )
+    selected: list[SnapshotFile] = []
+    for index, entry in enumerate(paths):
+        if time.monotonic() >= deadline:
+            scan["deadline_reached"] = True
+            break
+        if entry.size > MAX_FILE_BYTES:
+            scan["oversize"] += 1
+        elif len(selected) >= MAX_FILES:
+            scan["file_limit"] += len(paths) - index
+            break
+        elif scan["selected_bytes"] + entry.size > MAX_SCAN_BYTES:
+            scan["byte_limit"] += 1
+        else:
+            selected.append(entry)
+            scan["selected_bytes"] += entry.size
+    scan["selected_files"] = len(selected)
+    read = source.read_snapshot(selected, deadline=deadline)
+    scan["unreadable"] = inventory.unreadable + read.unreadable
+    scan["deadline_reached"] |= read.deadline_reached
+    loaded = dict(read.files)
+    result["scan_limited"] = (
+        not inventory.available
+        or scan["diff_limited"]
+        or inventory.truncated
+        or scan["deadline_reached"]
+        or any(scan[k] for k in ("oversize", "file_limit", "byte_limit", "unreadable"))
+    )
 
     def card(
         kind: Literal["neighbor", "callee_candidate", "sibling_contrast"],
@@ -164,10 +215,12 @@ def build_fact_cards(
     for file in sorted(changed, key=lambda p: (is_test_path(p), p)):
         if not source_path(file):
             continue
-        lines = source.read(file)
+        if time.monotonic() >= deadline:
+            scan["deadline_reached"] = result["scan_limited"] = True
+            break
+        lines = loaded.get(file)
         if lines is None:
             continue
-        loaded[file] = lines
         shown = {
             entry["line"]
             for entry in annotated.entries.values()
@@ -200,29 +253,12 @@ def build_fact_cards(
                 )
             )
 
-    paths = sorted(
-        _files(source),
-        key=lambda file: (
-            Path(file).stem.lower() not in receivers,
-            file.rpartition("/")[0] not in {f.rpartition("/")[0] for f in changed},
-            file,
-        ),
-    )
-    scanned = 0
-    for index, file in enumerate(paths):
-        if index >= MAX_FILES or scanned >= MAX_SCAN_BYTES:
-            result["scan_limited"] = True
-            break
+    for file, lines in loaded.items():
         if file in changed:
             continue
-        lines = source.read(file)
-        if lines is None:
-            continue
-        size = sum(len(line.encode("utf-8")) + 1 for line in lines)
-        scanned += size
-        if size > MAX_FILE_BYTES:
-            continue
-        loaded[file] = lines
+        if time.monotonic() >= deadline:
+            scan["deadline_reached"] = result["scan_limited"] = True
+            break
         for call in calls:
             name = call.rsplit(".", 1)[-1]
             pattern = re.compile(r"(?<![\w.])" + re.escape(name) + r"\s*\(")
@@ -272,6 +308,9 @@ def build_fact_cards(
             )
 
     for file in sorted(changed, key=lambda p: (is_test_path(p), p)):
+        if time.monotonic() >= deadline:
+            scan["deadline_reached"] = result["scan_limited"] = True
+            break
         lines = loaded.get(file)
         if lines is None:
             continue
@@ -285,15 +324,18 @@ def build_fact_cards(
         ]
         if len(peers) < 3:
             continue
-        counts = Counter(
-            line
-            for _, text in peers
-            for line in {
-                s.strip()
-                for s in text
-                if s[:1].isspace() and len(re.findall(r"\w+", s)) >= 3
-            }
-        )
+        counts: Counter[str] = Counter()
+        for _, peer_text in peers:
+            if time.monotonic() >= deadline:
+                scan["deadline_reached"] = result["scan_limited"] = True
+                break
+            counts.update(
+                {
+                    line.strip()
+                    for line in peer_text
+                    if line[:1].isspace() and len(re.findall(r"\w+", line)) >= 3
+                }
+            )
         present = {line.strip() for line in lines}
         signals = sorted(
             (

@@ -17,28 +17,37 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.parametrize(
-    "template,gap",
+    "reply,gap",
     [
         (
-            "${spec.agentType}: agent returned null (dispatch failed) "
-            "\u2014 dimensions ${spec.dimensions.join('/')} not covered${conditionalNote}",
-            "code-gauntlet:test-analyzer: agent returned null (dispatch failed) "
-            "\u2014 dimensions test_coverage not covered",
+            None,
+            "code-gauntlet:test-analyzer: agent returned null (dispatch failed) — dimensions test_coverage not covered",
         ),
-        (
-            "${spec.agentType}: malformed result (no findings array)",
-            "code-gauntlet:test-analyzer: malformed result (no findings array)",
-        ),
+        ({}, "code-gauntlet:test-analyzer: malformed result (no findings array)"),
     ],
 )
-def test_discovery_failure_gap_wording_matches_producer(tmp_path, template, gap):
-    source = (ROOT / "workflows/src/discover.js").read_text(encoding="utf-8")
-    assert f"gaps.push(`{template}`);" in source
-    assert (
-        "gaps.push(`removed-test audit: ${removedTestAudit.status}"
-        "${removedTestAudit.reason ? ` (${removedTestAudit.reason})` : ''}"
-        "${removedTestAudit.omitted ? ` (${removedTestAudit.omitted} omitted)` : ''}`);"
-    ) in source
+def test_discovery_failure_gap_wording_matches_producer(tmp_path, reply, gap):
+    result = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            """
+import { readFileSync } from 'node:fs';
+import { discover } from './workflows/src/discover.js';
+const reply = JSON.parse(readFileSync(0, 'utf8'));
+const out = await discover({agent: async (_, o) => o.agentType === 'code-gauntlet:test-analyzer' ? reply : {findings: [], complete: true, total_seen: 0}, parallel: async ts => Promise.all(ts.map(t=>t()))}, {removedTests:{status:'available',items:[],omitted:0}});
+console.log(JSON.stringify(out.gaps));
+""",
+        ],
+        cwd=ROOT,
+        input=json.dumps(reply),
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=True,
+    )
+    assert any(actual.startswith(gap) for actual in json.loads(result.stdout))
     record = tmp_path / "workflows/wf_discovery.json"
     record.parent.mkdir()
     record.write_text(

@@ -177,3 +177,20 @@ export function pythonArgv(python = 'python3') {
   if (!Object.hasOwn(PYTHON_COMMAND_ARGV, python)) throw new Error('invalid python command');
   return PYTHON_COMMAND_ARGV[python];
 }
+
+// Escaping every opener keeps repository text from forging either trusted or untrusted blocks.
+export function untrustedJson(value, kind) {
+  const body = JSON.stringify(value).replace(/[<>&\u2028\u2029]/g,
+    (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  const id = fnv1a32(body).slice('fnv1a32:0x'.length);
+  return `<untrusted-code-content kind="${kind}" id="${id}">\n${body}\n</untrusted-code-content id="${id}">`;
+}
+
+export function utf8Bytes(text) {
+  let count = 0;
+  for (const ch of text) {
+    const n = ch.codePointAt(0);
+    count += n <= 0x7f ? 1 : n <= 0x7ff ? 2 : n <= 0xffff ? 3 : 4;
+  }
+  return count;
+}

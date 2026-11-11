@@ -77,9 +77,9 @@ The pipeline's declaration lives in `workflows/src/registry.js`. A field this ta
 | `confidence` | number | yes | 0-100 CERTAINTY score |
 | `dimension` | string | yes | Review dimension (bug, security, cross-file, etc.) |
 | `origin` | string | no | Blame classification stamped by `scripts/verify_findings.py`. |
-| `evidence` | string | no | Code snippet or behavior demonstrating the issue. Required and non-empty in the discovery schema. |
+| `evidence` | string | yes | Code snippet or behavior demonstrating the issue. Required and non-empty in the discovery schema. |
 | `anchor` | string | yes | Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters. |
-| `change_origin` | string | no | Relationship to this PR: introduced defect; defect in relocated, copied or newly relied-on code; or other pre-existing defect. Provenance is data, not a reason to omit a finding. |
+| `change_origin` | string | yes | Relationship to this PR: introduced defect; defect in relocated, copied or newly relied-on code; or other pre-existing defect. Provenance is data, not a reason to omit a finding. |
 | `suggested_fix_code` | string | no | Complete replacement for file lines line_start through line_end, including indentation; include line_end. Omit if uncertain or incomplete. |
 | `sites` | array | no | Additional locations of this issue. |
 | `suggestion` | string | no | Prose fix advice; rendered by `post_review.py` as a "Suggested fix:" block. |
@@ -112,6 +112,8 @@ For convention findings, `rule_source` selects the heading for `claude_md_rule`:
 | `duplicate_of` | object | simplification | no | Source reference to the existing implementation duplicated here. |
 | `precedent` | object | simplification | no | Source reference to an existing repository idiom supporting the change. |
 | `behavior_preserved` | string | simplification | no | Why the simpler equivalent preserves observable behavior. |
+
+`change_origin` is required at discovery and retained as routing data; it is excluded from public report bullets. The existing blame-based Origin line is the public provenance annotation.
 
 Required is tri-state. A `yes` field is required in the owning agent's dispatch; a `conditional` field is schema-required for its dimension on first-party direct dispatches. Runtime intake enforces both requirements for the owning row on every provider and gateway, including kind-specific evidence requirements. A `no` field is optional unless its admission kind requires it. Omit inapplicable fields; never emit null.
 

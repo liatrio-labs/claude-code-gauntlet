@@ -7,7 +7,8 @@ import json
 import os
 import re
 import stat
-from collections.abc import Mapping, Sequence
+import time
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, cast
@@ -409,6 +410,29 @@ def _local_bytes(root: Path, parts: tuple[str, ...]) -> bytes:
 
 
 @dataclass(frozen=True, slots=True)
+class SnapshotFile:
+    file: str
+    oid: str
+    size: int
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotInventory:
+    files: tuple[SnapshotFile, ...]
+    available: bool
+    truncated: bool
+    excluded: int = 0
+    unreadable: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotRead:
+    files: Mapping[str, tuple[str, ...]]
+    unreadable: int
+    deadline_reached: bool
+
+
+@dataclass(frozen=True, slots=True)
 class SourceAdapter:
     root: Path
     target_kind: TargetKind
@@ -508,6 +532,190 @@ class SourceAdapter:
             return tuple(sorted(names))
         except (OSError, ValueError, UnicodeError, proc.TimeoutExpired):
             return None
+
+    def tracked_files(
+        self,
+        include: Callable[[str], bool],
+        *,
+        deadline: float,
+        max_listing_bytes: int,
+        priority_directories: Sequence[str] = (),
+    ) -> SnapshotInventory:
+        """Use the captured tree, or the local index, as the membership authority."""
+        if time.monotonic() >= deadline:
+            return SnapshotInventory((), False, True)
+        if self.target_kind != "local" and self.captured_head is None:
+            return SnapshotInventory((), False, False)
+        command = (
+            ["git", "ls-files", "--stage", "-z"]
+            if self.target_kind == "local"
+            else [
+                "git",
+                "ls-tree",
+                "-r",
+                "-l",
+                "-z",
+                "--full-tree",
+                cast(str, self.captured_head),
+            ]
+        )
+        try:
+            directories = [
+                d for d in priority_directories if self._parts(d) is not None
+            ]
+            commands = []
+            if directories:
+                commands.append(
+                    [*command, "--", *(f":(literal){d}" for d in directories)]
+                )
+            commands.append(command)
+            remaining = max_listing_bytes
+            records: list[bytes] = []
+            limited = False
+            available = False
+            for index, query in enumerate(commands):
+                if remaining <= 0:
+                    limited = True
+                    break
+                cap = max(1, remaining // 2) if index < len(commands) - 1 else remaining
+                result = proc.run_bounded_bytes(
+                    query,
+                    cwd=str(self.root),
+                    timeout=max(0, deadline - time.monotonic()),
+                    max_output=cap,
+                )
+                remaining -= len(result.stdout)
+                if result.returncode and not result.truncated:
+                    limited = True
+                    continue
+                available = True
+                limited |= result.truncated
+                records.extend(result.stdout.split(b"\0")[:-1])
+            if not available:
+                return SnapshotInventory((), False, limited)
+            files = []
+            excluded = 0
+            unreadable = 0
+            seen: set[str] = set()
+            for record in records:
+                if time.monotonic() >= deadline:
+                    limited = True
+                    break
+                metadata, raw_path = record.split(b"\t", 1)
+                path = raw_path.decode("utf-8", "surrogateescape")
+                if path in seen:
+                    continue
+                seen.add(path)
+                parts = self._parts(path)
+                values = metadata.split()
+                if self.target_kind == "local":
+                    mode, oid, stage = values
+                    if stage != b"0":
+                        unreadable += 1
+                        continue
+                else:
+                    mode, kind, oid, raw_size = values
+                    if kind != b"blob":
+                        excluded += 1
+                        continue
+                if (
+                    mode not in (b"100644", b"100755")
+                    or parts is None
+                    or not include(path)
+                ):
+                    excluded += 1
+                    continue
+                if re.fullmatch(rb"[0-9a-f]{40,64}", oid) is None:
+                    continue
+                if self.target_kind == "local":
+                    try:
+                        if not stat.S_ISREG(_local_mode(self.root, parts)):
+                            unreadable += 1
+                            continue
+                        size = (
+                            self.root.joinpath(*parts)
+                            .stat(follow_symlinks=False)
+                            .st_size
+                        )
+                    except OSError:
+                        unreadable += 1
+                        continue
+                else:
+                    size = int(raw_size)
+                files.append(SnapshotFile(path, oid.decode("ascii"), size))
+            return SnapshotInventory(tuple(files), True, limited, excluded, unreadable)
+        except (OSError, ValueError, UnicodeError, proc.TimeoutExpired):
+            return SnapshotInventory((), False, time.monotonic() >= deadline)
+
+    def read_snapshot(
+        self, files: Sequence[SnapshotFile], *, deadline: float
+    ) -> SnapshotRead:
+        """Read only pre-budgeted tracked files, with one Git batch for a pinned tree."""
+        loaded: dict[str, tuple[str, ...]] = {}
+        if not files:
+            return SnapshotRead(loaded, 0, time.monotonic() >= deadline)
+        try:
+            if self.target_kind == "local":
+                for item in files:
+                    if time.monotonic() >= deadline:
+                        break
+                    parts = self._parts(item.file)
+                    if parts is None:
+                        continue
+                    try:
+                        with os.fdopen(_local_open(self.root, parts), "rb") as handle:
+                            before = os.fstat(handle.fileno())
+                            if (
+                                not stat.S_ISREG(before.st_mode)
+                                or before.st_size != item.size
+                            ):
+                                continue
+                            content = handle.read(item.size)
+                            after = os.fstat(handle.fileno())
+                            if (
+                                after.st_size != item.size
+                                or after.st_mtime_ns != before.st_mtime_ns
+                            ):
+                                continue
+                        decoded = _decode_source(content)
+                        if decoded is not None:
+                            loaded[item.file] = decoded
+                    except OSError:
+                        continue
+            else:
+                request = b"".join(item.oid.encode("ascii") + b"\n" for item in files)
+                result = proc.run_bounded_bytes(
+                    ["git", "cat-file", "--batch"],
+                    cwd=str(self.root),
+                    timeout=max(0, deadline - time.monotonic()),
+                    input=request,
+                    max_output=sum(item.size + 100 for item in files),
+                )
+                if result.returncode or result.truncated:
+                    return SnapshotRead({}, len(files), time.monotonic() >= deadline)
+                offset = 0
+                for item in files:
+                    end = result.stdout.index(b"\n", offset)
+                    oid, kind, size = result.stdout[offset:end].split()
+                    if (
+                        oid.decode("ascii") != item.oid
+                        or kind != b"blob"
+                        or int(size) != item.size
+                    ):
+                        raise ValueError("snapshot batch identity mismatch")
+                    offset = end + 1
+                    content = result.stdout[offset : offset + item.size]
+                    offset += item.size + 1
+                    decoded = _decode_source(content)
+                    if decoded is not None:
+                        loaded[item.file] = decoded
+            return SnapshotRead(
+                loaded, len(files) - len(loaded), time.monotonic() >= deadline
+            )
+        except (OSError, ValueError, UnicodeError, proc.TimeoutExpired):
+            return SnapshotRead(
+                loaded, len(files) - len(loaded), time.monotonic() >= deadline
+            )
 
     def valid_path(self, file: str) -> bool:
         return self._parts(file) is not None

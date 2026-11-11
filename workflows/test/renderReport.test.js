@@ -387,7 +387,7 @@ test('schema extras include a newly declared field and exclude fix code', () => 
   const dimensions = [...DIMENSIONS, {
     ...DIMENSIONS[0], schemaExtra: { custom_field: { type: 'string' }, suggested_fix_code: { type: 'string' } },
   }];
-  assert.deepEqual(report.reportExtraFields(dimensions), ['affected_consumers', 'attack_vector', 'behavior_preserved', 'candidate_tests', 'change_origin', 'criticality', 'custom_field',
+  assert.deepEqual(report.reportExtraFields(dimensions), ['affected_consumers', 'attack_vector', 'behavior_preserved', 'candidate_tests', 'criticality', 'custom_field',
     'duplicate_of', 'failure_scenario', 'hidden_errors', 'invalid_state_example', 'precedent', 'production_element', 'quality_basis', 'searched_paths', 'test_kind']);
 });
 
@@ -646,5 +646,14 @@ test('location rights govern report and summary links', () => {
       assert.ok(text.includes(member.title));
       assert.doesNotMatch(text, /RAW_SOURCE_QUOTE|987|999/);
     }
+  }
+});
+
+test('change provenance stays routing data and does not create duplicate Origin bullets', () => {
+  for (const change_origin of ['introduced', 'moved_or_carried', 'pre_existing']) {
+    const text = rendered({ findings: [finding('routing', { change_origin, origin: 'surfaced' })] });
+    assert.equal(text.includes('**Change origin:**'), false);
+    assert.equal(text.includes('**Change Origin:**'), false);
+    assert.equal((text.match(/\*\*Origin:\*\*/g) || []).length, 1);
   }
 });

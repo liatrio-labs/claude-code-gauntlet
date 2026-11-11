@@ -342,7 +342,7 @@ def test_handwritten_field_tables():
     per_dimension = table_named(tables, "Per-dimension")
     assert {field for field, cells in canonical} == set(registry()["propTypes"])
     assert {field for field, cells in per_dimension} == set(all_extras())
-    required = set(registry()["required"]) | {"anchor"}
+    required = set(registry()["required"]) | {"anchor", "evidence", "change_origin"}
     extra_required = {
         field for row in registry()["dimensions"] for field in row["requiredExtra"]
     }
@@ -578,8 +578,8 @@ def test_complete_read_contract():
         pytest.param(
             "skills/code-gauntlet/references/phase2-preparation.md",
             (
-                "contextLines",
-                "contextChars",
+                "contextReceipt",
+                "discoveryPlan",
                 "policy: { tier, subagentModel, provider, gateway",
             ),
             id="preparation-waist-instructions",

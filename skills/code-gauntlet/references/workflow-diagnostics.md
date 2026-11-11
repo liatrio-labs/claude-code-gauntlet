@@ -10,7 +10,7 @@ The workflow checkpoints stage outputs and records partial coverage as gaps. Tot
 | # | Stage | What it dispatches | Degradation |
 |---|-------|--------------------|-------------|
 | 1 | **Summarize** | `change-summarizer` (one call; fans out per-file buckets + a merge call for >500-line changes spanning multiple buckets) | empty summary + gap |
-| 2 | **Discover** | one `parallel()` fan-out to every active discovery agent (see roster) | a null member marks that agent's dimensions degraded |
+| 2 | **Discover** | primary specialist fan-out, then a bounded gap assignment on full reviews | a null primary marks its dimensions degraded; hunter failures are separate ledger diagnostics |
 | 3 | **Merge** | pure JS (no agents) — regroups + dedups discovered findings | — |
 | 4 | **Verify** | slices in order; batched `r1`, then bounded parallel `r2` singletons ([recovery contract](validation-pipeline.md#verify-stage-verifystage)) | `record_proofs` map trusted deltas to findings; `base_branch` and `diff_source` path/read gate each attempt; `n_in`, `inline_checksum` and `input_checksum` are diagnostics; only findings unresolved after recovery get `origin=unknown`; other slices unaffected; `verified=false` iff any finding degraded; loud gap per degraded slice; affected findings held back to the report |
 | 5 | **Validate** | one `validator` per batch, `parallel()`, plus one follow-up round for missing scores or assessments | a null/malformed batch or missing score after retry → affected findings `validation=skipped`, held back to the report |
@@ -37,11 +37,15 @@ The Discover stage groups the nine dimensions by agent and fans out one task per
 6. **code-simplifier** — behavior-preserving simplifications and present correctness defects. Dimension: `simplification`.
 7. **type-design-analyzer** — invariants, invalid states, and type design quality. Dimension: `type_design`.
 
-Each agent returns structured findings against the canonical schema (`agent()` `schema`), wrapped in the per-agent envelope `{ findings, complete, total_seen }`. Discovery agents receive the **context file path** (`{output_dir}/code-gauntlet-context-{head_sha_short}.md`), its **read plan**, and the repository root in the prompt; test-analyzer also receives the `removedTests` inventory. All shared context (rules, risk, diff) lives in that file, which Phase 2 wrote.
+The supplemental **gap-hunter** runs only in full scope when citation-only coverage leaves eligible regions. It uses the bug finding schema, its own producer identity and the `gap_hunt` trace category. Findings and cited evidence establish coverage; self-reported read claims do not. A skipped or failed hunter does not degrade primary dimensions or change the primary discover snapshot's coverage.
+
+Each reviewer returns `{ findings, complete, total_seen }`. `change_origin` is required at discovery and remains routing data. The primary specialists receive the shared context read plan and repository root; test-analyzer also receives the removed-test inventory. The hunter receives only framed assignment metadata, selected hunk reads and related fact reads. Its total assignment fits 24,000 bytes and 750 lines, favoring neglected files, then risk and smaller packets. The ledger records omitted regions and facts. Deletion-only packets with no surviving head anchor are not dispatched.
+
+The version-2 `coverage_ledger` in the measurement trace records citations, assigned regions, omitted-region reasons, hunter status and remaining uncited regions. Large ledgers are summarized with counts before they can displace finding history from the return budget. Null or malformed optional plans record coverage unavailable while the specialist review continues.
 
 ## Shared-context read plan
 
-Phase 2 stamps `contextLines`, `contextChars`, `contextMaxLineChars` (including LF),
+Phase 2 stamps the entire writer receipt as `contextReceipt`. The workflow derives `contextLines`, `contextChars`, `contextMaxLineChars` (including LF),
 `contextReadPlanVersion: 1`, and `contextReadChunks`: per-chunk line counts packed from actual lengths.
 The writer packs at most 750 lines and 24,000 UTF-8 bytes including LF and a 12-byte reserve per line
 for numbering. This assumes a host Read cap of 25,000 tokens and at least one input byte per text token,

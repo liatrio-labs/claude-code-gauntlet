@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from itertools import pairwise
 from typing import Literal, TypedDict
 
-from gauntlet.diff import AnnotatedDiff
+from gauntlet.diff import AnnotatedDiff, split_diff_lines
+from gauntlet.registry import READ_PLAN_LINE_PREFIX_BYTES
 
 
 class ReadRange(TypedDict):
     offset: int
     limit: int
+    bytes: int
 
 
 class Region(TypedDict):
@@ -23,19 +25,35 @@ class Region(TypedDict):
     reads: list[ReadRange]
 
 
+class FactPacket(TypedDict):
+    related_files: list[str]
+    reads: list[ReadRange]
+
+
 class DiscoveryPlan(TypedDict):
-    version: Literal[1]
+    version: Literal[2]
     status: Literal["available", "unavailable"]
     regions: list[Region]
     fact_reads: list[ReadRange]
+    fact_packets: list[FactPacket]
+
+
+def read_line_bytes(lines: Sequence[str]) -> int:
+    return sum(
+        len(line.encode("utf-8")) + 1 + READ_PLAN_LINE_PREFIX_BYTES for line in lines
+    )
 
 
 def read_ranges(
     content: str, offset: int, pack: Callable[[str], list[int]]
 ) -> list[ReadRange]:
     reads: list[ReadRange] = []
+    rows, _ = split_diff_lines(content)
+    consumed = 0
     for count in pack(content):
-        reads.append({"offset": offset, "limit": count})
+        size = read_line_bytes(rows[consumed : consumed + count])
+        reads.append({"offset": offset, "limit": count, "bytes": size})
+        consumed += count
         offset += count
     return reads
 
@@ -47,11 +65,11 @@ class RegionPlanError(ValueError):
 def changed_regions(
     annotated: AnnotatedDiff, pack: Callable[[str], list[int]]
 ) -> list[Region]:
-    lines = annotated.content.decode("utf-8", "replace").split("\n")
+    lines, _ = split_diff_lines(annotated.content.decode("utf-8", "replace"))
     starts = [
         i for i, line in enumerate(lines) if line.startswith(("@@ ", "diff --git "))
     ]
-    starts.append(len(lines) - 1)
+    starts.append(len(lines))
     regions: list[Region] = []
     for start, end in pairwise(starts):
         if not lines[start].startswith("@@ "):
@@ -92,27 +110,36 @@ class CoveredRegion(TypedDict):
     file: str
     line_start: int
     line_end: int
-    read_by: list[str]
     cited_by: list[str]
 
 
-class InvalidReceipt(TypedDict):
-    agent: str
-    ids: list[str]
+class OmittedRegion(TypedDict):
+    id: str
+    reason: Literal["budget", "no_head_anchor", "scope"]
 
 
 class HunterReceipt(TypedDict):
     agent: str
     assigned: list[str]
     status: Literal["complete", "incomplete", "failed"]
-    read_regions: list[str]
 
 
 class CoverageLedger(TypedDict):
-    version: Literal[1]
+    version: Literal[2]
     status: Literal["available", "unavailable"]
     regions: list[CoveredRegion]
     uncovered: list[str]
     remaining_uncovered: list[str]
-    invalid_receipts: list[InvalidReceipt]
+    omitted: list[OmittedRegion]
     hunters: list[HunterReceipt]
+    budget_bytes: int
+    assigned_bytes: int
+    omitted_fact_packets: int
+
+
+class TrimmedCoverageLedger(TypedDict):
+    version: Literal[2]
+    status: Literal["trimmed"]
+    region_count: int
+    uncovered_count: int
+    omitted_count: int

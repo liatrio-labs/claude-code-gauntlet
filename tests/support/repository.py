@@ -16,7 +16,13 @@ def tracked_paths(root: Path, pathspecs: Sequence[str] = ()) -> list[str]:
 
 
 def copy_generator_tree(root: Path, destination: Path, targets: Iterable[str]) -> None:
-    paths = set(targets) | set(tracked_paths(root, ("scripts/", "workflows/src/")))
+    from gauntlet.contract_gen import COMPLETE_READ_REL
+
+    paths = (
+        {COMPLETE_READ_REL}
+        | set(targets)
+        | set(tracked_paths(root, ("scripts/", "workflows/src/")))
+    )
     paths.update(
         str(p.relative_to(root)) for p in (root / "workflows/src").glob("*.js")
     )

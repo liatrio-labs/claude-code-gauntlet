@@ -1745,8 +1745,8 @@ for (const input of [
 
 test('run transports prepared region coverage into conditional discovery and its measurement', async () => {
   const A = validArgs({ measurementTrace: true, contextLines: 10,
-    discoveryPlan: { version: 1, status: 'available', fact_reads: [{ offset: 1, limit: 2 }],
-      regions: [{ id: 'only', file: 'a.js', line_start: 1, line_end: 2, reads: [{ offset: 5, limit: 2 }] }] } });
+    discoveryPlan: { version: 2, status: 'available', fact_reads: [{ offset: 1, limit: 2, bytes: 80 }], fact_packets: [],
+      regions: [{ id: 'only', file: 'a.js', line_start: 1, line_end: 2, reads: [{ offset: 5, limit: 2, bytes: 80 }] }] } });
   const ctx = makeCtx(A, { findings: [] });
   const result = await runWith(ctx, A);
   const hunter = ctx.calls.find((call) => call.label === 'code-gauntlet:gap-hunter');
@@ -1755,6 +1755,17 @@ test('run transports prepared region coverage into conditional discovery and its
   assert.equal(result.measurement.status, 'available');
   assert.deepEqual(JSON.parse(result.measurement.text).coverage_ledger.uncovered, ['only']);
   const invalid = await runWith(makeCtx(A), { ...A, discoveryPlan: { ...A.discoveryPlan, fact_reads: [{ offset: 10, limit: 2 }] } });
-  assert.equal(invalid.ok, false);
-  assert.ok(invalid.gaps.some((gap) => gap.includes('discoveryPlan')));
+  assert.equal(invalid.ok, true);
+  assert.ok(invalid.gaps.some((gap) => gap.includes('coverage unavailable')));
+});
+
+test('the whole preparation receipt carries the optional discovery plan without individual copies', async () => {
+  const A = validArgs({ contextReceipt: { contextLines: 10, contextChars: 200, contextMaxLineChars: 20,
+    contextReadPlanVersion: 1, contextReadChunks: [10],
+    discoveryPlan: { version: 2, status: 'available', fact_reads: [{ offset: 1, limit: 2, bytes: 80 }], fact_packets: [],
+      regions: [{ id: 'receipt', file: 'a.js', line_start: 1, line_end: 2, reads: [{ offset: 5, limit: 2, bytes: 80 }] }] } } });
+  const ctx = makeCtx(A, { findings: [] });
+  const result = await runWith(ctx, A);
+  assert.equal(result.ok, true);
+  assert.ok(ctx.calls.some((call) => call.agentType === 'code-gauntlet:gap-hunter'));
 });

@@ -240,12 +240,31 @@ export const DIMENSIONS = deepFreeze([
   requiredWhenDimension: [...row.requiredWhenDimension, ...(row.admission ? [row.admission.field] : [])],
 })));
 
-// Supplemental discovery roles reuse a lane; one row owns dispatch, contract and presentation.
+export const DISCOVERY_DISPATCHES = deepFreeze(['parallel', 'uncovered']);
+const DISCOVERY_REVIEWER_KEYS = ['agentType', 'dimension', 'dispatch', 'conditionalFlag', 'label', 'objective', 'tools', 'effort', 'color', 'modelOverride'];
+export function discoveryReviewer(row) {
+  if (!row || Object.keys(row).length !== DISCOVERY_REVIEWER_KEYS.length
+    || DISCOVERY_REVIEWER_KEYS.some((key) => !Object.hasOwn(row, key))
+    || !/^code-gauntlet:[a-z][a-z0-9-]*$/.test(row.agentType)
+    || !DIMENSIONS.some((d) => d.dimension === row.dimension)
+    || !DISCOVERY_DISPATCHES.includes(row.dispatch)
+    || ![null, DEEP].includes(row.conditionalFlag)
+    || !['label', 'objective'].every((key) => typeof row[key] === 'string' && row[key].trim())
+    || !Array.isArray(row.tools) || !row.tools.length || row.tools.some((t) => !['Read', 'Grep', 'Glob', 'LSP'].includes(t))
+    || !['low', 'medium', 'high'].includes(row.effort)
+    || !['red', 'blue', 'green', 'yellow', 'purple', 'cyan', 'magenta'].includes(row.color)
+    || !(row.modelOverride === null || (typeof row.modelOverride === 'string' && row.modelOverride.trim()))) {
+    throw new Error('Invalid discovery reviewer registry row');
+  }
+  return row;
+}
+
+// One row owns a supplemental role's scheduling, contract, tools and presentation.
 export const DISCOVERY_REVIEWERS = deepFreeze([
-  { agentType: 'code-gauntlet:gap-hunter', dimension: 'bug', dispatch: 'uncovered', label: 'Gap Hunter',
+  { agentType: 'code-gauntlet:gap-hunter', dimension: 'bug', dispatch: 'uncovered', conditionalFlag: DEEP, label: 'Gap Hunter',
     objective: 'Review only the supplied uncovered regions and fact cards for present defects. Return findings anchored in the assigned regions.',
-    tools: 'Read', modelOverride: null },
-]);
+    tools: ['Read'], effort: 'high', color: 'cyan', modelOverride: 'sonnet' },
+].map(discoveryReviewer));
 
 export const VERIFY_REFERENCE_FIELDS = deepFreeze(Object.keys(SOURCE_REFERENCE.properties));
 export const VERIFY_REFERENCE_DESCRIPTORS = deepFreeze(Object.fromEntries(Object.entries(Object.assign({}, ...DIMENSIONS.map((row) => row.schemaExtra)))
@@ -601,6 +620,6 @@ export function identityCheck(identity, name, fields = PR_IDENTITY_FIELDS) {
 export const REPORT_PLACED_FIELDS = deepFreeze([
   'sites',
   'id', 'file', 'line_start', 'line_end', 'title', 'description', 'severity',
-  'confidence', 'dimension', 'origin', 'evidence', 'suggestion',
+  'confidence', 'dimension', 'origin', 'change_origin', 'evidence', 'suggestion',
   'claude_md_rule', 'rule_source', 'spec_text', 'cross_file_refs',
 ]);

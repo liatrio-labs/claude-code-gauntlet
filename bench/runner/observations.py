@@ -33,6 +33,7 @@ Dimension = Literal[
     "comment_accuracy",
     "type_design",
     "simplification",
+    "gap_hunt",
     "unknown",
 ]
 Outcome = Literal["matched", "missed", "operational_failure", "unavailable"]
@@ -66,6 +67,7 @@ REQUIRED_STAGES = tuple(
 )
 LossStage = Literal[
     "not_found",
+    "discover",
     "verify",
     "validate",
     "challenge",
@@ -116,6 +118,7 @@ ReasonCode = Literal[
     "demoted",
     "refuted",
     "out_of_scope",
+    "discover_scope",
     "scope_contradicted",
     "cite_unmatched",
     "cite_unavailable",

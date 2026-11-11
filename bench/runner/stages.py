@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, TypedDict, get_args
 
-from gauntlet.discovery_plan import CoverageLedger
+from gauntlet.discovery_plan import CoverageLedger, TrimmedCoverageLedger
 from gauntlet.registry import QualityBasis, TestKind
 
 from bench.runner.contracts import ScoreRef, artifact_allowed, exclusive_json
@@ -110,7 +110,7 @@ class MeasurementTrace:
     snapshots: tuple[StageSnapshot, ...]
     complete: bool
     dropped_stages: tuple[Stage, ...] = ()
-    coverage_ledger: CoverageLedger | None = None
+    coverage_ledger: CoverageLedger | TrimmedCoverageLedger | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,6 +255,7 @@ def render_claim(finding):
 
 
 REASON_LOSS_STAGES: dict[ReasonCode, LossStage] = {
+    "discover_scope": "discover",
     "validation_skipped": "validate",
     "verify_unproven": "verify",
     "challenge_failed": "challenge",
@@ -380,6 +381,28 @@ def _trace_loss(bug, trace, versions, trace_ids, judged):
             status="established",
         )
     trace_ids = set(trace_ids)
+    discovery = next((s for s in trace.snapshots if s.stage == "discover"), None)
+    if discovery:
+        scope_loss = next(
+            (
+                d
+                for d in discovery.decisions
+                if d.trace_id in trace_ids
+                and d.reason_code == "discover_scope"
+                and d.decision == "eliminated"
+            ),
+            None,
+        )
+        if scope_loss:
+            return Loss(
+                stage="discover",
+                physical_stage="discover",
+                reason_code=scope_loss.reason_code,
+                reason=scope_loss.reason,
+                trace_ids=tuple(sorted(trace_ids)),
+                evidence_refs=(f"snapshot:{discovery.sequence}",),
+                status="established",
+            )
     previous = set(trace_ids)
     for snapshot in trace.snapshots[1:]:
         if not snapshot.executed or snapshot.coverage == "unavailable":

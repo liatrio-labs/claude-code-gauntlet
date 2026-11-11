@@ -21,8 +21,11 @@ from gauntlet.cli import (
 from gauntlet.diff import ContextMap, ContextMapEntry, DiffStructureError, annotate_diff
 from gauntlet.discovery_plan import (
     DiscoveryPlan,
+    FactPacket,
+    ReadRange,
     RegionPlanError,
     changed_regions,
+    read_line_bytes,
     read_ranges,
 )
 from gauntlet.fact_cards import build_fact_cards
@@ -247,6 +250,7 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
     if not presentation.endswith(b"\n"):
         presentation += b"\n"
     triage = triage.strip(b"\r\n")
+    fact_cards = None
     facts = b"Fact cards unavailable: repository root not supplied."
     layout = b"Layout unavailable: repository root not supplied."
     if args.repo_root:
@@ -260,14 +264,21 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
             Path(args.repo_root).resolve(), args.target_type, args.head_sha_full
         )
         if status == "available":
+            fact_cards = build_fact_cards(source, annotated, len(diff))
+            metadata = json.dumps(
+                {k: v for k, v in fact_cards.items() if k != "cards"}, ensure_ascii=True
+            )
+            fact_body = (
+                metadata[:-1]
+                + ', "cards": [\n'
+                + ",\n".join(
+                    json.dumps(card, ensure_ascii=True) for card in fact_cards["cards"]
+                )
+                + "\n]}\n"
+            )
             facts = frame(
                 "untrusted-code-content",
-                json.dumps(
-                    build_fact_cards(source, annotated, len(diff)), ensure_ascii=True
-                )
-                .replace("<", "\\u003c")
-                .encode("utf-8")
-                + b"\n",
+                fact_body.replace("<", "\\u003c").encode("utf-8"),
                 {"kind": "fact-cards"},
             )
         else:
@@ -292,43 +303,74 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
         regions, plan_status = [], "unavailable"
     if len(regions) > READ_PLAN_MAX_CHUNKS:
         regions, plan_status = [], "unavailable"
-    region_index = b"\n\n## Discovery regions: [id, head start, head end] by file\n\n"
-    previous_file = None
+    grouped: dict[str, list[list[object]]] = {}
     for region in regions:
-        if region["file"] != previous_file:
-            region_index += ("File: " + _layout_json(region["file"]) + "\n").encode(
-                "utf-8"
-            )
-            previous_file = region["file"]
-        region_index += (
-            json.dumps([region["id"], region["line_start"], region["line_end"]]) + "\n"
-        ).encode("utf-8")
-    prefix = (
+        grouped.setdefault(region["file"], []).append(
+            [region["id"], region["line_start"], region["line_end"]]
+        )
+    groups = [
+        json.dumps(file, ensure_ascii=True)
+        + ": [\n"
+        + ",\n".join(json.dumps(item) for item in items)
+        + "\n]"
+        for file, items in grouped.items()
+    ]
+    index_text = ("{\n" + ",\n".join(groups) + "\n}" if groups else "{}") + "\n"
+    region_index = (
+        b"\n\n## Discovery regions: [id, head start, head end] by file\n\n"
+        + frame(
+            "untrusted-code-content",
+            index_text.replace("<", "\\u003c").encode("utf-8"),
+            {"kind": "discovery-regions"},
+        )
+    )
+    before_facts = (
         rules
         + b"\n## Risk classification and AI-generated-code status\n\n"
         + triage
         + description
         + layout
         + region_index
-        + b"\n\n## Fact cards: bounded lexical evidence\n\n"
-        + facts
-        + b"\n\n## Diff\n\n"
     )
+    fact_section = b"\n\n## Fact cards: bounded lexical evidence\n\n" + facts
+    prefix = before_facts + fact_section + b"\n\n## Diff\n\n"
     content = prefix + frame("untrusted-code-content", presentation) + b"\n"
-    fact_start = prefix.index(b"\n\n## Fact cards: bounded lexical evidence\n\n")
-    fact_offset = prefix[:fact_start].count(b"\n") + 2
-    fact_text = (
-        prefix[fact_start + 1 :]
-        .removesuffix(b"\n\n## Diff\n\n")
-        .decode("utf-8", "replace")
-        + "\n"
-    )
+    fact_offset = before_facts.count(b"\n") + 2
+    fact_text = fact_section[1:].decode("utf-8", "replace") + "\n"
     fact_reads = read_ranges(fact_text, fact_offset, context_read_chunks)
+    fact_packets: list[FactPacket] = []
+    if fact_cards is not None and fact_cards["cards"]:
+        frame_offset = before_facts.count(b"\n") + 5
+        rows = facts.decode("utf-8").split("\n")
+
+        def packet_read(start: int, count: int) -> list[ReadRange]:
+            return read_ranges(
+                "\n".join(rows[start : start + count]) + "\n",
+                frame_offset + start,
+                context_read_chunks,
+            )
+
+        for index, card in enumerate(fact_cards["cards"]):
+            fact_packets.append(
+                {
+                    "related_files": card["related_files"],
+                    "reads": [
+                        *packet_read(0, 2),
+                        *packet_read(index + 2, 1),
+                        *packet_read(len(rows) - 2, 2),
+                    ],
+                }
+            )
     # Framing adds one opening LF and never changes body LF counts.
     offset = prefix.count(b"\n") + 1
+    rendered_rows = content.decode("utf-8", "replace").split("\n")
     for region in regions:
         for read in region["reads"]:
             read["offset"] += offset
+            start = read["offset"] - 1
+            read["bytes"] = read_line_bytes(
+                rendered_rows[start : start + read["limit"]]
+            )
     sidecar: ContextMap = {
         "version": 1,
         "sha": args.head_sha,
@@ -346,9 +388,9 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
             f"cannot write context file ({exc.strerror or exc})", 2
         ) from exc
     try:
-        with open(map_path, "w", encoding="utf-8", newline="") as fh:
-            json.dump(sidecar, fh, ensure_ascii=True)
-            fh.write("\n")
+        with open(map_path, "w", encoding="utf-8", newline="") as map_fh:
+            json.dump(sidecar, map_fh, ensure_ascii=True)
+            map_fh.write("\n")
     except OSError as exc:
         raise UsageError(
             f"cannot write context map ({exc.strerror or exc})", 2
@@ -358,10 +400,11 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
     decoded = content.decode("utf-8", errors="replace")
     chars = len(decoded)
     discovery_plan: DiscoveryPlan = {
-        "version": 1,
+        "version": 2,
         "status": plan_status,
         "regions": regions,
         "fact_reads": fact_reads,
+        "fact_packets": fact_packets,
     }
     return {
         "contextLines": lines,

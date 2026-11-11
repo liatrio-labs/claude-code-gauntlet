@@ -240,3 +240,20 @@ test('measured persistence records native UTF-8 hashes, results and thrown error
   const full = { ...envelope, text: 'x'.repeat(1100000) };
   assert.equal(appendDeliveryReplay(full, large), full);
 });
+
+test('coverage ledger cannot displace finding history from the trace return budget', () => {
+  const trace = createMeasurementTrace('ledger-budget');
+  const finding = makeFinding('kept');
+  stampDiscovery(trace, finding, { agentType: 'code-gauntlet:bug-detector', dimensions: ['bug'] }, 0, 0);
+  recordStage(trace, 'discover', [finding]);
+  trace.coverage_ledger = { version: 2, status: 'available', regions: Array.from({ length: 2000 }, (_, i) => ({ id: `region${i}`, file: 'x'.repeat(1000), line_start: 1, line_end: 2, cited_by: [] })),
+    uncovered: [], remaining_uncovered: [], omitted: [], hunters: [], budget_bytes: 24000, assigned_bytes: 0, omitted_fact_packets: 0 };
+  const result = appendMeasurement({ ok: true }, trace);
+  assert.equal(result.measurement.status, 'available');
+  const saved = JSON.parse(result.measurement.text);
+  assert.equal(saved.coverage_ledger.status, 'trimmed');
+  assert.equal(saved.coverage_ledger.region_count, 2000);
+  assert.equal(saved.versions[0].finding.id, 'kept');
+  assert.equal(saved.snapshots[0].coverage, 'complete');
+  assert.ok(JSON.stringify(result).length <= RETURN_CHAR_BUDGET);
+});

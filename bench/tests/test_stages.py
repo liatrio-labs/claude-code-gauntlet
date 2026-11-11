@@ -448,7 +448,7 @@ def test_trace_vocabularies_match_workflow_source():
                 "node",
                 "--input-type=module",
                 "-e",
-                "import {TRACE_STAGES,TRACE_REASONS} from './workflows/src/measurementTrace.js'; import {DIMENSIONS} from './workflows/src/registry.js'; console.log(JSON.stringify([TRACE_STAGES,TRACE_REASONS,[...new Set(DIMENSIONS.map(d => d.dimension)), 'unknown']]));",
+                "import {TRACE_STAGES,TRACE_REASONS,TRACE_DISCOVERY_DIMENSIONS} from './workflows/src/measurementTrace.js'; console.log(JSON.stringify([TRACE_STAGES,TRACE_REASONS,TRACE_DISCOVERY_DIMENSIONS]));",
             ],
             cwd=ROOT,
             text=True,
@@ -602,3 +602,66 @@ def test_collection_hashes_top_level_trace_and_persists_availability(tmp_path):
     assert stages.collect_trace(directory) == collected
     missing = stages.collect_trace(tmp_path / "missing")
     assert missing.status == "unavailable" and missing.reason
+
+
+def test_discovery_scope_rejection_keeps_discover_loss_attribution(
+    tmp_path, monkeypatch
+):
+    from bench.runner.contracts import ScoreRef
+
+    trace, path, _ = emit_trace(tmp_path)
+    version = trace.versions[0]
+    version = replace(
+        version,
+        discovery_agent="gap-hunter",
+        discovery_dimension="gap_hunt",
+        finding={
+            **version.finding,
+            "discovery_agent": "gap-hunter",
+            "discovery_dimension": "gap_hunt",
+        },
+    )
+    snapshots = tuple(
+        replace(
+            s,
+            finding_version_ids=(version.version_id,) if s.stage == "discover" else (),
+            decisions=(
+                stages.StageDecision(
+                    version.trace_id,
+                    "eliminated",
+                    "discover_scope",
+                    "outside assignment",
+                    (),
+                ),
+            )
+            if s.stage == "discover"
+            else (),
+            coverage="complete",
+        )
+        for s in trace.snapshots
+    )
+    trace = replace(trace, versions=(version,), snapshots=snapshots)
+    path.write_text(json.dumps(asdict(trace)), encoding="utf-8", newline="")
+    trace = stages.load_trace(path, expected_sha256=file_hash(path))
+    bug = observations.BugObservation(
+        1,
+        ScoreRef("run", "epoch", "score"),
+        "url",
+        "attempt",
+        "bug",
+        None,
+        "missed",
+        (),
+        (),
+        None,
+    )
+    monkeypatch.setattr(
+        stages,
+        "_version_results",
+        lambda *_args: {("url", version.version_id): {"bug": True}},
+    )
+    rows = stages.capture_score({"url": (path, trace)}, (bug,), None, {}, {}, {}, {})
+    loss = next(r.loss for r in rows if r.stage == "deliver")
+    assert loss.stage == loss.physical_stage == "discover"
+    assert loss.reason_code == "discover_scope" and loss.status == "established"
+    assert dict(stages.loss_funnel(rows, population=("bug",)).losses)["discover"] == 1

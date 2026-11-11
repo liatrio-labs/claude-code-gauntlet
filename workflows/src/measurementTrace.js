@@ -1,5 +1,8 @@
+import { DIMENSIONS } from './registry.js';
+import { boundedCoverageLedger } from './coverageLedger.js';
 import { deepClone, RETURN_CHAR_BUDGET } from './wire.js';
 
+export const TRACE_DISCOVERY_DIMENSIONS = [...new Set(DIMENSIONS.map((d) => d.dimension)), 'gap_hunt', 'unknown'];
 export const TRACE_STAGES = ['discover', 'merge', 'verify', 'validate', 'filter', 'admission', 'challenge', 'cite', 'dispose', 'holdback', 'select', 'deliver'];
 // Bench discovery rendering, delivery provenance/replay, admission comparisons and description evaluation
 // determine the kept fields. The generated Python registry shares this list; bench tests guard reader coverage.
@@ -8,7 +11,7 @@ export const TRACE_FINDING_FIELDS = ['trace_id', 'discovery_agent', 'discovery_d
   'title', 'description', 'body', 'evidence', 'severity', 'suggestion', 'suggested_fix_code', 'claude_md_rule', 'spec_text',
   'change_origin', 'rule_source', 'agent', 'dimension', 'confidence', 'sites', 'admission', 'disposition', 'disposition_reasons',
   'consolidation_key', 'consolidation_primary', 'delivery_group', 'origin_dimension', 'policy_subject', 'path_role'];
-export const TRACE_REASONS = ['not_found', 'duplicate_id', 'invalid_shape', 'invalid_path', 'audit_overlap', 'verify_eliminated', 'verify_unproven', 'validation_skipped', 'threshold', 'exclusion', 'injection', 'suppression', 'challenge_removed', 'challenge_downgraded_removed', 'challenge_failed', 'challenge_cap', 'delivery_cap', 'delivery_tier', 'unanchored', 'body_budget', 'post_omission', 'body_routed', 'report_only', 'held_back', 'folded', 'demoted', 'refuted', 'out_of_scope', 'scope_contradicted', 'cite_unmatched', 'cite_unavailable', 'unknown'];
+export const TRACE_REASONS = ['not_found', 'duplicate_id', 'invalid_shape', 'invalid_path', 'audit_overlap', 'verify_eliminated', 'verify_unproven', 'validation_skipped', 'threshold', 'exclusion', 'injection', 'suppression', 'challenge_removed', 'challenge_downgraded_removed', 'challenge_failed', 'challenge_cap', 'delivery_cap', 'delivery_tier', 'unanchored', 'body_budget', 'post_omission', 'body_routed', 'report_only', 'held_back', 'folded', 'demoted', 'refuted', 'out_of_scope', 'discover_scope', 'scope_contradicted', 'cite_unmatched', 'cite_unavailable', 'unknown'];
 const traceHistory = new WeakMap();
 const stageDecisions = new WeakMap();
 export const decisionsFor = (output) => stageDecisions.get(output) || [];
@@ -49,7 +52,7 @@ export function stampDiscovery(trace, finding, spec, dispatch, occurrence) {
   const out = finding;
   out.trace_id = `${trace.run_nonce}:${dispatch}:${occurrence}`;
   out.discovery_agent = spec.agentType.split(':').pop();
-  out.discovery_dimension = spec.dimensions.includes(out.dimension) ? out.dimension : 'unknown';
+  out.discovery_dimension = spec.dispatch === 'uncovered' ? 'gap_hunt' : spec.dimensions.includes(out.dimension) ? out.dimension : 'unknown';
   return out;
 }
 
@@ -87,6 +90,10 @@ export function appendMeasurement(envelope, trace) {
   const candidate = deepClone(trace);
   const available = () => ({ ...envelope, measurement: { status: 'available', text: JSON.stringify(candidate) } });
   let result = available();
+  if (JSON.stringify(result).length > RETURN_CHAR_BUDGET && candidate.coverage_ledger) {
+    candidate.coverage_ledger = boundedCoverageLedger(candidate.coverage_ledger, 0);
+    result = available();
+  }
   // Keep the discovery prefix longest, and never turn a cut stage into an observed empty set.
   for (const snapshot of [...candidate.snapshots].reverse()) {
     if (JSON.stringify(result).length <= RETURN_CHAR_BUDGET) return result;

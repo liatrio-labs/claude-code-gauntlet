@@ -171,3 +171,14 @@ def test_run_preserves_subprocess_failure_types(monkeypatch, failure):
             proc.run(["git", "status"], check=True)
         assert caught.value.cmd == ["git", "status"]
         assert caught.value.stderr == "failed"
+
+
+def test_bounded_capture_stops_before_materialising_unlimited_child_output(tmp_path):
+    result = proc.run_bounded_bytes(
+        [sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'x' * 1000000)"],
+        cwd=str(tmp_path),
+        timeout=5,
+        max_output=100,
+    )
+    assert result.truncated
+    assert result.stdout == b"x" * 100

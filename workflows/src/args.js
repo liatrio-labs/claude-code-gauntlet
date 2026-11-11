@@ -7,7 +7,6 @@ import { KNOB_REGISTRY, computeLightEligible, receiptEntryFor, receiptEntryForKe
 import { deriveWhenHolds, deriveConfigWaist, configEchoValue, validateConfigEcho } from './knobs.js';
 import { PYTHON_COMMAND_ARGV, dottedValue, isPlainObject, deepFreeze, fnv1a32, normalizeReviewText } from './wire.js';
 import { buildReviewConfig, loadExclusions } from './reviewConfig.js';
-import { validDiscoveryPlan } from './coverageLedger.js';
 import { validateRemovedTests } from './removedTests.js';
 
 export function resolveRemovedTestsArgs(args) {
@@ -284,7 +283,10 @@ export function stripNullOptionalsReport(args, descriptors = KNOB_REGISTRY) {
 // Strip nulls before receipt derivation so newly absent fields can be filled and their drops tracked.
 export function normalizeArgsReport(raw, descriptors = KNOB_REGISTRY) {
   const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-  const report = stripNullOptionalsReport(parsed, descriptors);
+  const receiptFields = ['contextLines', 'contextChars', 'contextMaxLineChars', 'contextReadPlanVersion', 'contextReadChunks', 'removedTests', 'discoveryPlan'];
+  const withContext = isPlainObject(parsed?.contextReceipt) ? { ...parsed,
+    ...Object.fromEntries(receiptFields.filter((key) => Object.hasOwn(parsed.contextReceipt, key)).map((key) => [key, parsed.contextReceipt[key]])) } : parsed;
+  const report = stripNullOptionalsReport(withContext, descriptors);
   const { args, derivedPaths } = deriveConfigWaist(report.args, descriptors);
   report.args = args;
   report.derivedPaths = derivedPaths;
@@ -670,7 +672,6 @@ export function validateArgs(args, descriptors = KNOB_REGISTRY) {
       }
     }
   }
-  if (args.discoveryPlan !== undefined && !validDiscoveryPlan(args.discoveryPlan, args.contextLines)) errors.push('discoveryPlan must be a measured region plan within contextLines');
   return { ok: errors.length === 0, errors };
 }
 

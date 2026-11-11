@@ -24,6 +24,7 @@ HEADLESS = "skills/code-gauntlet/references/headless-mode.md"
 DELIVER_PHASE = "skills/code-gauntlet/references/phase8-delivery.md"
 TARGETS = (
     ".claude-plugin/plugin.json",
+    "skills/code-gauntlet/references/complete-read-contract.md",
     "agents/gap-hunter.md",
     "agents/bug-detector.md",
     "agents/type-design-analyzer.md",
@@ -321,7 +322,7 @@ def test_site_descriptor_gates_discovery_consumers(
 import { normalizePhaseFindings } from './workflows/src/checkpoints.js';
 import { discover } from './workflows/src/discover.js';
 const schemas = {};
-await discover({agent: async (_, o) => { schemas[o.label] = o.schema; return {findings:[], complete:true, total_seen:0, removed_test_audit:[]}; }, parallel: async ts => Promise.all(ts.map(t=>t()))}, {});
+await discover({agent: async (_, o) => { schemas[o.label] = o.schema; return {findings:[], complete:true, total_seen:0, removed_test_audit:[]}; }, parallel: async ts => Promise.all(ts.map(t=>t()))}, {contextPath:'/context',contextLines:10,discoveryPlan:{version:2,status:'available',fact_reads:[{offset:1,limit:1,bytes:30}],fact_packets:[],regions:[{id:'gap',file:'source',line_start:1,line_end:2,reads:[{offset:3,limit:2,bytes:100}]}]}});
 const out = { findings: [{file:'main.txt', related:[{path:'/repo/ok.txt',active:true},{path:'../escape',active:false}], sites:[{file:'../escape',line_start:1,line_end:1,anchor:'q'}]}] };
 normalizePhaseFindings('discover', out, false, {repoRoot:'/repo'});
 console.log(JSON.stringify({out, schemas}, (key, value) => key === '$comment' ? undefined : value));
@@ -336,11 +337,7 @@ console.log(JSON.stringify({out, schemas}, (key, value) => key === '$comment' ? 
     ]
     assert value["out"]["findings"][0]["sites"] == []
     assert len(value["out"]["gaps"]) == 2
-    assert {
-        agent: schema
-        for agent, schema in contracts.items()
-        if agent in value["schemas"]
-    } == value["schemas"]
+    assert contracts == value["schemas"]
     for schema in value["schemas"].values():
         item = schema["properties"]["findings"]["items"]
         properties = item["properties"]
@@ -392,18 +389,14 @@ def test_anchor_descriptor_generates_all_consumers(registry_tree, invoke):
             + "await discover({agent: async (_, options) => {"
             + "schemas[options.label] = options.schema;"
             + "return {findings: [], complete: true, total_seen: 0, removed_test_audit: []};"
-            + "}, parallel: async tasks => Promise.all(tasks.map(task => task()))}, {});"
+            + "}, parallel: async tasks => Promise.all(tasks.map(task => task()))}, {contextPath:'/context',contextLines:10,discoveryPlan:{version:2,status:'available',fact_reads:[{offset:1,limit:1,bytes:30}],fact_packets:[],regions:[{id:'gap',file:'source',line_start:1,line_end:2,reads:[{offset:3,limit:2,bytes:100}]}]}});"
             + "console.log(JSON.stringify(schemas, (key, value) => key === '$comment' ? undefined : value));",
         ],
         cwd=str(registry_tree),
         check=True,
     )
     schemas = json.loads(dispatched.stdout)
-    assert set(schemas) == {
-        c["agentType"]
-        for c in after["discoveryContracts"]
-        if not c.get("generatedRole")
-    }
+    assert set(schemas) == set(after["agents"])
     for schema in schemas.values():
         item = schema["properties"]["findings"]["items"]
         assert item["properties"]["anchor"] == {**anchor, "minLength": 1}
@@ -432,10 +425,7 @@ def test_anchor_descriptor_generates_all_consumers(registry_tree, invoke):
         schema = json.loads(
             re.search(r"```json\n(.*?)\n```", blocks[0], re.DOTALL).group(1)
         )
-        expected = next(
-            c["schema"] for c in after["discoveryContracts"] if c["agentType"] == agent
-        )
-        assert schema == expected
+        assert schema == schemas[agent]
         assert generated_block.sub("", contract) == generated_block.sub("", original)
     namespace: dict[str, Any] = {}
     exec(
@@ -1246,7 +1236,7 @@ def test_supplemental_reviewer_registration_generates_agent_manifest_and_dispatc
 ):
     source = registry_tree / "workflows/src/registry.js"
     original = source.read_text(encoding="utf-8")
-    row = "  { agentType: 'code-gauntlet:probe-reader', dimension: 'bug', dispatch: 'uncovered', label: 'Probe', objective: 'Inspect assigned regions.', tools: 'Read', modelOverride: null },\n"
+    row = "  { agentType: 'code-gauntlet:probe-reader', dimension: 'bug', dispatch: 'uncovered', conditionalFlag: 'deep', label: 'Probe', objective: 'Inspect assigned regions.', tools: ['Read'], effort: 'high', color: 'cyan', modelOverride: 'sonnet' },\n"
     source.write_text(
         original.replace(
             "export const DISCOVERY_REVIEWERS = deepFreeze([\n",
@@ -1262,7 +1252,7 @@ def test_supplemental_reviewer_registration_generates_agent_manifest_and_dispatc
     )
     assert result.returncode == 0, result.stderr
     contract = (registry_tree / "agents/probe-reader.md").read_text(encoding="utf-8")
-    assert "tools: Read" in contract and "Inspect assigned regions." in contract
+    assert 'tools: "Read"' in contract and "Inspect assigned regions." in contract
     manifest = json.loads(
         (registry_tree / ".claude-plugin/plugin.json").read_text(encoding="utf-8")
     )
@@ -1276,7 +1266,7 @@ def test_supplemental_reviewer_registration_generates_agent_manifest_and_dispatc
 import { discover } from './workflows/src/discover.js';
 const labels = [];
 await discover({agent: async (_, opts) => {labels.push(opts.agentType); return {findings:[],complete:true,total_seen:0,read_regions:[],removed_test_audit:[]};},parallel:async ts=>Promise.all(ts.map(t=>t()))},
-{contextPath:'/prepared', contextLines:10, discoveryPlan:{version:1,status:'available',fact_reads:[{offset:1,limit:2}],regions:[{id:'unread',file:'source',line_start:1,line_end:2,reads:[{offset:3,limit:2}]}]}});
+{contextPath:'/prepared', contextLines:10, discoveryPlan:{version:2,status:'available',fact_reads:[{offset:1,limit:2,bytes:50}],fact_packets:[],regions:[{id:'unread',file:'source',line_start:1,line_end:2,reads:[{offset:3,limit:2,bytes:100}]}]}});
 console.log(JSON.stringify(labels));
 """,
         ],
@@ -1284,3 +1274,46 @@ console.log(JSON.stringify(labels));
         check=True,
     )
     assert "code-gauntlet:probe-reader" in json.loads(result.stdout)
+
+
+def test_supplemental_role_frontmatter_and_read_contract_have_single_owners(
+    registry_tree, invoke
+):
+    source = registry_tree / "workflows/src/registry.js"
+    original = source.read_text(encoding="utf-8")
+    objective = 'Quoted: "value"\nname: shadow'
+    changed = original.replace(
+        "objective: 'Review only the supplied uncovered regions and fact cards for present defects. Return findings anchored in the assigned regions.'",
+        "objective: " + json.dumps(objective),
+    )
+    changed = changed.replace(
+        "tools: ['Read'], effort: 'high', color: 'cyan', modelOverride: 'sonnet'",
+        "tools: ['Read', 'Grep'], effort: 'medium', color: 'purple', modelOverride: 'haiku'",
+    )
+    assert changed != original
+    source.write_text(changed, encoding="utf-8", newline="")
+    canonical = (
+        registry_tree / "skills/code-gauntlet/references/complete-read-contract.md"
+    )
+    text = canonical.read_text(encoding="utf-8").replace(
+        "check that you reached the measured end or exhaust the file.",
+        "CANONICAL_READ_SENTINEL.",
+    )
+    canonical.write_text(text, encoding="utf-8", newline="")
+    result = invoke(
+        "generate_contract_requirements",
+        ["--repo-root", str(registry_tree)],
+        registry_tree,
+    )
+    assert result.returncode == 0, result.stderr
+    generated = (registry_tree / "agents/gap-hunter.md").read_text(encoding="utf-8")
+    header = generated.split("---\n", 2)[1]
+    fields = {
+        key: json.loads(value)
+        for key, value in (line.split(": ", 1) for line in header.split("\n") if line)
+    }
+    assert fields["description"] == objective
+    assert fields["effort"] == "medium" and fields["color"] == "purple"
+    assert fields["model"] == "haiku" and fields["tools"] == "Read, Grep"
+    assert fields["name"] == "gap-hunter"
+    assert "CANONICAL_READ_SENTINEL" in generated

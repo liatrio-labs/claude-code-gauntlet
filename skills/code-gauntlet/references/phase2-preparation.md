@@ -283,7 +283,7 @@ CODE_GAUNTLET_TRIAGE_{nonce}
 The quoted delimiter passes the text verbatim. Never pipe it through `echo` or unquote the delimiter.
 The nonce in the delimiter keeps any line of the text from ending it.
 Use `configResult.identity.repo_root` for `{repo_root}`.
-Stamp the printed `contextLines`, `contextChars`, `contextMaxLineChars`, `contextReadPlanVersion`, `contextReadChunks` and `removedTests` into the args waist verbatim, never estimated, carried over or re-derived.
+Stamp the entire printed receipt as `args.contextReceipt`, verbatim. The workflow derives the measured context fields, `removedTests` and `discoveryPlan` from that object; do not copy these fields independently or estimate them.
 An exit 2 wrote no usable context; stop and report its one-line error.
 `scripts/gauntlet/shared_context.py`'s docstring holds the content and measurement rules.
 
@@ -296,7 +296,7 @@ An exit 2 wrote no usable context; stop and report its one-line error.
   repoRoot: configResult.identity.repo_root, outputDir, headShaShort, nonce, generatedAt,
   python,
   diffPath, changedFilesPath, reviewConfigPath,
-  removedTests: contextReceipt.removedTests,  // verbatim saved-diff inventory and checksum
+  contextReceipt,  // entire write_shared_context.py receipt, verbatim
   riskTable: [ ...{ path, risk } per changed file, from Phase 2e... ],  // REQUIRED, path set === changedFiles
   scopeAnswer: "light" | "full",  // interactive answer only when the trivial-scope question fires
   policy: { tier, subagentModel, provider, gateway, mappedAliases },
@@ -311,9 +311,9 @@ An exit 2 wrote no usable context; stop and report its one-line error.
   // by-value inputs the in-memory stages need (the workflow has no disk):
   changedFiles, changedLines, baseBranch, reviewMd, reviewMdSetChecksum, exclusionsText,
 
-  // the shared context file's measured size, from write_shared_context.py's receipt,
-  // verbatim. Missing contextLines forces count-free reads and a gap.
-  contextLines, contextChars, contextMaxLineChars, contextReadPlanVersion, contextReadChunks,
+  // contextReceipt carries measurements, the removed-test inventory, and the version-2
+  // discoveryPlan. Missing measurements force count-free reads; invalid plans disable
+  // gap hunting with a coverage-unavailable note while primary review continues.
 
   // how the run's artifacts reach disk. `returnPrimaries: true` is the default and the
   // only path on which no model transcribes them — see phase2-triage.md, "Args Preparation". Omit `persist`

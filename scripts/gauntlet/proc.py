@@ -7,8 +7,11 @@ import os
 import shutil
 import subprocess  # noqa: TID251
 import sys
+import tempfile
+import threading
 from collections.abc import Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
+from dataclasses import dataclass
 from typing import Literal
 
 CompletedProcess = subprocess.CompletedProcess
@@ -99,3 +102,59 @@ def output(
 ) -> tuple[str, str, int]:
     result = run(argv, cwd=cwd, timeout=timeout, errors=errors)
     return result.stdout, result.stderr, result.returncode
+
+
+@dataclass(frozen=True, slots=True)
+class BoundedBytes:
+    stdout: bytes
+    returncode: int
+    truncated: bool
+
+
+def run_bounded_bytes(
+    argv: Sequence[str],
+    *,
+    cwd: str,
+    timeout: float,
+    max_output: int,
+    input: bytes = b"",
+) -> BoundedBytes:
+    """Cap capture while the child runs; the timer also covers blocked pipe reads."""
+    if type(max_output) is not int or max_output < 0:
+        raise ValueError("max_output must be a nonnegative integer")
+    if timeout <= 0:
+        raise TimeoutExpired(list(argv), timeout)
+    command = _resolve(argv)
+    with tempfile.TemporaryFile() as request:
+        request.write(input)
+        request.seek(0)
+        with subprocess.Popen(
+            command,
+            cwd=cwd,
+            stdin=request,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        ) as child:
+            expired = threading.Event()
+
+            def stop() -> None:
+                expired.set()
+                with suppress(ProcessLookupError):
+                    child.kill()
+
+            timer = threading.Timer(max(0, timeout), stop)
+            timer.daemon = True
+            timer.start()
+            try:
+                assert child.stdout is not None
+                content = child.stdout.read(max_output + 1)
+                truncated = len(content) > max_output
+                if truncated:
+                    with suppress(ProcessLookupError):
+                        child.kill()
+                returncode = child.wait()
+                if expired.is_set():
+                    raise TimeoutExpired(list(argv), timeout)
+                return BoundedBytes(content[:max_output], returncode, truncated)
+            finally:
+                timer.cancel()
