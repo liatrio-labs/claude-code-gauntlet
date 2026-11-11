@@ -55,20 +55,28 @@ function lineBucket(line, proximity) {
   return pyRound(n / proximity) * proximity;
 }
 
-function groupFilterFindings(findings, keyFor) {
-  const groups = new Map();
+function groupByProximity(findings, lineProximity) {
+  const files = new Map();
+  const groups = [];
   for (const finding of findings) {
-    const key = canonicalRange(finding) ? keyFor(finding) : finding;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(finding);
+    if (!canonicalRange(finding)) { groups.push([finding]); continue; }
+    const file = pyGet(finding, 'file', '');
+    if (!files.has(file)) files.set(file, []);
+    files.get(file).push(finding);
+  }
+  for (const rows of files.values()) {
+    rows.sort((a, b) => a.line_start - b.line_start);
+    let group;
+    for (const finding of rows) {
+      // Bound the whole cluster so nearby chains cannot swallow distinct distant issues.
+      if (!group || finding.line_start - group[0].line_start > lineProximity) {
+        group = [];
+        groups.push(group);
+      }
+      group.push(finding);
+    }
   }
   return groups;
-}
-
-function groupByProximity(findings, lineProximity) {
-  return groupFilterFindings(findings, (finding) => JSON.stringify([
-    pyGet(finding, 'file', ''), lineBucket(finding.line_start, lineProximity),
-  ]));
 }
 
 export function consolidateCrossAgent(findings) {
