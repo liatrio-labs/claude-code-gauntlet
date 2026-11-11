@@ -834,6 +834,22 @@ def rows():
 
 def _assert_recorded(name, case, returncode, stdout, tmp_path):
     code, expected = RECORDED[f"{name}/{case}"]
+    if name == "write_shared_context" and case == "success":
+        assert returncode == code
+        actual, wanted = json.loads(normalize(stdout, tmp_path)), json.loads(expected)
+        paths = list(tmp_path.rglob("code-gauntlet-context-*.md"))
+        assert len(paths) == 1
+        context = paths[0].read_bytes().decode("utf-8", errors="replace")
+        measured = {
+            "contextLines": context.count("\n"),
+            "contextChars": len(context),
+            "contextMaxLineChars": max(map(len, context.split("\n"))) + 1,
+        }
+        for key, value in measured.items():
+            assert actual.pop(key) == value
+            wanted.pop(key)
+        assert actual == wanted
+        return
     assert (returncode, normalize(stdout, tmp_path)) == (code, expected)
 
 

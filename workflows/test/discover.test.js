@@ -123,14 +123,18 @@ test('one dispatch supplies the roster', async () => {
 });
 const POLICY_ROWS = [
   { name: 'bedrock', policy: { provider: 'bedrock' } },
+  { name: 'vertex', policy: { provider: 'vertex' } },
+  { name: 'foundry', policy: { provider: 'foundry' } },
   { name: 'first party gateway', policy: { provider: 'firstParty', gateway: true } },
 ];
 for (const row of POLICY_ROWS) test(`conditional schema policy: ${row.name}`, async () => {
   const ctx = stageCtx();
-  await discover(ctx, { policy: row.policy });
+  await discover(ctx, { ...regionInput(), policy: row.policy });
+  assert.equal(ctx.calls.length, 8);
   for (const call of ctx.calls) {
     const item = call.schema.properties.findings.items;
-    assert.deepEqual(item.allOf, [{ if: { properties: {change_origin: {const: 'pre_existing'}}, required: ['change_origin'] }, then: {required: ['change_relevance']} }]);
+    assert.equal(Object.hasOwn(item, 'allOf'), false);
+    assert.equal(/"(?:if|then|allOf|anyOf|oneOf)":/.test(JSON.stringify(call.schema)), false);
     assert.equal(Boolean(item.properties.dimension), call.agentType === 'code-gauntlet:conventions-and-intent');
   }
 });
@@ -409,7 +413,6 @@ test('hunter failure and outside-assignment findings do not degrade primary dime
     assert.ok(out.gaps.some((g) => g.includes(failed ? 'gap investigation failed' : 'gap investigation incomplete')));
     assert.equal(out.gaps.some((g) => g.includes('dimensions bug')), false);
     assert.equal(trace.snapshots[0].coverage, 'complete');
-    assert.equal(trace.snapshots[0].decisions.some((d) => d.reason_code === 'discover_scope'), false);
     assert.deepEqual(out.coverageLedger.hunters[0].outside_assignment, failed ? [] : ['f1']);
   }
 });
@@ -517,6 +520,39 @@ test('pre-existing origins require a concrete change connection in schema and di
   }
 });
 
+for (const policy of [{ provider: 'firstParty' }, { gateway: true }, { provider: 'bedrock' },
+  { provider: 'vertex' }, { provider: 'foundry' }]) test(`provenance intake applies to primary and hunter on ${JSON.stringify(policy)}`, async () => {
+  for (const fields of [{change_origin: undefined}, {change_origin: ''}, {change_origin: 'unknown'}, {change_origin: null},
+    {change_origin: 3}, {change_origin: 'pre_existing'}, {change_origin: 'pre_existing', change_relevance: '  '},
+    {change_origin: 'pre_existing', change_relevance: 2}, {change_origin: 'introduced'}, {change_origin: 'moved_or_carried'},
+    {change_origin: 'pre_existing', change_relevance: 'The change now passes this state to the callee.'}]) {
+    const value = finding(fields);
+    const ctx = stageCtx({ replies: {
+      'code-gauntlet:bug-detector': { findings: [value], complete: true, total_seen: 1 },
+      'code-gauntlet:gap-hunter': { findings: [{...value,file:'src/other',line_start:3}], complete:true,total_seen:1 },
+    } });
+    const out = await discover(ctx, {...regionInput(), policy, measurementTrace:createMeasurementTrace('required')});
+    const valid = ['introduced', 'moved_or_carried'].includes(fields.change_origin)
+      || (typeof fields.change_relevance === 'string' && fields.change_relevance.trim());
+    assert.equal(ctx.calls.length, 8);
+    assert.equal(out.findings.length, valid ? 2 : 0);
+    assert.equal(out.rejected?.length || 0, valid ? 0 : 2);
+    if (!valid) assert.ok(decisionsFor(out).every((d) => d.reason_code === 'invalid_shape'));
+  }
+});
+
+test('plan presence consistently controls coverage gaps and both ledger copies', async () => {
+  for (const plan of [undefined, null, false, '', [], {}, {...REGION_PLAN,status:'unavailable'}, REGION_PLAN]) {
+    const trace = createMeasurementTrace('presence');
+    const out = await discover(stageCtx(), {...regionInput(),discoveryPlan:plan,measurementTrace:trace});
+    const present = plan !== undefined;
+    assert.equal(Object.hasOwn(out, 'coverageLedger'), present);
+    assert.equal(Object.hasOwn(trace, 'coverage_ledger'), present);
+    if (present) assert.deepEqual(out.coverageLedger, trace.coverage_ledger);
+    assert.equal(out.gaps.some((gap) => gap.includes('coverage unavailable')), present && plan !== REGION_PLAN);
+  }
+});
+
 test('ledger detail has an independent budget and its phase copy is bounded', async () => {
   const { COVERAGE_LEDGER_CHAR_BUDGET } = await import('../src/coverageLedger.js');
   for (const n of [200, 2000]) {
@@ -550,6 +586,5 @@ test('outside-assignment hunter findings survive discovery and merge and contrib
   assert.deepEqual(out.coverageLedger.hunters[0].outside_assignment, ['outside']);
   assert.deepEqual(out.coverageLedger.remaining_uncovered, ['second']);
   assert.deepEqual(trace.coverage_ledger, out.coverageLedger);
-  assert.equal(trace.snapshots[0].decisions.some((d) => d.reason_code === 'discover_scope'), false);
   assert.equal(out.gaps.some((g) => g.includes('outside assigned regions')), false);
 });

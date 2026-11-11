@@ -257,7 +257,7 @@ import { stageCtx } from './workflows/test/helpers/stageFixtures.js';
 const originals = [];
 const ctx = stageCtx({reply: (_, {agentType}) => {
   const candidate = {file:'source',line_start:1,title:'Broken contract',description:'The changed operation violates its caller contract.',
-    severity:'high',confidence:80,anchor:'return value',evidence:'source:1 returns an invalid value',
+    severity:'high',confidence:80,change_origin:'introduced',anchor:'return value',evidence:'source:1 returns an invalid value',
     criticality:9,failure_scenario:'A valid input fails',test_kind:'production_defect',quality_basis:'current_correctness',
     attack_vector:'Untrusted input crosses the boundary',affected_consumers:['consumer']};
   if (agentType.endsWith(':conventions-and-intent')) Object.assign(candidate,{dimension:'intent',spec_text:'Return a valid value'});

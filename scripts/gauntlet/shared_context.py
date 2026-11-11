@@ -22,10 +22,10 @@ from gauntlet.diff import ContextMap, ContextMapEntry, DiffStructureError, annot
 from gauntlet.discovery_plan import (
     DiscoveryPlan,
     FactPacket,
+    ReadRange,
     Region,
     RegionPlanError,
     changed_packets,
-    read_line_bytes,
     read_ranges,
 )
 from gauntlet.fact_cards import build_fact_cards
@@ -339,7 +339,8 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
     fact_header = b"\n\n## Fact cards: bounded lexical evidence\n\n"
     fact_section = fact_header + facts
     prefix = before_facts + fact_section + b"\n\n## Diff\n\n"
-    content = prefix + frame("untrusted-code-content", presentation) + b"\n"
+    diff_layout = frame_sections("untrusted-code-content", [presentation])
+    content = prefix + diff_layout.content + b"\n"
     fact_packets: list[FactPacket] = []
     if fact_layout is not None and fact_cards is not None:
         frame_offset = (before_facts + fact_header).count(b"\n") + 1
@@ -369,6 +370,20 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
     # The index uses stable diff identities; only this construction creates context reads.
     offset = prefix.count(b"\n") + 1
     rendered_rows = content.decode("utf-8", "replace").split("\n")
+
+    def placed_reads(start: int, count: int) -> list[ReadRange]:
+        return read_ranges(
+            "\n".join(rendered_rows[start - 1 : start - 1 + count]) + "\n",
+            start,
+            context_read_chunks,
+        )
+
+    opening_reads = placed_reads(
+        offset + diff_layout.opening.offset - 1, diff_layout.opening.limit
+    )
+    closing_reads = placed_reads(
+        offset + diff_layout.closing.offset - 1, diff_layout.closing.limit
+    )
     regions: list[Region] = []
     for packet in packets:
         start = offset + packet.annotated_offset - 1
@@ -378,15 +393,9 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
                 "file": packet.file,
                 "line_start": packet.line_start,
                 "line_end": packet.line_end,
-                "reads": [
-                    {
-                        "offset": start + 1,
-                        "limit": packet.line_count,
-                        "bytes": read_line_bytes(
-                            rendered_rows[start : start + packet.line_count]
-                        ),
-                    }
-                ],
+                "reads": opening_reads
+                + placed_reads(start + 1, packet.line_count)
+                + closing_reads,
             }
         )
     sidecar: ContextMap = {

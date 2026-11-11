@@ -273,8 +273,10 @@ export async function runWith(ctx, rawArgs) {
     dropped: droppedNulls,
     respelled: respelledNulls,
     derivedPaths,
+    contextReceiptGaps = [],
   } = normalizeArgsReport(entry.waist);
   const nullArgGaps = [
+    ...contextReceiptGaps,
     ...nullToleranceRejectedKeys(A, droppedNulls, derivedPaths).map((key) => nullToleranceGap(key)),
     ...respelledNulls.map(nullRespellGap),
   ];

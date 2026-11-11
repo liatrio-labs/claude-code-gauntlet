@@ -111,6 +111,7 @@ class MeasurementTrace:
     complete: bool
     dropped_stages: tuple[Stage, ...] = ()
     coverage_ledger: CoverageLedger | TrimmedCoverageLedger | None = None
+    coverage_ledger_gap: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,9 +156,19 @@ def load_trace(trace_path: Path, *, expected_sha256: str) -> MeasurementTrace:
     raw = read_json(trace_path)
     if isinstance(raw, dict) and raw.get("coverage_ledger") is not None:
         try:
-            decode(CoverageLedger | TrimmedCoverageLedger, raw["coverage_ledger"])
-        except (TypeError, ValueError):
-            raw = {**raw, "coverage_ledger": None}
+            ledger = raw["coverage_ledger"]
+            shape = (
+                TrimmedCoverageLedger
+                if isinstance(ledger, dict) and ledger.get("status") == "trimmed"
+                else CoverageLedger
+            )
+            decode(shape, ledger)
+        except (TypeError, ValueError) as exc:
+            raw = {
+                **raw,
+                "coverage_ledger": None,
+                "coverage_ledger_gap": f"invalid coverage ledger: {exc}",
+            }
     trace: MeasurementTrace = decode(MeasurementTrace, raw)
     by_id: dict[str, FindingVersion] = {}
     identities: dict[str, object] = {}
@@ -261,7 +272,6 @@ def render_claim(finding):
 
 
 REASON_LOSS_STAGES: dict[ReasonCode, LossStage] = {
-    "discover_scope": "discover",
     "validation_skipped": "validate",
     "verify_unproven": "verify",
     "challenge_failed": "challenge",
@@ -387,39 +397,7 @@ def _trace_loss(bug, trace, versions, trace_ids, judged):
             status="established",
         )
     trace_ids = set(trace_ids)
-    discovery = next((s for s in trace.snapshots if s.stage == "discover"), None)
-    if discovery:
-        scope_loss = next(
-            (
-                d
-                for d in discovery.decisions
-                if d.trace_id in trace_ids
-                and d.reason_code == "discover_scope"
-                and d.decision == "eliminated"
-            ),
-            None,
-        )
-        reached_later = {
-            versions[v].trace_id
-            for snapshot in trace.snapshots[1:]
-            for v in snapshot.finding_version_ids
-        }
-        scope_ids = {
-            d.trace_id
-            for d in discovery.decisions
-            if d.reason_code == "discover_scope" and d.decision == "eliminated"
-        } - reached_later
-        if scope_loss and trace_ids <= scope_ids:
-            return Loss(
-                stage="discover",
-                physical_stage="discover",
-                reason_code=scope_loss.reason_code,
-                reason=scope_loss.reason,
-                trace_ids=tuple(sorted(trace_ids)),
-                evidence_refs=(f"snapshot:{discovery.sequence}",),
-                status="established",
-            )
-    previous = set(trace_ids) - (scope_ids if discovery else set())
+    previous = set(trace_ids)
     for snapshot in trace.snapshots[1:]:
         if not snapshot.executed or snapshot.coverage == "unavailable":
             break
@@ -717,12 +695,16 @@ def bind_delivery_trace(trace, candidates, *, omissions=()):
     return replace(trace, snapshots=(*trace.snapshots, delivery))
 
 
-class CollectedTraceWire(TypedDict):
+class _CollectedTraceBinding(TypedDict):
     path: str
     sha256: str
     run_nonce: str
     workflow_record: str
     workflow_sha256: str
+
+
+class CollectedTraceWire(_CollectedTraceBinding, total=False):
+    coverage_ledger_gap: str
 
 
 def _collect_trace(pr_dir: Path) -> CollectedTraceWire | None:
@@ -768,6 +750,8 @@ def _collect_trace(pr_dir: Path) -> CollectedTraceWire | None:
         workflow_record=str(record.relative_to(pr_dir)),
         workflow_sha256=file_hash(record),
     )
+    if trace.coverage_ledger_gap:
+        binding["coverage_ledger_gap"] = trace.coverage_ledger_gap
     receipt = pr_dir / "measurement-artifact.json"
     if receipt.exists():
         if read_json(receipt) != binding:
@@ -793,7 +777,7 @@ def collect_trace(pr_dir: Path) -> TraceCollection:
     try:
         found = _collect_trace(pr_dir)
         receipt = (
-            TraceCollection("available", None)
+            TraceCollection("available", found.get("coverage_ledger_gap"))
             if found
             else TraceCollection(
                 "unavailable", "no current Workflow measurement return"

@@ -47,7 +47,8 @@ def test_call_scan_skips_oversize_lines_before_regex(
     )
     facts = scan_snapshot(oversize + "\npublic target(value) {\n  return value\n}\n")
     assert facts["scan"]["selected_files"] == 2
-    assert facts["scan"]["oversize"] == 1
+    assert facts["scan"]["oversize_lines"] == 1
+    assert facts["scan"]["oversize_files"] == 0
     assert facts["scan_limited"]
     assert any(
         card["kind"] == "callee_candidate" and card["line_start"] == 2
@@ -90,3 +91,31 @@ def test_call_scan_checks_deadline_before_each_line(scan_snapshot, monkeypatch):
     assert facts["scan"]["deadline_reached"]
     assert facts["scan_limited"]
     assert not facts["cards"]
+
+
+@pytest.mark.parametrize("prefix", ["if", "consider", "for item in"])
+def test_repeated_invocation_shapes_do_not_introduce_a_callee(scan_snapshot, prefix):
+    # Other callees teach the prefix's usage pattern even when only target is wanted.
+    library = (
+        f"{prefix} other(value):\n  consume(value)\n" * 5
+        + f"{prefix} target(value):\n  consume(value)\n"
+        + "def target(value):\n  return value\n"
+    )
+    facts = scan_snapshot(library)
+    callees = [c for c in facts["cards"] if c["kind"] == "callee_candidate"]
+    assert len(callees) == 1
+    assert callees[0]["text"].startswith("def target(value):")
+    assert callees[0]["line_start"] == 13
+
+
+def test_invocation_shapes_share_variable_slots_without_language_keywords(
+    scan_snapshot,
+):
+    library = "".join(
+        f"through {name} from target(value):\n  consume(value)\n"
+        for name in ("left", "right", "third")
+    )
+    facts = scan_snapshot(library + "def target(value):\n  return value\n")
+    callees = [c for c in facts["cards"] if c["kind"] == "callee_candidate"]
+    assert len(callees) == 1
+    assert callees[0]["text"].startswith("def target(value):")

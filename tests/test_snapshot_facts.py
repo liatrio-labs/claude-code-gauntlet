@@ -2,6 +2,7 @@
 
 import os
 import time
+from dataclasses import replace
 
 import pytest
 from gauntlet import fact_cards, location
@@ -9,6 +10,49 @@ from gauntlet.diff import annotate_diff
 from gauntlet.location import SourceAdapter
 
 from tests.support.git_diff import git, init_git_repo
+
+
+@pytest.mark.parametrize("bad_header", ["missing", "oid", "type", "size"])
+def test_batch_blob_headers_confine_bad_entries_to_their_file(
+    tmp_path, monkeypatch, bad_header
+):
+    init_git_repo(tmp_path, monkeypatch)
+    for name in ("first", "middle", "last"):
+        (tmp_path / name).write_text(name + "\n", encoding="utf-8")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "-qm", "snapshot")
+    source = SourceAdapter.capture(tmp_path, "branch", None)
+    inventory = source.tracked_files(
+        lambda _: True, deadline=time.monotonic() + 5, max_listing_bytes=10000
+    )
+    files = sorted(
+        inventory.files, key=lambda f: ("first", "middle", "last").index(f.file)
+    )
+    if bad_header == "missing":
+        # Real Git emits only an oid/missing header, with no payload or separator.
+        files[1] = replace(files[1], oid="0" * 40)
+    else:
+        original = location.proc.run_bounded_bytes
+
+        def corrupt_header(*args, **kwargs):
+            result = original(*args, **kwargs)
+            item = files[1]
+            header = f"{item.oid} blob {item.size}\n".encode()
+            if bad_header == "oid":
+                altered = f"{'0' * 40} blob {item.size}\n".encode()
+            elif bad_header == "type":
+                altered = f"{item.oid} tree {item.size}\n".encode()
+            else:
+                # A listing/header size mismatch must not mislabel the payload.
+                files[1] = replace(item, size=item.size + 1)
+                altered = header
+            return replace(result, stdout=result.stdout.replace(header, altered, 1))
+
+        monkeypatch.setattr(location.proc, "run_bounded_bytes", corrupt_header)
+    result = source.read_snapshot(files, deadline=time.monotonic() + 5)
+    assert result.files == {"first": ("first",), "last": ("last",)}
+    assert result.unreadable == 1
+    assert not result.deadline_reached
 
 
 @pytest.mark.parametrize("change", ["size_before", "size_during", "mtime_during"])

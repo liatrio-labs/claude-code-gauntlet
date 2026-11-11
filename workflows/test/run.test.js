@@ -1345,7 +1345,7 @@ for (const row of POLICY_ROWS) test(`policy wiring: ${row.name}`, async () => {
   assert.deepEqual([...new Set(ctx.calls.map((call) => call.model))].sort(), row.models);
   const items = ctx.calls.find((call) => call.agentType === 'code-gauntlet:conventions-and-intent').schema.properties.findings.items;
   if (row.conditional) assert.equal(Array.isArray(items.allOf), true);
-  else assert.equal(items.allOf.length, 1);
+  else assert.equal(Object.hasOwn(items, 'allOf'), false);
 });
 
 const UNMEASURED_GAP = 'context_unmeasured: no usable args.contextLines was stamped, so the shared-context read plan could not be computed '
@@ -1768,4 +1768,14 @@ test('the whole preparation receipt carries the optional discovery plan without 
   const result = await runWith(ctx, A);
   assert.equal(result.ok, true);
   assert.ok(ctx.calls.some((call) => call.agentType === 'code-gauntlet:gap-hunter'));
+});
+
+test('receipt conflicts survive both successful reviews and invalid-args exits as gaps', async () => {
+  for (const invalid of [false, true]) {
+    const A = validArgs({contextLines:100, contextReceipt:{contextLines:10,contextChars:200,contextMaxLineChars:20,
+      contextReadPlanVersion:1,contextReadChunks:[10]}, ...(invalid?{nonce:'invalid nonce'}:{})});
+    const out = await runWith(makeCtx(A), A);
+    assert.equal(out.ok, !invalid);
+    assert.ok(out.gaps.some((gap) => gap === 'contextReceipt.contextLines conflicts with top-level contextLines; preparation receipt value used'));
+  }
 });

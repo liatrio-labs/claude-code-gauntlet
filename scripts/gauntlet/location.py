@@ -696,10 +696,28 @@ class SourceAdapter:
                 offset = 0
                 for item in files:
                     end = result.stdout.index(b"\n", offset)
-                    # Selected immutable blob IDs and sizes come from this pinned tree's listing.
+                    header = result.stdout[offset:end].split()
                     offset = end + 1
-                    content = result.stdout[offset : offset + item.size]
-                    offset += item.size + 1
+                    if header == [item.oid.encode("ascii"), b"missing"]:
+                        continue
+                    # Consume the declared payload even when this object's identity is wrong,
+                    # so a bad entry cannot shift subsequent files onto another blob's bytes.
+                    if len(header) != 3 or not header[2].isdigit():
+                        break
+                    size = int(header[2])
+                    content = result.stdout[offset : offset + size]
+                    if (
+                        len(content) != size
+                        or result.stdout[offset + size : offset + size + 1] != b"\n"
+                    ):
+                        break
+                    offset += size + 1
+                    if header != [
+                        item.oid.encode("ascii"),
+                        b"blob",
+                        str(item.size).encode("ascii"),
+                    ]:
+                        continue
                     decoded = _decode_source(content)
                     if decoded is not None:
                         loaded[item.file] = decoded

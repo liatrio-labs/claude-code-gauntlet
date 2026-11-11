@@ -604,67 +604,34 @@ def test_collection_hashes_top_level_trace_and_persists_availability(tmp_path):
     assert missing.status == "unavailable" and missing.reason
 
 
-def test_discovery_scope_rejection_keeps_discover_loss_attribution(
-    tmp_path, monkeypatch
-):
-    from bench.runner.contracts import ScoreRef
-
-    trace, path, _ = emit_trace(tmp_path)
-    version = trace.versions[0]
-    version = replace(
-        version,
-        discovery_agent="gap-hunter",
-        discovery_dimension="gap_hunt",
-        finding={
-            **version.finding,
-            "discovery_agent": "gap-hunter",
-            "discovery_dimension": "gap_hunt",
-        },
+def test_collection_persists_ledger_decode_gap_without_losing_trace(tmp_path):
+    trace, _, receipt = emit_trace(tmp_path)
+    measurement = receipt["out"]["measurement"]
+    raw = json.loads(measurement["text"])
+    raw["coverage_ledger"] = {"version": 2}
+    measurement["text"] = json.dumps(raw)
+    directory = tmp_path / "pr"
+    (directory / "workflows").mkdir(parents=True)
+    (directory / "workflows/wf_current.json").write_text(
+        json.dumps({"result": receipt["out"]}), encoding="utf-8"
     )
-    snapshots = tuple(
-        replace(
-            s,
-            finding_version_ids=(version.version_id,) if s.stage == "discover" else (),
-            decisions=(
-                stages.StageDecision(
-                    version.trace_id,
-                    "eliminated",
-                    "discover_scope",
-                    "outside assignment",
-                    (),
-                ),
-            )
-            if s.stage == "discover"
-            else (),
-            coverage="complete",
-        )
-        for s in trace.snapshots
+    collected = stages.collect_trace(directory)
+    assert collected.status == "available"
+    assert collected.reason and "incomplete CoverageLedger" in collected.reason
+    assert (
+        read_json(directory / "measurement-collection.json")["reason"]
+        == collected.reason
     )
-    trace = replace(trace, versions=(version,), snapshots=snapshots)
-    path.write_text(json.dumps(asdict(trace)), encoding="utf-8", newline="")
-    trace = stages.load_trace(path, expected_sha256=file_hash(path))
-    bug = observations.BugObservation(
-        1,
-        ScoreRef("run", "epoch", "score"),
-        "url",
-        "attempt",
-        "bug",
-        None,
-        "missed",
-        (),
-        (),
-        None,
+    binding = read_json(directory / "measurement-artifact.json")
+    assert binding["coverage_ledger_gap"] == collected.reason
+    loaded = stages.load_trace(
+        directory / binding["path"], expected_sha256=binding["sha256"]
     )
-    monkeypatch.setattr(
-        stages,
-        "_version_results",
-        lambda *_args: {("url", version.version_id): {"bug": True}},
+    assert (
+        loaded.coverage_ledger is None
+        and loaded.coverage_ledger_gap == collected.reason
     )
-    rows = stages.capture_score({"url": (path, trace)}, (bug,), None, {}, {}, {}, {})
-    loss = next(r.loss for r in rows if r.stage == "deliver")
-    assert loss.stage == loss.physical_stage == "discover"
-    assert loss.reason_code == "discover_scope" and loss.status == "established"
-    assert dict(stages.loss_funnel(rows, population=("bug",)).losses)["discover"] == 1
+    assert loaded.versions == trace.versions
 
 
 @pytest.fixture
@@ -744,102 +711,11 @@ def test_unknown_ledger_fields_degrade_only_coverage(
     path.write_text(json.dumps(raw), encoding="utf-8")
     loaded = stages.load_trace(path, expected_sha256=file_hash(path))
     assert loaded.coverage_ledger is None
+    assert (
+        loaded.coverage_ledger_gap
+        and "invalid coverage ledger" in loaded.coverage_ledger_gap
+    )
     assert loaded.versions == trace.versions and loaded.snapshots == trace.snapshots
-
-
-@pytest.mark.parametrize(
-    "physical,reason,loss_stage",
-    [
-        ("verify", "verify_eliminated", "verify"),
-        ("filter", "threshold", "filter"),
-        ("challenge", "challenge_removed", "challenge"),
-        ("select", "delivery_cap", "cap"),
-    ],
-)
-def test_scope_rejected_match_does_not_hide_a_deeper_matched_survivor(
-    tmp_path, monkeypatch, physical, reason, loss_stage
-):
-    from bench.runner.contracts import ScoreRef
-
-    trace, path, _ = emit_trace(tmp_path)
-    scoped = trace.versions[0]
-    survivor = replace(
-        scoped,
-        version_id="survivor",
-        trace_id=trace.run_nonce + ":other:0",
-        finding={**scoped.finding, "trace_id": trace.run_nonce + ":other:0"},
-    )
-    target = next(i for i, s in enumerate(trace.snapshots) if s.stage == physical)
-    snapshots = []
-    for i, s in enumerate(trace.snapshots):
-        ids = (
-            (scoped.version_id, survivor.version_id)
-            if i == 0
-            else (survivor.version_id,)
-            if i < target
-            else ()
-        )
-        decisions = (
-            (
-                stages.StageDecision(
-                    scoped.trace_id,
-                    "eliminated",
-                    "discover_scope",
-                    "outside assignment",
-                    (),
-                ),
-            )
-            if i == 0
-            else (
-                stages.StageDecision(
-                    survivor.trace_id, "eliminated", reason, "later loss", ()
-                ),
-            )
-            if i == target
-            else ()
-        )
-        snapshots.append(
-            replace(
-                s,
-                finding_version_ids=ids,
-                decisions=decisions,
-                coverage="complete",
-                executed=True,
-            )
-        )
-    trace = replace(
-        trace,
-        versions=(scoped, survivor),
-        snapshots=tuple(snapshots),
-        dropped_stages=(),
-    )
-    path.write_text(json.dumps(asdict(trace)), encoding="utf-8")
-    trace = stages.load_trace(path, expected_sha256=file_hash(path))
-    bug = observations.BugObservation(
-        1,
-        ScoreRef("run", "epoch", "score"),
-        "url",
-        "attempt",
-        "bug",
-        None,
-        "missed",
-        (),
-        (),
-        None,
-    )
-    monkeypatch.setattr(
-        stages,
-        "_version_results",
-        lambda *_: {("url", v.version_id): {"bug": True} for v in trace.versions},
-    )
-    rows = stages.capture_score({"url": (path, trace)}, (bug,), None, {}, {}, {}, {})
-    loss = next(r.loss for r in rows if r.stage == "deliver")
-    assert (loss.stage, loss.physical_stage, loss.reason_code) == (
-        loss_stage,
-        physical,
-        reason,
-    )
-    assert survivor.trace_id in loss.trace_ids
 
 
 def test_legacy_hunter_receipts_preserve_trace_coverage(

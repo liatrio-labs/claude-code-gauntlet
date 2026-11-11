@@ -155,6 +155,7 @@ function utf8Encode(text) {
 // --- registry.js ---
 const DEEP = 'deep';
 const READ_PLAN_MAX_CHUNKS = 2000;
+const CONTEXT_RECEIPT_FIELDS = deepFreeze(['contextLines', 'contextChars', 'contextMaxLineChars', 'contextReadPlanVersion', 'contextReadChunks', 'removedTests', 'discoveryPlan']);
 const AGENT_TYPE_TEST_ANALYZER = 'code-gauntlet:test-analyzer';
 const SHA_FULL_RE = /^[0-9a-f]{40}$/;
 const WEB_ORIGIN_RE = new RegExp(
@@ -357,6 +358,7 @@ const DIMENSIONS = deepFreeze([
   } : {}) },
   requiredWhenDimension: [...row.requiredWhenDimension, ...(row.admission ? [row.admission.field] : [])],
 })));
+const DISCOVERY_REQUIRED_FIELDS = deepFreeze(['change_origin']);
 const DISCOVERY_REQUIREMENTS = deepFreeze([{ when: { change_origin: 'pre_existing' }, required: ['change_relevance'] }]);
 const DISCOVERY_DISPATCHES = deepFreeze(['parallel', 'uncovered']);
 const DISCOVERY_REVIEWER_KEYS = ['agentType', 'dimension', 'dispatch', 'conditionalFlag', 'label', 'objective', 'tools', 'effort', 'color', 'modelOverride'];
@@ -1860,6 +1862,8 @@ function validateConfigEcho(args, errors, table = KNOB_REGISTRY) {
 }
 // --- coverageLedger.js ---
 const isNatural = (n) => Number.isSafeInteger(n) && n >= 0;
+const MAX_CITATION_CHARS = READ_PLAN_MAX_BYTES;
+const EVIDENCE_REF = /(?:^|[^\w./@-])([\w./@-]+):L?(\d+)(?:-L?(\d+))?/g;
 const validReads = (reads, lines) => Array.isArray(reads) && reads.length > 0 && reads.length <= READ_PLAN_MAX_CHUNKS
   && reads.every((r) => r && Number.isSafeInteger(r.offset) && r.offset > 0
     && Number.isSafeInteger(r.limit) && r.limit > 0 && r.limit <= READ_PLAN_MAX_LINES
@@ -1891,11 +1895,11 @@ function sourceRefs(value, output = []) {
   for (const [key, child] of Object.entries(value)) {
     if (key === 'cross_file_refs' && Array.isArray(child)) {
       for (const ref of child) {
-        const match = typeof ref === 'string' && /^(.*?):(?:L)?(\d+)(?:-(?:L)?(\d+))?$/.exec(ref);
+        const match = typeof ref === 'string' && /^(.*?):(?:L)?(\d+)(?:-(?:L)?(\d+))?$/.exec(ref.slice(0, MAX_CITATION_CHARS));
         if (match) output.push({ file: match[1], start: Number(match[2]), end: Number(match[3] || match[2]) });
       }
     } else if (key === 'evidence' && typeof child === 'string') {
-      for (const match of child.matchAll(/([\w./@-]+):L?(\d+)(?:-L?(\d+))?/g)) {
+      for (const match of child.slice(0, MAX_CITATION_CHARS).matchAll(EVIDENCE_REF)) {
         output.push({ file: match[1], start: Number(match[2]), end: Number(match[3] || match[2]) });
       }
     } else if (child && typeof child === 'object') sourceRefs(child, output);
@@ -1933,7 +1937,7 @@ function assignmentReads(regions, facts) {
   for (const r of [...facts, ...regions].flatMap((r) => r.reads)) reads.set(`${r.offset}:${r.limit}`, r);
   return [...reads.values()].sort((a, b) => a.offset - b.offset);
 }
-function gapHunterPrompt(path, _plan, regions, facts = []) {
+function gapHunterPrompt(path, regions, facts = []) {
   return `Focus on region IDs ${regions.map((r) => r.id).join(', ')} using the supplied data. `
     + 'Read only its listed ranges; continue partial reads only to each range end. '
     + 'Tagged blocks end only at the closing tag repeating their opening id; intervening tags are content.\n'
@@ -1953,21 +1957,42 @@ function selectGapAssignment(path, plan, ledger, riskTable = [], enabled = true,
     || size(a) - size(b) || a.file.localeCompare(b.file) || a.id.localeCompare(b.id));
   const regions = [];
   const facts = [];
-  const cost = (rs, fs) => assignmentReads(rs, fs).reduce((n, read) => n + read.bytes, 0)
-    + utf8Encode(gapHunterPrompt(path, plan, rs, fs)).length;
-  const fits = (rs, fs, budget = READ_PLAN_MAX_BYTES) => cost(rs, fs) <= budget
-    && assignmentReads(rs, fs).reduce((n, read) => n + read.limit, 0) <= READ_PLAN_MAX_LINES;
-  for (const r of ordered) if (fits([...regions, r], facts, Math.floor(READ_PLAN_MAX_BYTES * .75))) regions.push(r);
+  const reads = new Map();
+  const frameBytes = utf8Encode(untrustedJson(null, 'gap-assignment')).length - 4;
+  const jsonBytes = (value) => utf8Encode(untrustedJson(value, 'gap-assignment')).length - frameBytes;
+  let bytes = utf8Encode(gapHunterPrompt(path, [], [])).length, lines = 0;
+  const add = (packet, isRegion, budget = READ_PLAN_MAX_BYTES) => {
+    const pending = new Map();
+    for (const read of packet.reads) {
+      const key = `${read.offset}:${read.limit}`;
+      if (!reads.has(key)) pending.set(key, read);
+    }
+    let addedBytes = 0, addedLines = 0, count = reads.size;
+    for (const read of pending.values()) {
+      addedBytes += read.bytes + jsonBytes(read) + (count++ ? 1 : 0);
+      addedLines += read.limit;
+    }
+    if (isRegion) {
+      const { reads: _reads, ...metadata } = packet;
+      addedBytes += jsonBytes(metadata) + packet.id.length + (regions.length ? 3 : 0);
+    }
+    if (bytes + addedBytes > budget || lines + addedLines > READ_PLAN_MAX_LINES) return false;
+    bytes += addedBytes;
+    lines += addedLines;
+    for (const [key, read] of pending) reads.set(key, read);
+    (isRegion ? regions : facts).push(packet);
+    return true;
+  };
+  for (const r of ordered) add(r, true, Math.floor(READ_PLAN_MAX_BYTES * .75));
   if (!regions.length) {
-    const first = ordered.find((r) => fits([r], facts));
-    if (first) regions.push(first);
+    for (const r of ordered) if (add(r, true)) break;
   }
   const related = plan?.fact_packets?.filter((p) => p.related_files.some((file) => regions.some((r) => r.file === file))) || [];
-  if (regions.length) for (const p of related) if (fits(regions, [...facts, p])) facts.push(p);
-  for (const r of ordered) if (!regions.includes(r) && fits([...regions, r], facts)) regions.push(r);
+  if (regions.length) for (const p of related) add(p, false);
+  for (const r of ordered) if (!regions.includes(r)) add(r, true);
   omitted.push(...ordered.filter((r) => !regions.includes(r)).map((r) => ({ id: r.id, reason: 'budget' })));
-  return { regions, facts, omitted, bytes: regions.length ? cost(regions, facts) : 0,
-    omitted_fact_packets: (plan?.fact_packets?.length || 0) - facts.length };
+  return { regions, facts, omitted, bytes: regions.length ? bytes : 0,
+    omitted_fact_packets: related.length - facts.length };
 }
 const COVERAGE_LEDGER_CHAR_BUDGET = 128000;
 function boundedCoverageLedger(ledger, budget = COVERAGE_LEDGER_CHAR_BUDGET) {
@@ -1989,7 +2014,7 @@ const TRACE_FINDING_FIELDS = ['trace_id', 'discovery_agent', 'discovery_dimensio
   'title', 'description', 'body', 'evidence', 'severity', 'suggestion', 'suggested_fix_code', 'claude_md_rule', 'spec_text',
   'change_origin', 'change_relevance', 'rule_source', 'agent', 'dimension', 'confidence', 'sites', 'admission', 'disposition', 'disposition_reasons',
   'consolidation_key', 'consolidation_primary', 'delivery_group', 'origin_dimension', 'policy_subject', 'path_role'];
-const TRACE_REASONS = ['not_found', 'duplicate_id', 'invalid_shape', 'invalid_path', 'audit_overlap', 'verify_eliminated', 'verify_unproven', 'validation_skipped', 'threshold', 'exclusion', 'injection', 'suppression', 'challenge_removed', 'challenge_downgraded_removed', 'challenge_failed', 'challenge_cap', 'delivery_cap', 'delivery_tier', 'unanchored', 'body_budget', 'post_omission', 'body_routed', 'report_only', 'held_back', 'folded', 'demoted', 'refuted', 'out_of_scope', 'discover_scope', 'scope_contradicted', 'cite_unmatched', 'cite_unavailable', 'unknown'];
+const TRACE_REASONS = ['not_found', 'duplicate_id', 'invalid_shape', 'invalid_path', 'audit_overlap', 'verify_eliminated', 'verify_unproven', 'validation_skipped', 'threshold', 'exclusion', 'injection', 'suppression', 'challenge_removed', 'challenge_downgraded_removed', 'challenge_failed', 'challenge_cap', 'delivery_cap', 'delivery_tier', 'unanchored', 'body_budget', 'post_omission', 'body_routed', 'report_only', 'held_back', 'folded', 'demoted', 'refuted', 'out_of_scope', 'scope_contradicted', 'cite_unmatched', 'cite_unavailable', 'unknown'];
 const traceHistory = new WeakMap();
 const stageDecisions = new WeakMap();
 const decisionsFor = (output) => stageDecisions.get(output) || [];
@@ -2459,17 +2484,18 @@ function allActiveDimensionsDegraded(dispatched, degraded) {
   if (activeDims.length === 0) return degradedSet.size > 0;
   return activeDims.every((d) => degradedSet.has(d));
 }
-function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired) {
+function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired, schemaActive) {
   const props = {};
   for (const [k, t] of Object.entries({ ...DISCOVERY_FINDING_PROP_TYPES, ...(schemaExtra || {}) })) {
     props[k] = typeof t === 'string' ? { type: t } : deepClone(t);
   }
   props.anchor.minLength = 1;
-  const required = [...FINDING_REQUIRED, 'anchor', 'evidence', 'change_origin', ...(requiredExtra || [])];
-  const itemSchema = { type: 'object', properties: props, required, additionalProperties: false, allOf: DISCOVERY_REQUIREMENTS.map((rule) => ({
+  const required = [...FINDING_REQUIRED, 'anchor', 'evidence', ...DISCOVERY_REQUIRED_FIELDS, ...(requiredExtra || [])];
+  const itemSchema = { type: 'object', properties: props, required, additionalProperties: false };
+  if (schemaActive) itemSchema.allOf = DISCOVERY_REQUIREMENTS.map((rule) => ({
     if: { properties: Object.fromEntries(Object.entries(rule.when).map(([key, value]) => [key, { const: value }])), required: Object.keys(rule.when) },
     then: { required: [...rule.required] },
-  })) };
+  }));
   if (conditionalRequired && conditionalRequired.length) {
     itemSchema.allOf.push(...conditionalRequired.map(({ dimension, required: dimRequired }) => ({
       if: { properties: { dimension: { const: dimension } }, required: ['dimension'] },
@@ -2481,7 +2507,7 @@ function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired) {
 function findingSchema(spec, policy) {
   const conditionalRequired = conditionalSchemaActive(policy) ? (spec.conditionalRequired || []) : [];
   const resultFields = DISPATCH_RESULTS[spec.agentType] || {};
-  const item = findingItemSchema(spec.schemaExtra, spec.requiredExtra, conditionalRequired);
+  const item = findingItemSchema(spec.schemaExtra, spec.requiredExtra, conditionalRequired, conditionalSchemaActive(policy));
   if (conditionalSchemaActive(policy) && spec.admissionRequired?.length) {
     item.allOf = [...(item.allOf || []), ...spec.admissionRequired.map((rule) => ({
       if: { properties: { dimension: { const: rule.dimension }, [rule.field]: { const: rule.kind } }, required: ['dimension', rule.field] },
@@ -2535,8 +2561,13 @@ function discoveryCandidate(raw, spec, occurrence) {
   return candidate;
 }
 function missingDiscoveryFields(finding) {
-  return DISCOVERY_REQUIREMENTS.flatMap((rule) => Object.entries(rule.when).every(([key, value]) => finding[key] === value)
-    ? rule.required.filter((key) => typeof finding[key] !== 'string' || !finding[key].trim()) : []);
+  const required = [...DISCOVERY_REQUIRED_FIELDS, ...DISCOVERY_REQUIREMENTS.flatMap((rule) =>
+    Object.entries(rule.when).every(([key, value]) => finding[key] === value) ? rule.required : [])];
+  return required.filter((key) => {
+    const value = finding[key], schema = DISCOVERY_FINDING_PROP_TYPES[key];
+    return typeof value !== schema.type || (typeof value === 'string' && !value.trim())
+      || (schema.enum && !schema.enum.includes(value));
+  });
 }
 async function discover(ctx, input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
@@ -2544,6 +2575,7 @@ async function discover(ctx, input) {
   const limits = inp.limits || {};
   const policy = inp.policy || {};
   const discoveryCap = limits.discoveryCap;
+  const hasPlan = inp.discoveryPlan !== undefined;
   const activeSpecs = agentSpecs().filter((spec) => agentActive(spec, agentFlags));
   const specs = activeSpecs.filter((spec) => spec.dispatch === 'parallel');
   const inventory = inp.removedTests || { status: 'unavailable', items: [], omitted: 0, reason: 'inventory not supplied' };
@@ -2579,7 +2611,7 @@ async function discover(ctx, input) {
   ledger.omitted_fact_packets = assignment.omitted_fact_packets;
   if (assigned.length && inp.contextPath) {
     const hunterResults = await ctx.parallel(hunters.map((spec) => () => ctx.agent(
-      gapHunterPrompt(inp.contextPath, inp.discoveryPlan, assigned, assignment.facts), {
+      gapHunterPrompt(inp.contextPath, assigned, assignment.facts), {
         label: spec.agentType, agentType: spec.agentType, model: modelFor(spec.agentType, policy), schema: findingSchema(spec, policy),
       })));
     hunters.forEach((spec, i) => {
@@ -2591,7 +2623,7 @@ async function discover(ctx, input) {
   }
   const finalResults = results.map((result, i) => specs[i].dispatch === 'uncovered' ? { findings: [] } : result);
   const ledgerGaps = [];
-  if (inp.discoveryPlan !== undefined && ledger.status !== 'available') ledgerGaps.push('discovery coverage unavailable: invalid or unavailable region plan');
+  if (hasPlan && ledger.status !== 'available') ledgerGaps.push('discovery coverage unavailable: invalid or unavailable region plan');
   if (assigned.length && !inp.contextPath) ledgerGaps.push('gap hunter: uncovered regions could not be dispatched without contextPath');
   const gaps = [];
   const hunterGaps = [];
@@ -2638,7 +2670,7 @@ async function discover(ctx, input) {
       if (missing.length) {
         checked.valid.length = 0;
         checked.rejected.push(f);
-        checked.warnings.push(`Missing discovery field(s): ${missing.join(', ')} — finding rejected`);
+        checked.warnings.push(`Invalid required discovery field(s): ${missing.join(', ')} — finding rejected`);
         if (trace) decisions.push(traceDecision(f, 'invalid_shape', checked.warnings.at(-1)));
       }
       if (checked.rejected.length) channelGaps.push(...checked.warnings.map((warning) => `${spec.agentType}: ${warning}`));
@@ -2660,7 +2692,7 @@ async function discover(ctx, input) {
   });
   ledger.remaining_uncovered = coverageLedger(inp.discoveryPlan, specs, finalResults, inp.repoRoot, inp.contextLines).uncovered;
   if (!primaryUsable) degradedDims.push(...specs.filter((s) => s.dispatch === 'parallel').flatMap((s) => s.dimensions));
-  if (trace) trace.coverage_ledger = boundedCoverageLedger(ledger);
+  if (trace && hasPlan) trace.coverage_ledger = boundedCoverageLedger(ledger);
   if (trace) recordStage(trace, 'discover', intake, {
     decisions, coverage: gaps.length ? 'partial' : 'complete', cap: discoveryCap, cap_hit: gaps.some((gap) => gap.includes('possibly incomplete')) });
   gaps.push(...ledgerGaps, ...hunterGaps);
@@ -2702,7 +2734,7 @@ async function discover(ctx, input) {
     degraded: [...new Set(degradedDims)],
     dispatched: specs.map((spec) => spec.agentType),
     removedTestAudit,
-    ...(inp.discoveryPlan ? { coverageLedger: boundedCoverageLedger(ledger) } : {}),
+    ...(hasPlan ? { coverageLedger: boundedCoverageLedger(ledger) } : {}),
   }, decisions);
 }
 function discoverPrompt(inp, spec) {
@@ -6445,13 +6477,20 @@ function stripNullOptionalsReport(args, descriptors = KNOB_REGISTRY) {
 }
 function normalizeArgsReport(raw, descriptors = KNOB_REGISTRY) {
   const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-  const receiptFields = ['contextLines', 'contextChars', 'contextMaxLineChars', 'contextReadPlanVersion', 'contextReadChunks', 'removedTests', 'discoveryPlan'];
+  const equal = (a, b) => a === b || (a !== null && b !== null && typeof a === 'object' && typeof b === 'object'
+    && Array.isArray(a) === Array.isArray(b) && Object.keys(a).length === Object.keys(b).length
+    && Object.keys(a).every((key) => Object.hasOwn(b, key) && equal(a[key], b[key])));
+  const receiptFields = isPlainObject(parsed?.contextReceipt)
+    ? CONTEXT_RECEIPT_FIELDS.filter((key) => Object.hasOwn(parsed.contextReceipt, key)) : [];
+  const contextReceiptGaps = receiptFields.filter((key) => Object.hasOwn(parsed, key) && !equal(parsed[key], parsed.contextReceipt[key]))
+    .map((key) => `contextReceipt.${key} conflicts with top-level ${key}; preparation receipt value used`);
   const withContext = isPlainObject(parsed?.contextReceipt) ? { ...parsed,
-    ...Object.fromEntries(receiptFields.filter((key) => Object.hasOwn(parsed.contextReceipt, key)).map((key) => [key, parsed.contextReceipt[key]])) } : parsed;
+    ...Object.fromEntries(receiptFields.map((key) => [key, parsed.contextReceipt[key]])) } : parsed;
   const report = stripNullOptionalsReport(withContext, descriptors);
   const { args, derivedPaths } = deriveConfigWaist(report.args, descriptors);
   report.args = args;
   report.derivedPaths = derivedPaths;
+  if (contextReceiptGaps.length) report.contextReceiptGaps = contextReceiptGaps;
   return report;
 }
 function normalizeArgs(raw, descriptors = KNOB_REGISTRY) {
@@ -8067,8 +8106,10 @@ async function runWith(ctx, rawArgs) {
     dropped: droppedNulls,
     respelled: respelledNulls,
     derivedPaths,
+    contextReceiptGaps = [],
   } = normalizeArgsReport(entry.waist);
   const nullArgGaps = [
+    ...contextReceiptGaps,
     ...nullToleranceRejectedKeys(A, droppedNulls, derivedPaths).map((key) => nullToleranceGap(key)),
     ...respelledNulls.map(nullRespellGap),
   ];

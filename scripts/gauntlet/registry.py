@@ -1931,6 +1931,15 @@ READ_PLAN_MAX_BYTES = 24000
 READ_PLAN_LINE_PREFIX_BYTES = 12
 READ_PLAN_MAX_LINES = 750
 READ_PLAN_MAX_CHUNKS = 2000
+CONTEXT_RECEIPT_FIELDS = (
+    "contextLines",
+    "contextChars",
+    "contextMaxLineChars",
+    "contextReadPlanVersion",
+    "contextReadChunks",
+    "removedTests",
+    "discoveryPlan",
+)
 JS_TRIM_CHARS = (
     "\t\n\u000b\f\r "
     "\u00a0\u1680\u2000\u2001\u2002\u2003"

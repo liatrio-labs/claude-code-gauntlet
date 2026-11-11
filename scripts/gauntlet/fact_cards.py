@@ -32,6 +32,7 @@ class CalleeCandidate:
     file: str
     line: int
     lines: tuple[str, ...]
+    prefix: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +57,8 @@ class ScanStatus(TypedDict):
     listing_truncated: bool
     deadline_reached: bool
     excluded: int
-    oversize: int
+    oversize_files: int
+    oversize_lines: int
     file_limit: int
     byte_limit: int
     unreadable: int
@@ -137,7 +139,8 @@ def build_fact_cards(
         "listing_truncated": False,
         "deadline_reached": False,
         "excluded": 0,
-        "oversize": 0,
+        "oversize_files": 0,
+        "oversize_lines": 0,
         "file_limit": 0,
         "byte_limit": 0,
         "unreadable": 0,
@@ -209,7 +212,7 @@ def build_fact_cards(
             scan["deadline_reached"] = True
             break
         if entry.size > MAX_FILE_BYTES:
-            scan["oversize"] += 1
+            scan["oversize_files"] += 1
         elif len(selected) >= MAX_FILES:
             scan["file_limit"] += len(paths) - index
             break
@@ -223,13 +226,6 @@ def build_fact_cards(
     scan["unreadable"] = inventory.unreadable + read.unreadable
     scan["deadline_reached"] |= read.deadline_reached
     loaded = dict(read.files)
-    result["scan_limited"] = (
-        not inventory.available
-        or scan["diff_limited"]
-        or inventory.truncated
-        or scan["deadline_reached"]
-        or any(scan[k] for k in ("oversize", "file_limit", "byte_limit", "unreadable"))
-    )
 
     def card(
         kind: Literal["neighbor", "callee_candidate", "sibling_contrast"],
@@ -254,7 +250,7 @@ def build_fact_cards(
         if not source_path(file):
             continue
         if time.monotonic() >= deadline:
-            scan["deadline_reached"] = result["scan_limited"] = True
+            scan["deadline_reached"] = True
             break
         lines = loaded.get(file)
         if lines is None:
@@ -298,39 +294,49 @@ def build_fact_cards(
     }
     names = {call.rsplit(".", 1)[-1] for call in calls}
     occurrences: Counter[str] = Counter()
+    prefix_uses: Counter[str] = Counter()
+    prefix_names: dict[str, set[str]] = {}
     for file, lines in loaded.items() if names else ():
         if time.monotonic() >= deadline:
-            scan["deadline_reached"] = result["scan_limited"] = True
+            scan["deadline_reached"] = True
             break
         for n, line in enumerate(lines):
             if time.monotonic() >= deadline:
-                scan["deadline_reached"] = result["scan_limited"] = True
+                scan["deadline_reached"] = True
                 break
             # Bound regex work before encoding or scanning generated/minified lines.
             if (
                 len(line) > MAX_CALL_LINE_BYTES
                 or len(line.encode("utf-8")) > MAX_CALL_LINE_BYTES
             ):
-                scan["oversize"] += 1
-                result["scan_limited"] = True
+                scan["oversize_lines"] += 1
                 continue
             for match in _CALL.finditer(line):
                 token = match[1]
                 name = token.rsplit(".", 1)[-1]
+                words = line[: match.start()].split()
+                prefix = " ".join(words)
+                introducing = bool(re.search(r"[A-Za-z_]", prefix)) and not any(
+                    c in prefix for c in "=();{}"
+                )
+                if len(words) > 2:
+                    prefix = " ".join(
+                        (words[0], *("_" for _ in words[1:-1]), words[-1])
+                    )
+                if introducing:
+                    prefix_uses[prefix] += 1
+                    prefix_names.setdefault(prefix, set()).add(name)
                 if name not in names:
                     continue
                 occurrences[name] += 1
                 if occurrences[name] > MAX_CALL_OCCURRENCES or "." in token:
                     continue
-                prefix = line[: match.start()].strip()
-                if (
-                    prefix and not any(c in prefix for c in "=();{}")
-                ) and _body_after_parameters(lines, n, match.end() - 1):
+                if introducing and _body_after_parameters(lines, n, match.end() - 1):
                     # Changed lines are already in the diff, not an outside fact.
                     if (file, n + 1) in shown_head:
                         continue
                     candidates.setdefault(name, []).append(
-                        CalleeCandidate(file, n + 1, lines)
+                        CalleeCandidate(file, n + 1, lines, prefix)
                     )
 
     def distance(file: str, related: set[str]) -> int:
@@ -349,7 +355,15 @@ def build_fact_cards(
     ranked: list[RankedCall] = []
     for order, call in enumerate(calls):
         name = call.rsplit(".", 1)[-1]
-        matches = candidates.get(name, [])
+        all_matches = candidates.get(name, [])
+        # Introduction-shaped prefixes normally bind distinct names. Repeated uses
+        # of the same names reveal invocation syntax without language keyword lists.
+        matches = [
+            m
+            for m in all_matches
+            if prefix_uses[m.prefix] <= 2 * len(prefix_names[m.prefix])
+        ]
+        result["omitted"] += len(all_matches) - len(matches)
         if occurrences[name] > MAX_CALL_OCCURRENCES:
             result["omitted"] += len(matches)
             continue
@@ -396,7 +410,7 @@ def build_fact_cards(
 
     for file in sorted(changed, key=lambda p: (is_test_path(p), p)):
         if time.monotonic() >= deadline:
-            scan["deadline_reached"] = result["scan_limited"] = True
+            scan["deadline_reached"] = True
             break
         lines = loaded.get(file)
         if lines is None:
@@ -414,7 +428,7 @@ def build_fact_cards(
         counts: Counter[str] = Counter()
         for _, peer_text in peers:
             if time.monotonic() >= deadline:
-                scan["deadline_reached"] = result["scan_limited"] = True
+                scan["deadline_reached"] = True
                 break
             counts.update(
                 {
@@ -500,4 +514,20 @@ def build_fact_cards(
                 result["used_bytes"] += size
             else:
                 result["omitted"] += 1
+    result["scan_limited"] = (
+        not scan["available"]
+        or scan["diff_limited"]
+        or scan["listing_truncated"]
+        or scan["deadline_reached"]
+        or any(
+            scan[k]
+            for k in (
+                "oversize_files",
+                "oversize_lines",
+                "file_limit",
+                "byte_limit",
+                "unreadable",
+            )
+        )
+    )
     return result

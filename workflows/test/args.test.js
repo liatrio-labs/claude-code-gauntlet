@@ -4,6 +4,23 @@ import { normalizeArgs, normalizeArgsReport, validateArgs, stripNullOptionalsRep
 import { fnv1a32 } from '../src/wire.js';
 import { nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys, resolveReviewConfig } from '../src/args.js';
 import { interactiveArgs, headlessArgs, priorReviewDetector, prIdentity, reviewMdArgs } from './helpers/argsFixtures.js';
+import { CONTEXT_RECEIPT_FIELDS } from '../src/registry.js';
+
+test('preparation receipt owns its declared fields and discloses conflicting top-level values', () => {
+  const receipt = {contextLines:10, contextChars:200, contextMaxLineChars:20, contextReadPlanVersion:1,contextReadChunks:[10],
+    removedTests:{status:'unavailable',items:[],omitted:0,reason:'inventory absent'},
+    discoveryPlan:{version:2,status:'unavailable',regions:[],fact_packets:[]}};
+  const fields = Object.keys(receipt);
+  assert.deepEqual(new Set(CONTEXT_RECEIPT_FIELDS), new Set(fields));
+  const same = {...receipt,discoveryPlan:{status:'unavailable',version:2,fact_packets:[],regions:[]}};
+  assert.equal(normalizeArgsReport({...same, contextReceipt:receipt}).contextReceiptGaps, undefined);
+  const report = normalizeArgsReport(Object.fromEntries([...CONTEXT_RECEIPT_FIELDS.map((key) => [key, 0]), ['contextReceipt', receipt]]));
+  assert.equal(report.contextReceiptGaps.length, CONTEXT_RECEIPT_FIELDS.length);
+  for (const key of CONTEXT_RECEIPT_FIELDS) {
+    assert.deepEqual(report.args[key], receipt[key]);
+    assert.ok(report.contextReceiptGaps.some((gap) => gap.startsWith(`contextReceipt.${key} conflicts`)));
+  }
+});
 
 test('removed-test args treat every inventory path control character as unavailable', () => {
   const controls = [...Array.from({ length: 32 }, (_, i) => i),

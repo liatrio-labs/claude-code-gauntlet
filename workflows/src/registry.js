@@ -5,6 +5,7 @@ const DEEP = 'deep';
 
 // The writer and workflow must accept the same bounded receipt size.
 export const READ_PLAN_MAX_CHUNKS = 2000;
+export const CONTEXT_RECEIPT_FIELDS = deepFreeze(['contextLines', 'contextChars', 'contextMaxLineChars', 'contextReadPlanVersion', 'contextReadChunks', 'removedTests', 'discoveryPlan']);
 
 export const AGENT_TYPE_TEST_ANALYZER = 'code-gauntlet:test-analyzer';
 
@@ -241,6 +242,7 @@ export const DIMENSIONS = deepFreeze([
   requiredWhenDimension: [...row.requiredWhenDimension, ...(row.admission ? [row.admission.field] : [])],
 })));
 
+export const DISCOVERY_REQUIRED_FIELDS = deepFreeze(['change_origin']);
 export const DISCOVERY_REQUIREMENTS = deepFreeze([{ when: { change_origin: 'pre_existing' }, required: ['change_relevance'] }]);
 
 export const DISCOVERY_DISPATCHES = deepFreeze(['parallel', 'uncovered']);

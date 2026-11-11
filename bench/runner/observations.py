@@ -118,7 +118,6 @@ ReasonCode = Literal[
     "demoted",
     "refuted",
     "out_of_scope",
-    "discover_scope",
     "scope_contradicted",
     "cite_unmatched",
     "cite_unavailable",

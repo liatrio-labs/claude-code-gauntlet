@@ -160,6 +160,7 @@ _REGISTRY_FIELDS = (
     "readPlanLinePrefixBytes: c.READ_PLAN_LINE_PREFIX_BYTES",
     "readPlanMaxLines: c.READ_PLAN_MAX_LINES",
     "readPlanMaxChunks: m.READ_PLAN_MAX_CHUNKS",
+    "contextReceiptFields: m.CONTEXT_RECEIPT_FIELDS",
     "required: m.FINDING_REQUIRED",
     "waistRequired: m.REQUIRED",
     "canonicalFields: Object.keys(m.FINDING_PROP_TYPES)",
@@ -963,6 +964,8 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
             f"READ_PLAN_LINE_PREFIX_BYTES = {identity['readPlanLinePrefixBytes']}",
             f"READ_PLAN_MAX_LINES = {identity['readPlanMaxLines']}",
             f"READ_PLAN_MAX_CHUNKS = {identity['readPlanMaxChunks']}",
+            "CONTEXT_RECEIPT_FIELDS = "
+            + _python_literal(tuple(identity["contextReceiptFields"])),
             "JS_TRIM_CHARS = (\n"
             + "\n".join(
                 "    "

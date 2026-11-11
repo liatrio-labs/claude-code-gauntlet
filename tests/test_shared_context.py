@@ -839,6 +839,9 @@ def test_discovery_plan_reads_only_mapped_hunks_and_fact_cards(tmp_path, invoke)
     assert result.returncode == 0, result.stderr
     receipt = json.loads(result.stdout)
     plan = receipt["discoveryPlan"]
+    from gauntlet.registry import CONTEXT_RECEIPT_FIELDS
+
+    assert set(receipt) == set(CONTEXT_RECEIPT_FIELDS)
     assert plan["status"] == "available"
     regions = plan["regions"]
     assert len(regions) == len({r["id"] for r in regions}) == 3
@@ -858,6 +861,9 @@ def test_discovery_plan_reads_only_mapped_hunks_and_fact_cards(tmp_path, invoke)
     assert [r["line_start"] for r in regions] == [2, 20, 0]
     for region, marker in zip(regions, ["+|first", "+|last", "-|delete"], strict=True):
         packet = read(region["reads"])
+        opening, *_, closing = packet.split("\n")
+        assert opening.startswith('<untrusted-code-content id="')
+        assert closing == '</untrusted-code-content id="' + opening.split('id="')[1]
         assert marker in packet
         assert "RULES_SENTINEL" not in packet and "TRIAGE_SENTINEL" not in packet
         assert "Fact cards" not in packet
@@ -968,7 +974,7 @@ def test_fact_scan_applies_snapshot_caps_before_content_reads(
     facts = json.loads(fact_card_payload(content))
     status = {
         "MAX_FILES": "file_limit",
-        "MAX_FILE_BYTES": "oversize",
+        "MAX_FILE_BYTES": "oversize_files",
         "MAX_SCAN_BYTES": "byte_limit",
     }[cap]
     assert facts["scan"][status] > 0
@@ -1027,8 +1033,10 @@ def test_fact_lookup_uses_annotation_line_boundaries_and_single_call_extraction(
 
     write_frame = shared_context.frame_sections
 
-    def padded_metadata(tag, sections, attrs):
-        return write_frame(tag, (b"\n" + sections[0], *sections[1:]), attrs)
+    def padded_metadata(tag, sections, attrs=None):
+        if attrs and attrs.get("kind") == "fact-cards":
+            sections = (b"\n" + sections[0], *sections[1:])
+        return write_frame(tag, sections, attrs)
 
     monkeypatch.setattr(shared_context, "frame_sections", padded_metadata)
     root = tmp_path / "repo"

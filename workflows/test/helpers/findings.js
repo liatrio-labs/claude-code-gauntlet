@@ -8,7 +8,7 @@ export function finding(overrides = {}) {
     type_design: { quality_basis: 'current_correctness' }, simplification: { quality_basis: 'current_correctness' },
   };
   const value = {
-    origin: 'new', validation: 'validated', policy_subject: 'ordinary', path_role: 'source', diff_validation: { in_diff: true },
+    origin: 'new', change_origin: 'introduced', validation: 'validated', policy_subject: 'ordinary', path_role: 'source', diff_validation: { in_diff: true },
     location_status: 'confirmed', anchor: 'return process(value);', line_end: overrides.line_start ?? 10,
     id: 'f1', file: 'src/x.py', line_start: 10, severity: 'high',
     confidence: 90, title: 'Real bug',

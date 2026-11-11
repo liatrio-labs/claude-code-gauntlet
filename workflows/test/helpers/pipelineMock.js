@@ -80,6 +80,7 @@ export function makeFinding(id, over = {}) {
     confidence: 90,
     dimension: 'bug',
     origin: 'new',
+    change_origin: 'introduced',
     evidence: '',
     cross_file_refs: [],
     code: `const ${id} = broken();`,

@@ -412,7 +412,7 @@ const {disposeFindings} = await load('dispose');
 const {shellSplit} = await import(pathToFileURL(`${root}/workflows/test/helpers/shellWords.js`));
 const {evaluateAdmission} = await load('admission');
 const request = file => ({file, line_start:90, line_end:90, anchor:'return process(value);', location_status:'confirmed', confirmed:true});
-const candidate = {id:'ISSUE',file:'primary.txt',line_start:7,line_end:7,anchor:'return process(value);',title:'Stale value',description:'A code claim.',severity:'high',confidence:90,dimension:'bug',origin:'new',
+const candidate = {id:'ISSUE',file:'primary.txt',line_start:7,line_end:7,anchor:'return process(value);',title:'Stale value',description:'A code claim.',severity:'high',confidence:90,dimension:'bug',origin:'new',change_origin:'introduced',
  sites:[...Array.from({length:4},(_,n)=>request(`${work}/site-${n}.txt`)), request('../escape'), {...request('site-0.txt'),anchor:'missing quote'}]};
 const discovered = await discover({parallel:async ts=>Promise.all(ts.map(t=>t())),agent:async(_,o)=>{
  if(!o.schema.properties.findings.items.properties.sites)throw Error('missing discovery sites');
