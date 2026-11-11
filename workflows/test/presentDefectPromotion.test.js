@@ -110,7 +110,7 @@ test('incomplete validation gets one small follow-up round and only score or pol
 });
 
 test('a score omitted from the main batch is repaired without degrading a fresh review', async () => {
-  const args = validArgs({ contextLines: 20, contextChars: 400 });
+  const args = validArgs({ contextLines: 20, contextChars: 400, contextReadPlanVersion: 1, contextReadChunks: [20] });
   let payload;
   const ctx = makeCtx(args, { findings: [makeFinding('kept'), makeFinding('retry')], onPersist: (value) => { payload = value; } });
   const agent = ctx.agent;

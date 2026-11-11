@@ -181,26 +181,30 @@ def test_layout_bounds_names_and_read_chunks(tmp_path, invoke):
     assert all(json.dumps(name) in rows for name in listed)
     planned = run_node(
         r"""
-        import { contextReadPlan, READ_PLAN_MAX_CHARS } from './workflows/src/contextPlan.js';
+        import { contextReadPlan } from './workflows/src/contextPlan.js';
         import { readFileSync } from 'node:fs';
         const { receipt, content } = JSON.parse(readFileSync(0, 'utf8'));
         const lines = content.split('\n');
-        const chunks = contextReadPlan(receipt.contextLines, receipt.contextChars, receipt.contextMaxLineChars, receipt.contextReadChunks);
+        const chunks = contextReadPlan(receipt.contextLines, receipt.contextChars, receipt.contextMaxLineChars, receipt.contextReadChunks, receipt.contextReadPlanVersion);
         console.log(JSON.stringify({
-          cap: READ_PLAN_MAX_CHARS,
+          chunks,
           sizes: chunks.map(({ offset, limit }) =>
-            lines.slice(offset - 1, offset - 1 + limit).join('\n').length + 1),
+            Buffer.byteLength(lines.slice(offset - 1, offset - 1 + limit).join('\n'), 'utf8') + 1 + 12 * limit),
           covered: chunks.reduce((total, chunk) => total + chunk.limit, 0),
         }));
         """,
         {"receipt": receipt, "content": content},
     )
     plan = json.loads(planned.stdout)
-    assert plan["cap"] == READ_PLAN_MAX_CHARS
+    assert receipt["contextReadChunks"] == [354, 202]
+    assert plan["chunks"] == [
+        {"offset": 1, "limit": 354},
+        {"offset": 355, "limit": 202},
+    ]
     assert plan["covered"] == receipt["contextLines"] == content.count("\n")
     assert receipt["contextChars"] == len(content)
     assert receipt["contextMaxLineChars"] == max(map(len, content.split("\n"))) + 1
-    assert max(plan["sizes"]) <= READ_PLAN_MAX_CHARS
+    assert max(plan["sizes"]) <= 24000
 
 
 def test_context_neutralizes_block_tags_in_diff(tmp_path, invoke):
@@ -670,3 +674,28 @@ def test_writer_discloses_unplannable_context(tmp_path, invoke, monkeypatch):
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["contextReadChunks"] == []
+
+
+@pytest.mark.parametrize(
+    "rules,expected",
+    [
+        (b"x" * 11987 + b"\n" + b"x" * 11987 + b"\n", [2, 15]),
+        (b"x" * 11987 + b"\n" + b"x" * 11988 + b"\n", [1, 16]),
+        ((("\U0001f680" * 2996 + "xyz\n") * 2).encode(), [2, 15]),
+        (b"x" * 24000 + b"\nshort\n", [1, 16]),
+    ],
+    ids=["exact-bytes", "one-byte-over", "multibyte", "oversized-singleton"],
+)
+def test_writer_literal_read_plans(tmp_path, invoke, rules, expected):
+    output = tmp_path / "out"
+    write_context_inputs(output, rules, b"diff\n")
+    result = invoke(
+        "write_shared_context",
+        ["--output-dir", str(output), "--head-sha", SHA],
+        tmp_path,
+        b"triage",
+    )
+    assert result.returncode == 0, result.stderr
+    receipt = json.loads(result.stdout)
+    assert receipt["contextLines"] == 17
+    assert receipt["contextReadChunks"] == expected

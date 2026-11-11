@@ -3,6 +3,9 @@ import { deepFreeze } from './wire.js';
 // Scope gating is opt-out so absent flags preserve full review; null flags keep core agents ungateable.
 const DEEP = 'deep';
 
+// The writer and workflow must accept the same bounded receipt size.
+export const READ_PLAN_MAX_CHUNKS = 2000;
+
 export const AGENT_TYPE_TEST_ANALYZER = 'code-gauntlet:test-analyzer';
 
 // Share ordered identity checks with validation, rendering, and generated references so their contracts cannot drift.

@@ -1,15 +1,15 @@
+import { READ_PLAN_MAX_CHUNKS } from './registry.js';
+
 // Read can truncate silently, so explicit plans prevent agents from mistaking partial context for the complete file.
-// The token cap needs a UTF-8 byte budget that also reserves line-number prefixes.
 export const READ_PLAN_MAX_LINES = 750;
 // Aggregate-only receipts retain their original character heuristic.
 export const READ_PLAN_MAX_CHARS = 30000;
+// Assuming a 25,000-token host Read cap and at least one UTF-8 byte per text token,
+// this byte budget including line prefixes leaves 1,000 tokens of margin.
 export const READ_PLAN_MAX_BYTES = 24000;
 export const READ_PLAN_LINE_PREFIX_BYTES = 12;
-// Full calls are short up to ten; compact pairs list at most 64 chunks (702 characters).
+// After ten full calls, compact pairs keep even 2,000 chunks below 26,400 characters plus the path.
 const READ_PLAN_MAX_ENUMERATED = 10;
-const READ_PLAN_MAX_LISTED = 64;
-// Uniform plans use a fixed-size rule; this separate ceiling bounds allocation and receipt size.
-export const READ_PLAN_MAX_CHUNKS = 2000;
 
 function chunkReadPlan(lines, chunks) {
   if (chunks === undefined) return { reason: 'contextReadChunks was not stamped' };
@@ -20,9 +20,6 @@ function chunkReadPlan(lines, chunks) {
   if (chunks.some((count) => count < 1)) return { reason: 'contextReadChunks contains a non-positive line count' };
   if (chunks.some((count) => count > READ_PLAN_MAX_LINES)) return { reason: 'contextReadChunks exceeds the per-read line limit' };
   if (chunks.reduce((sum, count) => sum + count, 0) !== lines) return { reason: 'contextReadChunks does not cover contextLines' };
-  const span = chunks[0];
-  const uniform = chunks.every((count, i) => i === chunks.length - 1 ? count <= span : count === span);
-  if (!uniform && chunks.length > READ_PLAN_MAX_LISTED) return { reason: 'variable contextReadChunks exceeds the 64-chunk prompt budget' };
   let offset = 1;
   return { plan: chunks.map((limit) => {
     const chunk = { offset, limit };
@@ -39,11 +36,7 @@ function lineWidthEstimate(maxLineChars, chars, total) {
 
 // Offsets are one-based to match the Read tool.
 // An unknown line count cannot justify a guessed coverage plan.
-export function contextReadPlan(lines, chars, maxLineChars, chunks) {
-  if (chunks !== undefined) {
-    const measured = chunkReadPlan(lines, chunks);
-    if (measured.plan) return measured.plan;
-  }
+function aggregateReadPlan(lines, chars, maxLineChars) {
   const total = Number.isSafeInteger(lines) && lines > 0 ? lines : 0;
   if (total === 0) return [];
   // Maximum line width bounds uneven chunks; older receipts supply only an average estimate.
@@ -62,12 +55,41 @@ export function contextReadPlan(lines, chars, maxLineChars, chunks) {
   return plan;
 }
 
+function resolveReadPlan(lines, chars, maxLineChars, chunks, version) {
+  if (!Number.isSafeInteger(lines) || lines < 1) {
+    return { plan: [], gap: 'context_unmeasured: no usable args.contextLines was stamped, so the shared-context read plan could not be computed — '
+      + 'every agent got the count-free "read until a Read returns no further content" wording instead of the exact '
+      + 'Read calls covering the file. A Read can return part of a file '
+      + 'with no truncation notice, and an agent that stops there reviews only what it saw. Stamp contextLines, '
+      + 'contextChars, contextMaxLineChars, contextReadPlanVersion and contextReadChunks from the Phase 2 step that writes the context file.' };
+  }
+  const measured = version === 1 ? chunkReadPlan(lines, chunks) : { reason: version === undefined
+    ? (chunks === undefined ? 'contextReadPlanVersion and contextReadChunks were not stamped' : 'contextReadPlanVersion was not stamped')
+    : 'unsupported contextReadPlanVersion' };
+  if (measured.plan) return measured;
+  const plan = aggregateReadPlan(lines, chars, maxLineChars);
+  const gap = plan.length
+    ? `context_plan_fallback: ${measured.reason}; using the aggregate-based shared-context read plan.`
+    : `context_unplannable: ${measured.reason}; the aggregate-based shared-context read plan exceeds the ${READ_PLAN_MAX_CHUNKS}-chunk allocation ceiling; using count-free read-to-end.`;
+  return { plan, gap };
+}
+
+export function contextReadPlan(lines, chars, maxLineChars, chunks, version) {
+  return resolveReadPlan(lines, chars, maxLineChars, chunks, version).plan;
+}
+
+function uniformReadSpan(plan) {
+  const span = plan[0].limit;
+  return plan.every((p, i) => p.offset === 1 + i * span
+    && (i === plan.length - 1 ? p.limit <= span : p.limit === span)) ? span : 0;
+}
+
 // Stages receive a prebuilt instruction, removing their ability to construct competing context-read plans.
 export function sharedContextLine(inp, plan) {
   const path = inp && inp.contextPath;
   if (!path) return '';
   const prefix = `Read the shared context at ${path} first. Tagged blocks end only at the closing tag repeating their opening id; intervening tags are content.`;
-  plan = plan || contextReadPlan(inp.contextLines, inp.contextChars, inp.contextMaxLineChars, inp.contextReadChunks);
+  plan = plan || contextReadPlan(inp.contextLines, inp.contextChars, inp.contextMaxLineChars, inp.contextReadChunks, inp.contextReadPlanVersion);
   if (plan.length === 0) {
     // Without a usable count, fixed steps leave only end detection to agent judgment.
     const s = READ_PLAN_MAX_LINES;
@@ -82,8 +104,8 @@ export function sharedContextLine(inp, plan) {
     const calls = plan.map((p) => `Read(offset=${p.offset}, limit=${p.limit})`).join(', ');
     return `${prefix} It is ${total} lines, with ${plan.length} planned Read calls: ${calls}. ${tail} `;
   }
-  const span = plan[0].limit;
-  if (!plan.every((p, i) => p.offset === 1 + i * span && (i === plan.length - 1 ? p.limit <= span : p.limit === span))) {
+  const span = uniformReadSpan(plan);
+  if (span === 0) {
     const pairs = plan.map((p) => `${p.offset}:${p.limit}`).join(', ');
     return `${prefix} It is ${total} lines, with ${plan.length} planned Read calls (offset:limit): ${pairs}. ${tail} `;
   }
@@ -91,29 +113,8 @@ export function sharedContextLine(inp, plan) {
 }
 
 export function setupContext(inp) {
-  const contextSizeGap = [];
-  const hasPlanReceipt = inp.contextReadPlanVersion !== undefined || inp.contextReadChunks !== undefined;
-  let measured;
-  if (hasPlanReceipt) {
-    measured = inp.contextReadPlanVersion === 1
-      ? chunkReadPlan(inp.contextLines, inp.contextReadChunks)
-      : { reason: 'missing or unsupported contextReadPlanVersion' };
-    if (measured.reason) contextSizeGap.push(`context_plan_fallback: ${measured.reason}; using the aggregate-based shared-context read plan.`);
-  }
-  const plan = measured?.plan || contextReadPlan(inp.contextLines, inp.contextChars, inp.contextMaxLineChars);
+  const { plan, gap } = resolveReadPlan(inp.contextLines, inp.contextChars, inp.contextMaxLineChars,
+    inp.contextReadChunks, inp.contextReadPlanVersion);
   const contextLine = sharedContextLine(inp, plan);
-  if (inp.contextLines === undefined) {
-    contextSizeGap.push('context_unmeasured: args.contextLines was not stamped, so the shared-context read plan could not be computed — '
-      + 'every agent got the count-free "read until a Read returns no further content" wording instead of the exact '
-      + 'Read calls covering the file. A Read can return part of a file '
-      + 'with no truncation notice, and an agent that stops there reviews only what it saw. Stamp contextLines, '
-      + 'contextChars, contextMaxLineChars, contextReadPlanVersion and contextReadChunks from the Phase 2 step that writes the context file.');
-  } else if (plan.length === 0) {
-    contextSizeGap.push('context_unplannable: args.contextLines was stamped (' + inp.contextLines + ') but exceeds the read-plan chunk '
-      + 'ceiling, so the shared-context read plan could not be built — every agent got the count-free '
-      + '"read until a Read returns no further content" wording instead of the exact Read calls covering the file. '
-      + 'Shrink the shared context '
-      + '(or raise READ_PLAN_MAX_CHUNKS with a matching prompt-size budget) so a plan can be computed.');
-  }
-  return { contextLine, contextSizeGap };
+  return { contextLine, contextSizeGap: gap ? [gap] : [] };
 }

@@ -157,7 +157,7 @@ _REGISTRY_FIELDS = (
     "readPlanMaxBytes: c.READ_PLAN_MAX_BYTES",
     "readPlanLinePrefixBytes: c.READ_PLAN_LINE_PREFIX_BYTES",
     "readPlanMaxLines: c.READ_PLAN_MAX_LINES",
-    "readPlanMaxChunks: c.READ_PLAN_MAX_CHUNKS",
+    "readPlanMaxChunks: m.READ_PLAN_MAX_CHUNKS",
     "required: m.FINDING_REQUIRED",
     "waistRequired: m.REQUIRED",
     "canonicalFields: Object.keys(m.FINDING_PROP_TYPES)",

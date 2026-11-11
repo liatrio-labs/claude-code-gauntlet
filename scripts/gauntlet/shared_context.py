@@ -59,7 +59,8 @@ ends with LF, so the newline count equals the Read tool's line numbering.
 includes LF. ``contextReadPlanVersion`` identifies the measured-plan receipt;
 ``contextReadChunks`` carries only per-chunk line counts. Packing caps each Read at
 750 lines and 24,000 UTF-8 bytes including LF and a 12-byte line-prefix reserve.
-This leaves margin under the default 25,000-token Read cap even for multibyte text.
+The budget assumes a 25,000-token host Read cap and at least one UTF-8 byte per
+text token; it is a conservative planning bound, including multibyte text.
 An oversized line stands alone for partial-read continuation.
 """
 )

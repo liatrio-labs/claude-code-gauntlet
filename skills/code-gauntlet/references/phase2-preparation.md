@@ -312,7 +312,7 @@ An exit 2 wrote no usable context; stop and report its one-line error.
   changedFiles, changedLines, baseBranch, reviewMd, reviewMdSetChecksum, exclusionsText,
 
   // the shared context file's measured size, from write_shared_context.py's receipt,
-  // verbatim. Character measurements require contextLines.
+  // verbatim. Missing contextLines forces count-free reads and a gap.
   contextLines, contextChars, contextMaxLineChars, contextReadPlanVersion, contextReadChunks,
 
   // how the run's artifacts reach disk. `returnPrimaries: true` is the default and the
