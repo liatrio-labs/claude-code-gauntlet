@@ -39,6 +39,12 @@ Windows CI tests, not yet by a live forge review.
 
 There is nothing to `pip install`.
 
+Interactive sessions need this rule in `permissions.allow` because the host's permission prompt cannot approve a pipeline script too large to display:
+
+```json
+{"permissions": {"allow": ["Workflow(code-gauntlet:code-gauntlet-pipeline)"]}}
+```
+
 The pipeline pins the review agents' models, so your own session's model and effort do not change them.
 We recommend Sonnet at low effort for that session.
 
