@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v3.62.0 (2026-11-11)
+
+### Features
+
+- **bench**: Add --child-effort for the child orchestrator session (#46)
+  ([#591](https://github.com/liatrio-labs/claude-code-gauntlet/pull/591),
+  [`b4450e6`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b4450e60598a67bd5157f1e9bdc75dd8d6aaeea3))
+
+
 ## v3.61.3 (2026-11-10)
 
 ### Bug Fixes
