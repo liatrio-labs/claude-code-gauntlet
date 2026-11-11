@@ -236,8 +236,10 @@ def workflow_directories(cwd: Path, config_dir: Path) -> list[Path]:
 
 def check_directory(directory: Path) -> None:
     try:
-        directory.stat()
-    except FileNotFoundError:
+        info = directory.stat()
+    except (FileNotFoundError, NotADirectoryError):
+        return
+    if not stat.S_ISDIR(info.st_mode):
         return
     for path in sorted(directory.iterdir()):
         if not path.name.endswith(".js"):
@@ -273,8 +275,9 @@ def check_directory(directory: Path) -> None:
 
 def check_workflow_shadow() -> None:
     cwd = Path.cwd()
-    config_dir = Path(
-        os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude"))
+    configured = os.environ.get("CLAUDE_CONFIG_DIR")
+    config_dir = (
+        Path(configured) if configured else Path.home() / ".claude"
     ).absolute()
     directories = workflow_directories(cwd, config_dir)
     # The host resolves paths lexically; Bash may report a physical cwd instead.

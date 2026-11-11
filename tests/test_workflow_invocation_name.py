@@ -34,6 +34,12 @@ def _registered_workflow_name():
     return f"{plugin['name']}:{workflow_header(REPO_ROOT)['name']}"
 
 
+def test_shadow_guard_checks_the_registered_pipeline_name():
+    from gauntlet.workflow_shadow import PIPELINE_NAME
+
+    assert _registered_workflow_name() == PIPELINE_NAME
+
+
 @pytest.mark.parametrize(
     "path",
     SKILL_FILES,

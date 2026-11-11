@@ -88,9 +88,12 @@ def test_policy_capture_refuses_each_resolver_location(workspace, location):
     assert len(result.stderr.splitlines()) == 1
 
 
-def test_default_user_directory_is_checked(workspace, monkeypatch, invoke):
+@pytest.mark.parametrize("configured", [None, ""])
+def test_default_user_directory_is_checked(workspace, monkeypatch, invoke, configured):
     repo, cwd, config = workspace
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    if configured is not None:
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", configured)
     monkeypatch.setattr(Path, "home", lambda: config)
     path = put(config / ".claude/workflows", workflow())
     result = invoke("capture_policy_env", [], cwd)
@@ -482,6 +485,15 @@ def test_literal_and_nonliteral_metadata(workspace, source, refused):
         assert str(path) in result.stderr
     else:
         assert_policy(result)
+
+
+@pytest.mark.parametrize("blocker", [".claude", ".claude/workflows"])
+def test_a_file_where_a_workflow_directory_would_be_is_no_source(workspace, blocker):
+    repo, cwd, config = workspace
+    path = repo / blocker
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(workflow(), encoding="utf-8")
+    assert_policy(run_capture(cwd, config))
 
 
 def test_only_direct_js_files_are_workflow_sources(workspace):
