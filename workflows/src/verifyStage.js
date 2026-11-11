@@ -252,7 +252,7 @@ async function verifySliceWithRetry(c, inp, i, slice, record) {
     const batch = await dispatchVerifySlice(c, inp, i, unresolved, retryRecord, `${inp.nonce}.${i}.r1`, `verify-slice-${i}-retry`, 'r1');
     collect(batch);
     // Repeating an already isolated copy cannot narrow the fault any further.
-    const eligible = new Set(unresolved.length > 1 ? batch.retryIds : []);
+    const eligible = new Set(unresolved.length > 1 ? (batch.retryIds || unresolved.map((f) => f.id)) : []);
     const pending = slice.map((finding, index) => ({ finding, index }))
       .filter(({ finding }) => !accepted.has(finding.id));
     const singletonBudget = verifySingletonRetryBudget(slice.length);
@@ -406,6 +406,7 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBran
     return { ok: false, reason: `delta content proof mismatch (receipt ${proof}, recomputed ${recomputed}) — the echoed values are not the ones the script wrote` };
   }
 
+  const wholeSlice = [...expectedProofs.values()].some((proof) => proof === null);
   let diagnostic = r.n_in === n ? null : {
     reason: `receipt n_in mismatch (got ${r.n_in == null ? 'missing' : r.n_in}, expected ${n})`, inputFault: 'mismatch',
   };
@@ -413,14 +414,14 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBran
     ['inline_checksum', expectedInlineChecksum, 'inline token proof missing from receipt', 'token', 'token'],
     ['input_checksum', expectedInputChecksum, 'input content proof missing from receipt', 'content', 'document'],
   ]) {
-    if (expected == null) continue;
+    // Proven decoded records do not depend on how the executor spelled the token.
+    if (expected == null || (field === 'inline_checksum' && !wholeSlice)) continue;
     const got = typeof r[field] === 'string' ? r[field].trim() : '';
     if (!got) diagnostic ??= { reason: missingReason, inputFault: 'missing' };
     else if (got !== expected) diagnostic ??= { reason: `slice-input ${name} proof mismatch (receipt ${got}, dispatched ${expected}) — the ${noun} the script decoded is not the ${noun} this stage dispatched`, inputFault: 'mismatch' };
   }
 
   // An unsupported expected value cannot safely be localised by record proof.
-  const wholeSlice = [...expectedProofs.values()].some((proof) => proof === null);
   const matchesRecordProof = (id) => expectedProofs.get(id) !== null && proofs.get(id) === expectedProofs.get(id);
   if (wholeSlice && diagnostic) return { ok: false, ...diagnostic };
   const deltas = ids.filter((id) => !malformedLocations.has(id) && byId.has(id) && (wholeSlice || matchesRecordProof(id)))
@@ -429,7 +430,7 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBran
   return {
     ok: true, deltas,
     retryIds: wholeSlice ? [] : ids.filter((id) => !byId.has(id) || !matchesRecordProof(id)),
-    matchedProofIds: new Set(deltas.filter((d) => matchesRecordProof(d.id)).map((d) => d.id)),
+    matchedProofIds: deltas.filter((d) => matchesRecordProof(d.id)).map((d) => d.id),
     proven: !diagnostic && deltas.length === ids.length,
     reason: diagnostic?.reason || `record proof missing or mismatched for ${ids.length - deltas.length} of ${n} finding(s)`,
     inputFault: deltas.length !== ids.length

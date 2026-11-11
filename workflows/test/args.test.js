@@ -154,7 +154,7 @@ const REJECTION_ROWS = [
   { name: 'identity web_origin', input: (a) => {
     a.delivery = { prIdentity: prIdentity() };
     a.delivery.prIdentity.web_origin = "github.com";
-  }, expected: [ "delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only" ] },
+  }, expected: [ "delivery.prIdentity.web_origin must be an http(s) URL without userinfo (normalized to its origin)" ] },
   { name: 'identity repo slash',
     input: (a) => { a.delivery = { prIdentity: prIdentity() }; a.delivery.prIdentity.repo = "a/b"; },
     expected: [ "delivery.prIdentity.repo must not contain \"/\"" ] },
@@ -521,4 +521,29 @@ const VALIDATION_BOUNDARY_ROWS = [
 ];
 for (const { name, input, expected } of VALIDATION_BOUNDARY_ROWS) {
   test(`validate boundary: ${name}`, () => assert.deepEqual(validateArgs(input()), expected));
+}
+
+for (const [url, origin] of [
+  ['https://github.com/grafana/grafana', 'https://github.com'],
+  ['https://github.com/o/r/pull/9?view=files#diff', 'https://github.com'],
+  ['HTTP://Git.Example:8443?query#fragment', 'http://git.example:8443'],
+  ['https://[::1]:8443/o/r', 'https://[::1]:8443'],
+]) test(`identity URL normalizes before downstream use: ${url}`, () => {
+  const raw = interactiveArgs({ delivery: { prIdentity: { ...prIdentity(), web_origin: url } } });
+  assert.deepEqual(validateArgs(raw), { ok: true, errors: [] });
+  const normalized = normalizeArgs(raw);
+  assert.equal(normalized.delivery.prIdentity.web_origin, origin);
+  assert.equal(raw.delivery.prIdentity.web_origin, url);
+  assert.deepEqual(normalizeArgs(normalized), normalized);
+});
+
+for (const url of ['https://user:pass@github.com/o/r', 'https://user@github.com',
+  'ftp://github.com/o/r', '//github.com/o/r', 'https://github.com:65536/o/r',
+  'https://github.com\\@evil.com/o/r', 'https://github.com\n/o/r']) {
+  test(`identity URL refuses unsafe authority: ${JSON.stringify(url)}`, () => {
+    const args = normalizeArgs(interactiveArgs({ delivery: { prIdentity: { ...prIdentity(), web_origin: url } } }));
+    assert.deepEqual(validateArgs(args).errors, [
+      'delivery.prIdentity.web_origin must be an http(s) URL without userinfo (normalized to its origin)',
+    ]);
+  });
 }

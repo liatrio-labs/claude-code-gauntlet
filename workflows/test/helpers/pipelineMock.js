@@ -1,3 +1,4 @@
+import { hostResult } from './hostBoundary.js';
 // Shared host-contract assertions keep tests aligned with actual dispatch shapes.
 import { parseWriterPayload } from '../../src/persist.js';
 import { plannedArtifactPaths } from '../../src/outputPaths.js';
@@ -136,7 +137,7 @@ export function makeCtx(args, opts = {}) {
     return all.slice(i * size, i * size + size);
   };
 
-  const agent = async (prompt, dispatch = {}) => {
+  const dispatchAgent = async (prompt, dispatch = {}) => {
     try {
       assertPrompt(prompt);
       assertValidSchema(dispatch.schema);
@@ -202,9 +203,9 @@ export function makeCtx(args, opts = {}) {
     }
     return Promise.all(thunks.map(async (thunk) => {
       if (typeof thunk !== 'function') { violations.push('parallel() member is not a zero-arg function'); return null; }
-      try { return await thunk(); } catch { return null; } // null-isolate a failed member (Phase 0)
+      try { return await hostResult(thunk()); } catch { return null; } // null-isolate a failed member (Phase 0)
     }));
   };
 
-  return { calls, violations, agent, parallel };
+  return { calls, violations, agent: (...args) => hostResult(dispatchAgent(...args)), parallel };
 }

@@ -85,10 +85,7 @@ Envelope = SuccessEnvelope | FailedEnvelope
 # Half-up rounding mirrors the JS side's pinNumericFields.
 _NUMERIC_FIELDS = ("line_start", "line_end", "line", "end_line", "confidence")
 _INT_RE = re.compile(r"[+-]?\d+")
-_INLINE_SAFE = frozenset(
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:/_-"
-)
-_INLINE_STRING_RE = re.compile(r"(?:[A-Za-z0-9 .,:/_-]|%[0-9A-F]{2}|%u[0-9A-F]{4})*")
+_INLINE_ESCAPE_RE = re.compile(r"%(?:[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4})")
 
 
 def _half_up_int(value: float) -> int | None:
@@ -131,49 +128,30 @@ def _inline_reject(message: str) -> NoReturn:
 
 
 def _decode_inline_string(value: str, path: str) -> str:
-    if not _INLINE_STRING_RE.fullmatch(value):
-        for char in value:
-            if char not in _INLINE_SAFE and char != "%":
-                _inline_reject(f"raw U+{ord(char):04X} at {path}")
-        _inline_reject(f"invalid percent escape at {path}")
-
     out = []
     i = 0
     while i < len(value):
         char = value[i]
-        if char in _INLINE_SAFE:
+        if char != "%":
             out.append(char)
             i += 1
             continue
+        if not _INLINE_ESCAPE_RE.match(value, i):
+            _inline_reject(f"invalid percent escape at {path}")
         if value[i + 1] == "u":
             unit = int(value[i + 2 : i + 6], 16)
-            if not 0xD800 <= unit <= 0xDFFF:
-                _inline_reject(
-                    f"invalid %u escape U+{unit:04X} at {path} "
-                    "(only surrogates are allowed)"
-                )
-            if (
-                0xD800 <= unit <= 0xDBFF
-                and value[i + 6 : i + 8] == "%u"
-                and 0xDC00 <= int(value[i + 8 : i + 12], 16) <= 0xDFFF
-            ):
-                _inline_reject(
-                    f"non-canonical surrogate pair {value[i : i + 12]} at {path} "
-                    "(an astral character is spelled as its UTF-8 bytes)"
-                )
             out.append(chr(unit))
             i += 6
             continue
 
         bytes_run = bytearray()
-        while i < len(value) and value[i] == "%" and value[i + 1] != "u":
+        while i < len(value) and value[i] == "%":
+            if not _INLINE_ESCAPE_RE.match(value, i):
+                _inline_reject(f"invalid percent escape at {path}")
+            if value[i + 1] == "u":
+                break
             pair = value[i + 1 : i + 3]
             byte = int(pair, 16)
-            if chr(byte) in _INLINE_SAFE:
-                _inline_reject(
-                    f"non-canonical percent escape %{pair} at {path} "
-                    "(byte is SAFE ASCII)"
-                )
             bytes_run.append(byte)
             i += 3
         try:
@@ -183,16 +161,22 @@ def _decode_inline_string(value: str, path: str) -> str:
                 f"invalid UTF-8 at {path} "
                 f"(offending bytes {bytes_run.hex().upper()}, {exc})"
             )
-    return "".join(out)
+    # JS strings identify paired UTF-16 units with their astral character.
+    return (
+        "".join(out)
+        .encode("utf-16-le", "surrogatepass")
+        .decode("utf-16-le", "surrogatepass")
+    )
 
 
 def _decode_inline_node(node: object, path: str = "$") -> object:
     if isinstance(node, dict):
-        # Canonical escapes are injective as JS strings; _inline_pairs already
-        # rejects raw duplicates, and paired surrogate escapes are non-canonical.
+        # Different spellings can name the same key after percent decoding.
         decoded = {}
         for raw_key, raw_value in cast(dict[str, object], node).items():
             key = _decode_inline_string(raw_key, f"{path}.<key>")
+            if key in decoded:
+                _inline_reject(f"duplicate decoded object key {key!r} at {path}")
             decoded[key] = _decode_inline_node(raw_value, f"{path}.{key}")
         return decoded
     if isinstance(node, list):
@@ -202,6 +186,8 @@ def _decode_inline_node(node: object, path: str = "$") -> object:
         ]
     if isinstance(node, str):
         return _decode_inline_string(node, path)
+    if isinstance(node, float) and not math.isfinite(node):
+        _inline_reject(f"non-finite JSON number at {path}")
     return node
 
 
@@ -210,12 +196,10 @@ def _reject_non_finite_constant(value: str) -> NoReturn:
 
 
 def decode_inline_slice(text: str) -> dict[str, object]:
-    """Strictly decode the percent-encoded JSON document carried by the executor."""
-    if "\\" in text:
-        _inline_reject(
-            "JSON escape sequences are not canonical at $ (offending U+005C)"
-        )
-
+    """Decode once; content proofs bind values independently of token spelling."""
+    raw_control = re.search(r"[\x7f-\x9f]", text)
+    if raw_control:
+        _inline_reject(f"raw U+{ord(raw_control[0]):04X} at $")
     try:
         parsed = json.loads(
             text,
