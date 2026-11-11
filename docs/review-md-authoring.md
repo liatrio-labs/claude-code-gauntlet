@@ -1,59 +1,20 @@
-# Writing REVIEW.md
+# Writing REVIEW.md rules
 
-See the [configuration contract](../skills/code-gauntlet/references/review-md-spec.md)
-for settings, defaults, and inheritance. REVIEW.md is edited by hand; review runs leave it read-only.
+Use `REVIEW.md` for short prose rules and repository invariants, as you would use `CLAUDE.md`,
+`AGENTS.md`, or `QODO.md`. Explain a concrete constraint and why it matters.
 
-## Rule-authoring policy
+```markdown
+# Review rules
 
-Keep each file short and focused. Write specific, verifiable rules about the code being reviewed.
-Use requirements for security and correctness, and directional guidance for design tradeoffs.
-Include rationale when it clarifies a rule's applicability. Omit rules enforced by linters, type
-checkers, or other deterministic tools. Put repository-wide rules in the root file and
-subtree-specific rules in that directory's REVIEW.md.
-
-## Scaffolding templates
-
-### Root REVIEW.md template
-
-````markdown
-# Review Configuration
-
-## Rules
-
-## Default Delivery
-
-<!-- Headless runs only. Options: chat, pr_comments, markdown.
-     Uncomment and adjust to set a default. -->
-<!-- chat,pr_comments -->
-
-```yaml
-# code-gauntlet
-# Omit keys to use built-in defaults; uncomment only settings you need.
-# confidence_threshold: <0-100>
-# security_min_confidence: <0-100>
-# severity_threshold: <critical|high|medium|low>
-# ignore:
-#   - <literal substring of finding text>
+- Report changes that break the public response shape; downstream clients persist it.
+- Treat authorization as an invariant at every entry point, including background tasks.
+- Follow the caller before classifying apparently unreachable branches.
 ```
-````
 
-Interactive runs ask about posting only for open PR/MR targets. Task creation is offered separately
-after delivery only in interactive runs with a persisted delivery set (`artifactPaths.postReview`
-is non-null). See [Phase 8 delivery](../skills/code-gauntlet/references/phase8-delivery.md).
+Rules in changed-file directories and their ancestors are collected with source provenance.
+Markdown imports follow the same bounded collector as other project-rules files.
 
-### Subdirectory REVIEW.md template
-
-````markdown
-# Review Configuration
-
-## Rules
-
-```yaml
-# code-gauntlet
-# confidence_threshold: <0-100>
-# security_min_confidence: <0-100>
-# severity_threshold: <critical|high|medium|low>
-# ignore:
-#   - <literal substring of finding text>
-```
-````
+Configuration blocks and headings no longer set confidence, severity, ignores, or delivery.
+A retired config block produces one local report notice and has no posting effect.
+Use the documented environment pins for delivery controls. See the
+[format reference](../skills/code-gauntlet/references/review-md-spec.md).

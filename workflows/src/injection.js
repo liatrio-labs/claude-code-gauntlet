@@ -395,7 +395,7 @@ function injectionScanCore(findings, includeH4, rules) {
         const folded = row.domain === 'title' ? titleFolded : combinedFolded;
         const m = firstMatch(raw, folded, row.patterns);
         if (m) reasons.push(`${row.label}: ${JSON.stringify(m)}`);
-      } else if (row.kind === 'shortBody' && includeH4) {
+      } else if (row.kind === 'shortBody' && includeH4 && !finding.verdict) {
         const wordCount = countWords(description);
         if (wordCount < row.minimumWords && confidence >= row.confidence) {
           reasons.push(row.label.replace('{words}', wordCount).replace('{confidence}', confidence));

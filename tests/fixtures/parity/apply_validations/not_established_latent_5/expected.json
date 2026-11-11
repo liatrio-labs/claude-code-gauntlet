@@ -1,0 +1,34 @@
+{
+  "adjusted_count": 1,
+  "findings": [
+    {
+      "confidence": 90,
+      "file": "src",
+      "id": "f",
+      "line_start": 10,
+      "reachability": "uncertain",
+      "report_destination": "main",
+      "report_tag": "main",
+      "severity": "high",
+      "validation_justification": "Need caller",
+      "validator_verdict": {
+        "claim": "not_established",
+        "consequence": "latent",
+        "justification": "Need caller",
+        "latent_condition": "A caller passes zero",
+        "missing_fact": "Does a caller pass zero?",
+        "reachability": "uncertain"
+      },
+      "verdict": {
+        "claim": "not_established",
+        "consequence": "latent",
+        "justification": "Need caller",
+        "latent_condition": "A caller passes zero",
+        "missing_fact": "Does a caller pass zero?",
+        "reachability": "uncertain"
+      },
+      "verdict_route": "not-established"
+    }
+  ],
+  "unmatched_ids": []
+}

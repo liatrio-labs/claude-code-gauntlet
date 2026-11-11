@@ -1,70 +1,25 @@
 import { locationAllows } from './location.js';
 // Validation, filtering, challenge, and delivery selection stages.
-import { incompleteVetting } from './vetting.js';
 import { effectiveBatchSize, effectiveChallengeCap, effectiveValidationRetrySize } from './capacity.js';
-import { modelFor, VALIDATION_RETURN_PROPERTIES, admissionPolicy, requiredAssessments } from './registry.js';
-import { INT_POLICY, coerceInt } from './wire.js';
-import { applyValidations, REACHABILITY_VALUES } from './applyValidations.js';
+import { modelFor, VALIDATION_RETURN_PROPERTIES, VERDICT_SCHEMA } from './registry.js';
+import { checkRefutations } from './refutations.js';
+import { verdictRejections } from './verdict.js';
+import { applyValidations } from './applyValidations.js';
 import { applyFilterPipeline } from './filterFindings.js';
-import { applyChallenges, rankFindings } from './applyChallenges.js';
+import { applyChallenges } from './applyChallenges.js';
 import { coerceReportFindings } from './renderReport.js';
-import { groupDelivery } from './groupRanking.js';
+import { groupDelivery, rankFindings } from './groupRanking.js';
 import { deliveryGroups } from './dispose.js';
-import { admissionContext, admissionRequests, hasAdmission, validationRejections, missingAssessments, MISSING_ASSESSMENT } from './admission.js';
+import { hasAdmission } from './admission.js';
 
-// The platform rejects array-rooted tool schemas, so validation entries need an object wrapper.
-const VALIDATE_SCHEMA = {
-  type: 'object',
-  properties: {
-    validations: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          finding_id: { type: 'string' },
-          confidence: { type: 'number' },
-          justification: { type: 'string' },
-          reachability: { type: 'string', enum: REACHABILITY_VALUES },
-          ...VALIDATION_RETURN_PROPERTIES,
-        },
-        required: ['finding_id', 'confidence', 'policy_subject'],
-      },
-    },
-  },
-  required: ['validations'],
-};
+// Both independent readers answer the same closed questions.
+const VALIDATE_SCHEMA = { type: 'object', properties: { validations: { type: 'array', items: {
+  ...VERDICT_SCHEMA, properties: { finding_id: { type: 'string' }, ...VERDICT_SCHEMA.properties,
+    site_confirmations: VALIDATION_RETURN_PROPERTIES.site_confirmations },
+  required: ['finding_id', ...VERDICT_SCHEMA.required],
+} } }, required: ['validations'], additionalProperties: false };
 
-function assessmentRequirement(predicates) {
-  return { ...(predicates.length ? { properties: { admission_assessments: { allOf: predicates.map((predicate) => ({
-    contains: { properties: { predicate: { const: predicate } }, required: ['predicate'] },
-  })) } } } : {}), required: predicates.length ? ['admission_assessments'] : [] };
-}
-
-function validateSchema(batch, accepted) {
-  const base = VALIDATE_SCHEMA.properties.validations.items;
-  const variants = batch.flatMap((finding) => {
-    const previous = accepted.get(finding.id);
-    if (previous) {
-      const requirements = assessmentRequirement(missingAssessments(finding, previous));
-      return [{ ...requirements, properties: { finding_id: { enum: [finding.id] }, ...requirements.properties } }];
-    }
-    const { promotion } = admissionPolicy(finding);
-    const references = Object.hasOwn(admissionRequests(finding), 'primary') ? ['primary'] : [];
-    return VALIDATION_RETURN_PROPERTIES.policy_subject.enum.map((subject) => {
-      const requirements = assessmentRequirement(requiredAssessments(finding, subject));
-      const properties = { finding_id: { enum: [finding.id] }, policy_subject: { enum: [subject] } };
-      const plain = { properties: { ...properties, ...requirements.properties }, required: [...base.required, ...requirements.required] };
-      if (!promotion || references.length === 0) return plain;
-      return { properties, required: base.required, if: { properties: { admission_assessments: { contains: {
-          properties: { predicate: { const: promotion.predicate }, status: { const: 'confirmed' },
-            references: { const: references } }, required: ['predicate', 'status', 'references'],
-        } } }, required: ['admission_assessments'] },
-        then: assessmentRequirement(requiredAssessments(finding, subject, true)), else: requirements,
-      };
-    });
-  });
-  return { ...VALIDATE_SCHEMA, properties: { validations: { type: 'array', items: { ...base, required: ['finding_id'], anyOf: variants } } } };
-}
+function validateSchema() { return VALIDATE_SCHEMA; }
 
 // Keep exact small returns and explicit truncation receipts without consuming the checkpoint budget.
 function validatorAudit(audit, label, result, rejections) {
@@ -76,7 +31,7 @@ function validatorAudit(audit, label, result, rejections) {
 }
 
 // Parallel results retain batch positions so gaps identify the exact findings left unvalidated.
-// Failed batches keep findings at their original confidence because dispatch failure supplies no evidence against them.
+// Missing answers go to the independent challenger because a failed dispatch supplies no counter-evidence.
 export async function validateStage(ctx, input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
   const findings = inp.findings || [];
@@ -113,17 +68,9 @@ export async function validateStage(ctx, input) {
       const matches = entries.filter((entry) => entry.id === finding.id);
       if (!matches.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons: [list ? 'missing_entry' : 'malformed_return'] });
       for (const entry of matches) {
-        const previous = accepted.get(finding.id);
-        const missing = previous ? missingAssessments(finding, previous) : [];
-        const replacements = (Array.isArray(entry.admission_assessments) ? entry.admission_assessments : [])
-          .filter((assessment) => missing.includes(assessment?.predicate));
-        const merged = previous && label.startsWith('validate-retry-') ? { ...previous,
-          admission_assessments: [...(Array.isArray(previous.admission_assessments) ? previous.admission_assessments : []).filter((assessment) =>
-            !replacements.some((replacement) => replacement?.predicate === assessment?.predicate)), ...replacements] } : entry;
-        const reasons = validationRejections(finding, merged);
+        const reasons = matches.length === 1 ? verdictRejections(entry) : ['duplicate_entry'];
         if (reasons.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons });
-        // Missing admission evidence still warrants a retry, but does not invalidate a score.
-        if (reasons.every((reason) => reason.startsWith(MISSING_ASSESSMENT))) accepted.set(finding.id, merged);
+        else accepted.set(finding.id, entry);
       }
     }
     validatorAudit(audit, label, res, rejections);
@@ -133,7 +80,7 @@ export async function validateStage(ctx, input) {
   const results = await ctx.parallel(batches.map((batch, idx) => dispatch(batch, `validate-batch-${idx}`)));
   dispatched += batches.length;
   const mainLists = batches.map((batch, idx) => consume(results[idx], batch, `validate-batch-${idx}`));
-  const pending = findings.filter((finding) => validationRejections(finding, accepted.get(finding.id)).length);
+  const pending = findings.filter((finding) => verdictRejections(accepted.get(finding.id)).length);
   if (pending.length) {
     // One follow-up round only; small batches isolate incomplete records from successful siblings.
     const retries = [];
@@ -144,18 +91,18 @@ export async function validateStage(ctx, input) {
     retries.forEach((batch, idx) => consume(retried[idx], batch, `validate-retry-${idx}`));
   }
   batches.forEach((batch, idx) => {
-    const unscored = batch.filter((finding) => !accepted.has(finding.id));
-    if (unscored.length) {
-      const reasons = [...new Set(unscored.flatMap((finding) => terminalRejections.get(String(finding.id).slice(0, 128)) || []))]
-        .filter((reason) => !reason.startsWith(MISSING_ASSESSMENT));
-      let problem = mainLists[idx] ? 'omitted scores' : 'returned null/malformed';
+    const unanswered = batch.filter((finding) => !accepted.has(finding.id));
+    if (unanswered.length) {
+      const reasons = [...new Set(unanswered.flatMap((finding) => terminalRejections.get(String(finding.id).slice(0, 128)) || []))];
+      let problem = mainLists[idx] ? 'omitted verdicts' : 'returned null/malformed';
       if (reasons.some((reason) => !['missing_entry', 'malformed_return'].includes(reason))) {
         problem = `returned invalid/incomplete entries (${reasons.join(', ')})`;
       }
-      gaps.push(`validate-batch-${idx}: validator ${problem} — ${unscored.length} finding(s) unvalidated (validation=skipped, held back to the report)`);
+      gaps.push(`validate-batch-${idx}: validator ${problem} — ${unanswered.length} finding(s) unvalidated (validation=skipped, sent to blind challenge)`);
     }
   });
 
+  await checkRefutations(ctx, inp, [...accepted.values()], 'validate-refutations');
   const { adjustedCount } = applyValidations(findings, [...accepted.values()]);
 
   let skipped = 0;
@@ -178,39 +125,19 @@ export async function validateStage(ctx, input) {
   };
 }
 
-function validatePrompt(inp, batch, accepted) {
-  const ctxLine = inp.contextLine || '';
-  // Locations and claims let validators inspect the relevant code instead of scoring identifiers without evidence.
-  const block = batch.map((f) => {
-    const range = !locationAllows(f, 'sourceLink') ? 'location unconfirmed' : f.line_end != null && f.line_end !== f.line_start
-      ? `${f.line_start}-${f.line_end}`
-      : `${f.line_start != null ? f.line_start : '?'}`;
-    const ev = f.evidence ? ` | evidence: ${f.evidence}` : '';
-    const sites = (f.resolved_sites || []).filter((site) => locationAllows(site, 'sourceLink'));
-    const requests = sites.length ? ` | site_requests: ${JSON.stringify(sites)}` : '';
-    return `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${range} — ${f.description || ''}${ev}${requests} | admission_context: ${JSON.stringify(admissionContext(f, accepted.get(f.id)))}`;
-  }).join('\n');
-  if (batch.every((finding) => accepted.has(finding.id))) return `${ctxLine}Supply missing admission assessments in admission_context; correctness, reachability and policy_subject are fixed. References name inspected requests.\nFindings:\n${block}`;
-  return `${ctxLine}Judge correctness and reachability independently of admission evidence or posting value. Classify policy_subject by the claim, regardless of producer or test location. Assess admission_context predicates; references name inspected requests. Resolved locations and confidence alone do not confirm predicates. Assess body_fix_task separately. Confirm site_requests only for the same defect requiring the same correction.\nFindings:\n${block}`;
+function validatePrompt(inp, batch) {
+  const block = batch.map((f) => `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${f.line_start ?? '?'} — ${f.description || ''}${f.evidence ? ` | evidence: ${f.evidence}` : ''}${f.resolved_sites?.length ? ` | site_requests: ${JSON.stringify(f.resolved_sites)}` : ''}`).join('\n');
+  return `${inp.contextLine || ''}Return factual claim and consequence separately using the schema. Confirm additional sites only for the same correction.\nFindings:\n${block}`;
 }
 
 // The runtime has no wall clock, so generated_at must come from the supplied arguments.
 export function filterStage(input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
   const findings = inp.findings || [];
-  const config = inp.reviewConfig || {};
-  const exclusionPatterns = inp.exclusionPatterns || [];
-  return applyFilterPipeline(findings, config, exclusionPatterns, inp.generatedAt);
+  return applyFilterPipeline(findings, inp.generatedAt);
 }
 
-const CHALLENGE_SCHEMA = {
-  type: 'object',
-  properties: {
-    confidence_claim_is_correct: { type: 'number' },
-    justification: { type: 'string' },
-  },
-  required: ['confidence_claim_is_correct'],
-};
+const CHALLENGE_SCHEMA = VERDICT_SCHEMA;
 
 // An explicit allowlist excludes confirming rationale even when new finding fields are added.
 // The location lets the challenger investigate the raw code independently.
@@ -241,7 +168,7 @@ function challengePrompt(finding, diffPath) {
 }
 
 // Parallel results retain candidate positions so failures stay attributable to individual findings.
-// Only scored findings enter applyChallenges; its unchallenged pass-through would otherwise admit skipped findings into the high-confidence set.
+// Only complete typed answers can grant delivery eligibility.
 export async function challengeStage(ctx, input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
   const findings = inp.findings || [];
@@ -264,7 +191,8 @@ export async function challengeStage(ctx, input) {
   const model = modelFor('code-gauntlet:challenger', policy);
 
   // Reserve scarce challenge capacity for findings that can still be delivered.
-  const actionable = (f) => hasAdmission(f) && f.admission.status === 'admitted' && incompleteVetting(f).length === 0;
+  const actionable = (f) => (f.verdict_route === 'not-established' || (hasAdmission(f) && f.admission.status === 'admitted'))
+    && f.origin !== 'unknown';
   const terminal = findings.filter((f) => !actionable(f)).map((f) => ({ ...f, challenge: 'admission_terminal' }));
   const ranked = rankFindings(findings.filter(actionable));
   const candidates = ranked.slice(0, cap);
@@ -286,16 +214,12 @@ export async function challengeStage(ctx, input) {
 
   results.forEach((res, idx) => {
     const finding = candidates[idx];
-    // The schema field is confidence_claim_is_correct; score is accepted as a legacy alias.
-    // Nullish fallback preserves a legitimate zero score.
-    const rawScore = res && typeof res === 'object' ? (res.confidence_claim_is_correct ?? res.score) : undefined;
-    if (res === null || res === undefined || coerceInt(rawScore, INT_POLICY.validation) === null) {
-      gaps.push(`challenge-${idx}: challenger returned null/unscored — finding ${finding.id} unchallenged (challenge=failed, pipeline-degraded)`);
+    if (verdictRejections(res).length) {
+      gaps.push(`challenge-${idx}: challenger returned no typed verdict — finding ${finding.id} unchallenged`);
       skipped.push({ ...finding, challenge: 'failed' });
       return;
     }
-    // Use the known finding id because challenger output cannot be trusted to echo it.
-    challenges.push({ id: finding.id, score: rawScore, justification: res.justification });
+    challenges.push({ ...res, id: finding.id });
     challenged.push({ ...finding, challenge: 'survived' });
   });
 
@@ -304,7 +228,11 @@ export async function challengeStage(ctx, input) {
     gaps.push(`challenge: ${overflow.length} finding(s) over challengeCap=${cap} left unchallenged (challenge=capped, pipeline-degraded)`);
   }
 
+  await checkRefutations(ctx, inp, challenges, 'challenge-refutations');
   const applied = applyChallenges(challenged, challenges);
+  const unresolved = applied.findings.filter((f) => f.verdict_route === 'not-established');
+  skipped.push(...unresolved);
+  applied.findings = applied.findings.filter((f) => f.verdict_route !== 'not-established');
 
   const unverified = rankFindings(skipped);
 

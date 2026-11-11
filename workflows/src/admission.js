@@ -1,6 +1,7 @@
-import { ADMISSION_PREDICATES, ASSESSED_PREDICATES, RIGHT_ELIGIBILITY, VERIFY_FACT_PROPERTIES, VERIFY_REFERENCE_DESCRIPTORS, FINDING_PROP_TYPES, DIMENSIONS, findingPolicy, admissionPolicy, requiredAssessments, VALIDATION_RETURN_PROPERTIES } from './registry.js';
+import { ADMISSION_PREDICATES, ASSESSED_PREDICATES, RIGHT_ELIGIBILITY, VERIFY_FACT_PROPERTIES, VERIFY_REFERENCE_DESCRIPTORS, FINDING_PROP_TYPES, DIMENSIONS, findingPolicy, admissionPolicy, requiredAssessments } from './registry.js';
+import { verdictRule } from './verdict.js';
 import { canonicalRange } from './location.js';
-import { fnv1a32, INT_POLICY, coerceInt } from './wire.js';
+import { fnv1a32 } from './wire.js';
 
 const resolvedReference = (ref) => canonicalRange(ref) !== null;
 const hasValue = (value) => typeof value === 'string' && value.trim().length > 0;
@@ -42,26 +43,8 @@ export function hasPresentDefect(finding, entries) {
     .some((entry) => entry.predicate === promotion.predicate && entry.status === 'confirmed');
 }
 
-export const MISSING_ASSESSMENT = 'missing_assessment:';
-
-export function missingAssessments(finding, validation) {
-  const assessments = matchAssessments(finding, validation?.admission_assessments);
-  const assessed = new Set(assessments.map((entry) => entry.predicate));
-  return requiredAssessments(finding, validation?.policy_subject, hasPresentDefect(finding, assessments))
-    .filter((predicate) => !assessed.has(predicate));
-}
-
-export function validationRejections(finding, validation) {
-  if (!validation) return ['missing_entry'];
-  const reasons = [];
-  if (coerceInt(validation.confidence, INT_POLICY.validation) === null) reasons.push('invalid_confidence');
-  if (!VALIDATION_RETURN_PROPERTIES.policy_subject.enum.includes(validation.policy_subject)) reasons.push('invalid_policy_subject');
-  reasons.push(...missingAssessments(finding, validation).map((predicate) => `${MISSING_ASSESSMENT}${predicate}`));
-  return reasons;
-}
-
 const ADMISSION_INPUT_FIELDS = [...new Set(['id', 'file', 'anchor', 'dimension', 'origin_dimension', 'agent', 'origin', 'validation',
-  'policy_subject', 'admission_assessments', 'reachability', 'location_status', 'line_start', 'line_end', 'diff_validation',
+  'verdict', 'verdict_route', 'refutation_check', 'policy_subject', 'admission_assessments', 'reachability', 'location_status', 'line_start', 'line_end', 'diff_validation',
   'reference_diagnostics', ...Object.keys(VERIFY_FACT_PROPERTIES),
   ...DIMENSIONS.flatMap((row) => row.admission ? [row.admission.field,
     ...Object.values(row.admission.kinds).flatMap((kind) => [...kind.required, ...(kind.optional || [])])] : [])])];
@@ -149,6 +132,31 @@ function predicateResult(finding, predicate) {
 export function evaluateAdmission(finding) {
   delete finding.admission;
   delete finding.effective_test_kind;
+  if (finding.verdict || finding.verdict_route) {
+    const rule = verdictRule(finding);
+    const verified = ['new', 'modified', 'surfaced', 'pre_existing'].includes(finding.origin);
+    const { row, kind } = findingPolicy(finding);
+    const kindReasons = [];
+    if (rule.admission === 'kind') {
+      if (!row || (row.admission && !kind)) kindReasons.push({ predicate: 'kind', status: 'held_back' });
+      if (kind?.defaultDisposition === 'report_only') kindReasons.push({ predicate: 'value', status: 'report_only' });
+      for (const predicate of kind?.predicates || []) {
+        // The closed truth answer establishes the claimed artifact defect, not production impact.
+        const result = predicate === 'confirmed_test_defect' ? null : predicateResult(finding, predicate);
+        if (result) kindReasons.push({ predicate, status: result });
+      }
+    }
+    let status = !verified ? 'held_back' : finding.verdict_route === 'report-only' ? 'report_only' : rule.status;
+    if (status === 'admitted' && kindReasons.length) status = kindReasons.some((r) => r.status === 'held_back') ? 'held_back' : 'report_only';
+    finding.admission = { version: 1, input_fields: [], status,
+      reasons: kindReasons.length ? kindReasons : status === 'admitted' ? [] : [{ predicate: verified ? 'verdict' : 'verification', status }],
+      kind: rule.admission === 'kind' ? finding[row?.admission?.field] ?? 'ordinary' : 'ordinary',
+      core: findingPolicy(finding).core, tier: rule.tier,
+      inline_eligible: rule.admission !== 'kind' || !kind?.predicates.includes('test_diff_site_for_inline') || prOwnedTest(finding) };
+    finding.admission.input_proof = admissionProof(finding, []);
+    finding.body_fix_task_eligible = status === 'admitted' && finding.verdict_route === 'posted' && canonicalRange(finding) !== null;
+    return finding;
+  }
   const promoted = hasPresentDefect(finding, finding.admission_assessments);
   const { original, promotion, terminal, policyFinding, row, kind, core, tier } = admissionPolicy(finding, finding.policy_subject, promoted);
   const subject = row?.policySubjects[policyFinding.policy_subject];
@@ -188,23 +196,4 @@ export function evaluateAdmission(finding) {
   finding.body_fix_task_eligible = status === 'admitted' && RIGHT_ELIGIBILITY.body.fixTask.every((predicate) => predicateResult(finding, predicate) === null);
   if (status === 'admitted') finding.report_destination = finding.report_tag = finding.admission.tier;
   return finding;
-}
-
-export function admissionContext(finding, validation) {
-  const { promotion, original } = admissionPolicy(finding);
-  const promoted = hasPresentDefect(finding, validation?.admission_assessments);
-  const subjects = validation ? [validation.policy_subject] : Object.keys(original.row?.policySubjects || {});
-  const requirements = Object.fromEntries(subjects.map((subject) =>
-    [subject, requiredAssessments(finding, subject, promoted)]));
-  const missing = validation ? missingAssessments(finding, validation) : null;
-  const predicates = [...new Set(missing || [...Object.values(requirements).flat(), ...RIGHT_ELIGIBILITY.body.fixTask])]
-    .filter((predicate) => ASSESSED_PREDICATES.includes(predicate));
-  return { requests: admissionRequests(finding), facts: Object.fromEntries(Object.keys(VERIFY_FACT_PROPERTIES).map((key) => [key, finding[key]])),
-    policy: { policy_subjects: validation ? { [validation.policy_subject]: missing } : requirements,
-      ...(!validation && promotion ? { promotion: { predicate: promotion.predicate,
-        confirmed: requiredAssessments(finding, 'ordinary', true) } } : {}),
-      ...(!validation ? { body_fix_task: RIGHT_ELIGIBILITY.body.fixTask } : {}) },
-    predicates: Object.fromEntries(predicates.map((predicate) => [predicate, ADMISSION_PREDICATES[predicate]])),
-    claim: Object.fromEntries(DIMENSIONS.flatMap((row) => Object.keys(row.schemaExtra)).map((key) => [key, finding[key]])),
-    fix: finding.suggestion || finding.suggested_fix_code };
 }

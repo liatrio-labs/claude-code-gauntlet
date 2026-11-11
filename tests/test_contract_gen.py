@@ -555,12 +555,6 @@ KNOB_CASES: list[tuple[str, dict[str, list[str]], dict[str, Any], dict[str, Any]
         {"kind": "csv_subset", "values": ["a", "b"]},
         {"type": "csv_list", "waistPath": "delivery.items"},
     ),
-    (
-        "delta",
-        {"interactive": ["present", "discovery"]},
-        {"kind": "enum", "values": ["present"]},
-        {"derivedFrom": "delta"},
-    ),
 ]
 
 IDENTITY = {
@@ -574,7 +568,6 @@ IDENTITY = {
     },
     "ruleSourceLabelFallback": "RF",
     "deriveWhen": {"gamma": "the gamma condition holds"},
-    "derivedFrom": {"delta": "the delta source is present"},
     "waistRequired": ["nested", "limits"],
     "prIdentityFields": [
         {"name": name, "required": required, "describe": describe}
@@ -616,11 +609,9 @@ IDENTITY = {
             "defaults": defaults,
             "rule": rule,
             "env": None,
-            "reviewMdKey": None,
             "type": "string",
             "waistPath": None,
             "waistMap": None,
-            "derivedFrom": None,
             "deriveWhen": None,
             "nullReceipt": [],
             "resolvedKey": False,
@@ -981,8 +972,8 @@ def test_added_knob(registry_tree, invoke):
         "  { key: 'added', modes: ['headless'], allowedSources: { "
         "headless: ['default'] }, "
         "rule: { kind: 'enum', values: ['value'] }, env: null, "
-        "reviewMdKey: null, defaults: { headless: ['value', 'default'] }, "
-        "type: 'string', waistPath: 'nested.added', waistMap: null, derivedFrom: null, "
+        "defaults: { headless: ['value', 'default'] }, "
+        "type: 'string', waistPath: 'nested.added', waistMap: null, "
         "deriveWhen: null, nullReceipt: [], resolvedKey: false },\n"
     )
     path.write_text(source.replace("\n]);", "\n" + row + "]);", 1), encoding="utf-8")

@@ -99,9 +99,14 @@ VERIFICATION_SHARED = {
     ),
     "context": DISCOVERY_SHARED["context"],
     "confidence": (
-        "Score certainty that the claim is correct from 0 to 100: 0 means disproved; "
-        "25 probably false; 50 uncertain; 75 probably real with no meaningful "
-        "counter-evidence; 100 clearly present with no mitigating factors."
+        "Return claim (confirmed, refuted, not_established) independently of consequence "
+        "(present_failure, latent, artifact_defect: a verifiable, fixable defect in a test, "
+        "comment, documentation or unreachable code without runtime effect; "
+        "no_practical_effect: preference or style). Refute only with executable "
+        "counter-evidence: premise_false, guard_exists or no_reachable_caller, plus an "
+        "exact source quote and line range. Intent comments and low impact do not refute. "
+        "For not_established name one missing fact; for latent name the future change or "
+        "unusual precondition. Keep reachability and justification separate."
     ),
 }
 VERIFICATION_TARGETS = (
@@ -188,7 +193,7 @@ _REGISTRY_FIELDS = (
     "publicSummary: m.PUBLIC_SUMMARY",
     "severityEmoji: m.SEVERITY_EMOJI",
     "severityOrder: m.SEVERITY_ORDER",
-    "reachability: v.REACHABILITY_VALUES",
+    "reachability: m.VERDICT_PROPERTIES.reachability.enum",
     "deltaKeys: w.DELTA_KEYS",
     "verifySliceFields: w.VERIFY_SLICE_FIELDS",
     "traceFindingFields: t.TRACE_FINDING_FIELDS",
@@ -212,8 +217,6 @@ _REGISTRY_FIELDS = (
     "knobs: a.KNOB_REGISTRY.map(d => ({...d}))",
     "knobKeys: a.KNOB_REGISTRY.map(d => Object.keys(d))",
     "deriveWhen: Object.fromEntries(Object.entries(a.DERIVE_WHEN)"
-    ".map(([name, d]) => [name, d.describe]))",
-    "derivedFrom: Object.fromEntries(Object.entries(a.DERIVED_FROM)"
     ".map(([name, d]) => [name, d.describe]))",
 )
 
@@ -985,7 +988,6 @@ _TEMPLATE_FIXTURE: dict[str, Any] = {
         "model_tier": {"value": "optimized", "source": "fixed"},
         "pr_comment_cap": {"value": "null", "source": "default"},
         "delivery_tier": {"value": "all", "source": "default"},
-        "review_md": {"value": "absent", "source": "discovery"},
     },
     "pluginRoot": "/absolute/path/to/claude-code-gauntlet",
     "pipelineVersion": "{pipeline_version}",
@@ -1248,7 +1250,6 @@ def _derived_waist_instruction(
 def _derived_waist_body(identity: Mapping[str, Any]) -> list[str]:
     rows = identity["knobs"]
     waist_rows = [row for row in rows if row["waistPath"] is not None]
-    derived_rows = [row for row in rows if row["derivedFrom"] is not None]
     lines: list[str] = []
     if waist_rows:
         lines.extend(
@@ -1286,25 +1287,6 @@ def _derived_waist_body(identity: Mapping[str, Any]) -> list[str]:
                     line += f"; `{source}` derives as `{target}`"
             line += ". " + _derived_waist_instruction(row, identity["waistRequired"])
             lines.append(line)
-    if derived_rows:
-        if lines:
-            lines.extend(
-                [
-                    "",
-                    "The workflow fills these receipt entries itself; never stamp them.",
-                    "",
-                ]
-            )
-        else:
-            lines.append(
-                "The workflow fills these receipt entries itself; never stamp them."
-            )
-        for row in derived_rows:
-            description = identity["derivedFrom"][row["derivedFrom"]]
-            lines.append(
-                f"- `configEcho.{row['key']}` ({_modes_phrase(row['modes'])}): "
-                f"{description}."
-            )
     return lines
 
 

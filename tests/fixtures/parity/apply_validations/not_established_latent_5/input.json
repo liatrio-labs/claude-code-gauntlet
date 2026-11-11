@@ -1,0 +1,22 @@
+{
+  "findings": [
+    {
+      "id": "f",
+      "file": "src",
+      "line_start": 10,
+      "severity": "high",
+      "confidence": 90
+    }
+  ],
+  "validations": [
+    {
+      "id": "f",
+      "claim": "not_established",
+      "consequence": "latent",
+      "reachability": "uncertain",
+      "justification": "Need caller",
+      "missing_fact": "Does a caller pass zero?",
+      "latent_condition": "A caller passes zero"
+    }
+  ]
+}

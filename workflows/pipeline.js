@@ -10,15 +10,6 @@ function fnv1a32(s) {
   }
   return `fnv1a32:0x${h.toString(16).padStart(8, '0')}`;
 }
-function normalizeReviewText(s) {
-  const lines = s.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n').map((line) => {
-    let end = line.length;
-    while (end > 0 && (line.charCodeAt(end - 1) === 0x20 || line.charCodeAt(end - 1) === 0x09)) end--;
-    return line.slice(0, end);
-  });
-  while (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
-  return lines.join('\n');
-}
 function normalizeForChecksum(s) {
   let out = typeof s === 'string' ? s : '';
   if (out.charCodeAt(0) === 0xfeff) out = out.slice(1);
@@ -392,7 +383,36 @@ const ASSESSMENT = { type: 'object', properties: {
   status: { type: 'string', enum: ['confirmed', 'rejected', 'unresolved'] },
   references: { type: 'array', items: { type: 'string' } },
 }, required: ['predicate', 'status', 'references'], additionalProperties: false };
-const VALIDATION_RETURN_PROPERTIES = deepFreeze({ ...RECURRENCE_RETURN_PROPERTIES,
+const VERDICT_ROUTES = deepFreeze({
+  confirmed: {
+    present_failure: { route: 'posted', status: 'admitted', tier: 'main' },
+    latent: { route: 'posted-latent', status: 'admitted', tier: 'suggestion', severity: 'low' },
+    artifact_defect: { route: 'posted-artifact', status: 'admitted', tier: 'suggestion', severity: 'low', admission: 'kind', demotion: 'consequence' },
+    no_practical_effect: { route: 'report-only', status: 'report_only', tier: 'suggestion' },
+  },
+  refuted: { verified: { route: 'eliminated', status: 'report_only', tier: 'suggestion' },
+    unverified: { route: 'not-established', status: 'held_back', tier: 'main' } },
+  not_established: { route: 'not-established', status: 'held_back', tier: 'main' },
+});
+const VERDICT_PROPERTIES = deepFreeze({
+  claim: { type: 'string', enum: ['confirmed', 'refuted', 'not_established'] },
+  consequence: { type: 'string', enum: Object.keys(VERDICT_ROUTES.confirmed) },
+  reachability: { type: 'string', enum: ['current', 'future_change_only', 'uncertain'] },
+  justification: { type: 'string', minLength: 1 },
+  refutation_kind: { type: 'string', enum: ['premise_false', 'guard_exists', 'no_reachable_caller'] },
+  refutation: SOURCE_REFERENCE,
+  missing_fact: { type: 'string', minLength: 1 },
+  latent_condition: { type: 'string', minLength: 1 },
+});
+const VERDICT_SCHEMA = deepFreeze({ type: 'object', properties: VERDICT_PROPERTIES,
+  required: ['claim', 'consequence', 'reachability', 'justification'], additionalProperties: false,
+  allOf: [
+    { if: { properties: { claim: { const: 'refuted' } }, required: ['claim'] }, then: { required: ['refutation_kind', 'refutation'] } },
+    { if: { properties: { claim: { const: 'not_established' } }, required: ['claim'] }, then: { required: ['missing_fact'] } },
+    { if: { properties: { consequence: { const: 'latent' } }, required: ['consequence'] }, then: { required: ['latent_condition'] } },
+  ],
+});
+const VALIDATION_RETURN_PROPERTIES = deepFreeze({ ...RECURRENCE_RETURN_PROPERTIES, ...VERDICT_PROPERTIES,
   policy_subject: { type: 'string', enum: Object.keys(POLICY_SUBJECTS) },
   admission_assessments: { type: 'array', items: ASSESSMENT },
 });
@@ -509,6 +529,7 @@ const PIPELINE_FINDING_FIELDS = deepFreeze([
   'agent', 'body', 'line', 'end_line', 'verified', 'validation', 'challenge',
   'validation_justification', 'challenge_justification', 'elimination_reason',
   'original_confidence', 'validator_confidence', 'reachability', 'challenge_score',
+  'verdict', 'validator_verdict', 'challenge_verdict', 'verdict_route', 'refutation_check',
   'challenge_contested', 'severity_downgraded', 'original_severity',
   'report_destination', 'report_tag', 'eliminated_by', 'replay_belt',
   'contested', 'contestation_drop', 'contestation_reason', 'demoted_by', 'demotion_reason',
@@ -593,13 +614,9 @@ const LIGHT_SCOPE_MAX_CHANGED_LINES = 50;
 const TRUSTED_SCRIPT_BASENAMES = deepFreeze({
   assemble: 'assemble_artifacts.py',
   verify: 'verify_findings.py',
+  refutations: 'check_refutations.py',
 });
 const FIELD_RENAMES = deepFreeze({ body: 'description', line: 'line_start', blame_tag: 'origin' });
-const REVIEW_SETTING_KEYS = deepFreeze([
-  'confidence_threshold',
-  'security_min_confidence',
-  'severity_threshold',
-]);
 const INJECTION_STRIPPED_PROSE_FIELDS = deepFreeze(['suggestion', 'claude_md_rule', 'spec_text']);
 const AGENT_BUG_DETECTOR = 'bug-detector';
 const AGENT_TEST_ANALYZER = 'test-analyzer';
@@ -619,7 +636,6 @@ const KNOB_VOCAB = deepFreeze({
   interactive: ['interactive'],
   envDefault: ['env', 'default'],
   fixed: ['fixed'],
-  envReviewMdDefault: ['env', 'review_md', 'default'],
   discovery: ['discovery'],
   modelTiers: ['optimized'],
   deliveryChannels: ['chat', 'pr_comments', 'markdown'],
@@ -627,7 +643,6 @@ const KNOB_VOCAB = deepFreeze({
   draftPolicies: ['review', 'skip'],
   reviewedPolicies: ['incremental', 'full', 'skip'],
   prNotFoundPolicies: ['local', 'error'],
-  reviewMdValues: ['present', 'absent'],
   receiptEntryKeys: ['value', 'source'],
 });
 function identityCheck(identity, name, fields = PR_IDENTITY_FIELDS) {
@@ -1581,43 +1596,40 @@ function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', input = {
 const safeReceiptValue = (value) => typeof value === 'string' && !CONTROL_RE.test(value) && !value.includes('`');
 const KNOB_REGISTRY = deepFreeze([
   { key: 'model_tier', modes: KNOB_VOCAB.modes, allowedSources: { headless: KNOB_VOCAB.envDefault, interactive: KNOB_VOCAB.fixed },
-    rule: { kind: 'enum', values: KNOB_VOCAB.modelTiers }, env: 'CODE_GAUNTLET_MODEL_TIER', reviewMdKey: null,
+    rule: { kind: 'enum', values: KNOB_VOCAB.modelTiers }, env: 'CODE_GAUNTLET_MODEL_TIER',
     defaults: { headless: ['optimized', 'default'], interactive: ['optimized', 'fixed'] }, type: 'string', waistPath: null, waistMap: null,
-    derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
-  { key: 'delivery', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envReviewMdDefault }, rule: { kind: 'csv_subset',
-    values: KNOB_VOCAB.deliveryChannels }, env: 'CODE_GAUNTLET_DELIVERY', reviewMdKey: 'default_delivery',
-    defaults: { headless: ['markdown', 'default'] }, type: 'csv_list', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null,
+    deriveWhen: null, nullReceipt: [], resolvedKey: true },
+  { key: 'delivery', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envDefault }, rule: { kind: 'csv_subset',
+    values: KNOB_VOCAB.deliveryChannels }, env: 'CODE_GAUNTLET_DELIVERY',
+    defaults: { headless: ['markdown', 'default'] }, type: 'csv_list', waistPath: null, waistMap: null, deriveWhen: null,
     nullReceipt: [], resolvedKey: true },
   { key: 'post_mode', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envDefault }, rule: { kind: 'enum',
-    values: KNOB_VOCAB.postModes }, env: 'CODE_GAUNTLET_POST_MODE', reviewMdKey: null, defaults: { headless: ['dry-run', 'default'] },
-    type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
+    values: KNOB_VOCAB.postModes }, env: 'CODE_GAUNTLET_POST_MODE', defaults: { headless: ['dry-run', 'default'] },
+    type: 'string', waistPath: null, waistMap: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
   { key: 'pr_comment_cap', modes: KNOB_VOCAB.modes, allowedSources: { headless: KNOB_VOCAB.envDefault, interactive: KNOB_VOCAB.envDefault },
     rule: { headless: { kind: 'positive_digits' }, interactive: { kind: 'digits_or_null' } }, env: 'CODE_GAUNTLET_PR_COMMENT_CAP',
-    reviewMdKey: null, defaults: { headless: ['6', 'default'], interactive: ['null', 'default'] }, type: 'int_or_null',
-    waistPath: 'limits.deliveryCap', waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: KNOB_VOCAB.interactive,
+    defaults: { headless: ['6', 'default'], interactive: ['null', 'default'] }, type: 'int_or_null',
+    waistPath: 'limits.deliveryCap', waistMap: null, deriveWhen: null, nullReceipt: KNOB_VOCAB.interactive,
     resolvedKey: false },
   { key: 'delivery_tier', modes: KNOB_VOCAB.modes, allowedSources: { headless: KNOB_VOCAB.envDefault, interactive: KNOB_VOCAB.envDefault },
-    rule: { kind: 'enum', values: DELIVERY_TIERS }, env: 'CODE_GAUNTLET_DELIVERY_TIER', reviewMdKey: null, defaults: { headless: ['all',
-    'default'], interactive: ['all', 'default'] }, type: 'string', waistPath: 'delivery.tier', waistMap: null, derivedFrom: null,
+    rule: { kind: 'enum', values: DELIVERY_TIERS }, env: 'CODE_GAUNTLET_DELIVERY_TIER', defaults: { headless: ['all',
+    'default'], interactive: ['all', 'default'] }, type: 'string', waistPath: 'delivery.tier', waistMap: null,
     deriveWhen: null, nullReceipt: [], resolvedKey: false },
   { key: 'draft_policy', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envDefault }, rule: { kind: 'enum',
-    values: KNOB_VOCAB.draftPolicies }, env: 'CODE_GAUNTLET_DRAFT_POLICY', reviewMdKey: null, defaults: { headless: ['review', 'default'] },
-    type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
+    values: KNOB_VOCAB.draftPolicies }, env: 'CODE_GAUNTLET_DRAFT_POLICY', defaults: { headless: ['review', 'default'] },
+    type: 'string', waistPath: null, waistMap: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
   { key: 'reviewed_policy', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envDefault }, rule: { kind: 'enum',
-    values: KNOB_VOCAB.reviewedPolicies }, env: 'CODE_GAUNTLET_REVIEWED_POLICY', reviewMdKey: null, defaults: { headless: ['full',
-    'default'] }, type: 'string', waistPath: 'reviewScope.requested', waistMap: { skip: 'full' }, derivedFrom: null,
+    values: KNOB_VOCAB.reviewedPolicies }, env: 'CODE_GAUNTLET_REVIEWED_POLICY', defaults: { headless: ['full',
+    'default'] }, type: 'string', waistPath: 'reviewScope.requested', waistMap: { skip: 'full' },
     deriveWhen: 'priorReviewDetector', nullReceipt: [], resolvedKey: true },
   { key: 'pr_not_found_policy', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envDefault }, rule: { kind: 'enum',
-    values: KNOB_VOCAB.prNotFoundPolicies }, env: 'CODE_GAUNTLET_PR_NOT_FOUND_POLICY', reviewMdKey: null, defaults: { headless: ['error',
-    'default'] }, type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [],
+    values: KNOB_VOCAB.prNotFoundPolicies }, env: 'CODE_GAUNTLET_PR_NOT_FOUND_POLICY', defaults: { headless: ['error',
+    'default'] }, type: 'string', waistPath: null, waistMap: null, deriveWhen: null, nullReceipt: [],
     resolvedKey: true },
   { key: 'trivial_scope', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envDefault }, rule: { kind: 'enum',
-    values: SCOPE_ANSWERS }, env: 'CODE_GAUNTLET_TRIVIAL_SCOPE', reviewMdKey: null, defaults: { headless: ['full', 'default'] },
-    type: 'string', waistPath: 'scopeAnswer', waistMap: null, derivedFrom: null, deriveWhen: 'lightEligible', nullReceipt: [],
+    values: SCOPE_ANSWERS }, env: 'CODE_GAUNTLET_TRIVIAL_SCOPE', defaults: { headless: ['full', 'default'] },
+    type: 'string', waistPath: 'scopeAnswer', waistMap: null, deriveWhen: 'lightEligible', nullReceipt: [],
     resolvedKey: false },
-  { key: 'review_md', modes: KNOB_VOCAB.interactive, allowedSources: { interactive: KNOB_VOCAB.discovery }, rule: { kind: 'enum',
-    values: KNOB_VOCAB.reviewMdValues }, env: null, reviewMdKey: null, defaults: { interactive: ['absent', 'discovery'] }, type: 'string',
-    waistPath: null, waistMap: null, derivedFrom: 'reviewMd', deriveWhen: null, nullReceipt: [], resolvedKey: false },
 ]);
 function matchesRule(rule, value, mode) {
   if (typeof value !== 'string' || !isPlainObject(rule)) return false;
@@ -1693,19 +1705,6 @@ const DERIVE_WHEN = deepFreeze({
     describe: '`reviewScope.detector` is an object',
   },
 });
-const DERIVED_FROM = deepFreeze({
-  reviewMd: {
-    fill: (args) => {
-      if (Array.isArray(args.reviewMd)) {
-        return args.reviewMd.length > 0 ? 'present' : 'absent';
-      }
-      return args.reviewConfigPath != null ? 'present' : 'absent';
-    },
-    source: 'discovery',
-    describe: '`present` when the `reviewMd` array is nonempty, else `absent`; without `reviewMd`, ' +
-      '`present` when `reviewConfigPath` is set, else `absent`',
-  },
-});
 function deriveWhenHolds(descriptor, args, gates = DERIVE_WHEN) {
   return descriptor.deriveWhen === null
     || (Object.hasOwn(gates, descriptor.deriveWhen) && gates[descriptor.deriveWhen].holds(args));
@@ -1715,22 +1714,9 @@ function deriveConfigWaist(args, descriptors = KNOB_REGISTRY) {
     return { args, derivedPaths: [] };
   }
   const out = { ...args };
-  const configEcho = { ...args.configEcho };
   const derivedPaths = [];
-  let configEchoChanged = false;
   for (const descriptor of descriptors) {
     if (!descriptor.modes.includes(args.mode)) continue;
-    if (descriptor.derivedFrom !== null
-      && Object.hasOwn(DERIVED_FROM, descriptor.derivedFrom)
-      && !Object.hasOwn(configEcho, descriptor.key)) {
-      const derivation = DERIVED_FROM[descriptor.derivedFrom];
-      configEcho[descriptor.key] = {
-        value: derivation.fill(args),
-        source: derivation.source,
-      };
-      configEchoChanged = true;
-      continue;
-    }
     if (!descriptor.waistPath || dottedValue(out, descriptor.waistPath) !== undefined) continue;
     const root = descriptor.waistPath.split('.')[0];
     if (out[root] === undefined && REQUIRED.includes(root)) continue;
@@ -1742,7 +1728,6 @@ function deriveConfigWaist(args, descriptors = KNOB_REGISTRY) {
       derivedPaths.push(descriptor.waistPath);
     }
   }
-  if (configEchoChanged) out.configEcho = configEcho;
   return { args: out, derivedPaths };
 }
 function configEchoValue(args, key) {
@@ -1790,6 +1775,7 @@ const TRACE_STAGES = ['discover', 'merge', 'verify', 'validate', 'filter', 'admi
 const TRACE_FINDING_FIELDS = ['trace_id', 'discovery_agent', 'discovery_dimension', 'id', 'file',
   'line_start', 'line_end', 'line', 'end_line', 'claimed_line_start', 'claimed_line_end', 'anchor', 'location_status',
   'title', 'description', 'body', 'evidence', 'severity', 'suggestion', 'suggested_fix_code', 'claude_md_rule', 'spec_text',
+  'verdict', 'validator_verdict', 'challenge_verdict', 'verdict_route', 'refutation_check',
   'rule_source', 'agent', 'dimension', 'confidence', 'sites', 'admission', 'disposition', 'disposition_reasons', 'report_tag', 'report_destination',
   'consolidation_key', 'consolidation_primary', 'delivery_group', 'origin_dimension', 'policy_subject', 'path_role'];
 const TRACE_REASONS = ['not_found', 'duplicate_id', 'invalid_shape', 'invalid_path', 'audit_overlap', 'verify_eliminated', 'verify_unproven', 'validation_skipped', 'threshold', 'exclusion', 'injection', 'suppression', 'challenge_removed', 'challenge_downgraded_removed', 'challenge_failed', 'challenge_cap', 'delivery_cap', 'delivery_tier', 'unanchored', 'body_budget', 'post_omission', 'body_routed', 'report_only', 'held_back', 'folded', 'demoted', 'refuted', 'out_of_scope', 'scope_contradicted', 'cite_unmatched', 'cite_unavailable', 'unknown'];
@@ -1819,7 +1805,7 @@ function traceDecision(finding, reason_code, reason, related = [], decision = 'e
   return { trace_id: finding.trace_id, decision, reason_code: code, reason: reason || null, related_trace_ids: related, detail };
 }
 function eliminationDecisions(output) {
-  const codes = { verify: 'verify_eliminated', threshold: 'threshold', exclusion: 'exclusion', injection: 'injection',
+  const codes = { verified_refutation: 'refuted', verify: 'verify_eliminated', threshold: 'threshold', exclusion: 'exclusion', injection: 'injection',
     'suppressed:intentional': 'suppression', 'suppressed:generated': 'suppression',
     'challenge:removed': 'challenge_removed', 'challenge:downgraded': 'challenge_downgraded_removed' };
   return (output.eliminated || []).filter((f) => f.trace_id)
@@ -2441,255 +2427,100 @@ function discoverPrompt(inp, spec) {
     ? ` Removed-test inventory: ${JSON.stringify(inp.removedTests || { status: 'unavailable', items: [] })}` : '';
   return `${base}${spec.promptExtra ? ` ${spec.promptExtra}` : ''}${audit}`;
 }
-// --- vetting.js ---
-const UNVERIFIED_REASONS = {
-  validation: 'the validator did not score this finding, so it was not skeptically validated',
-  verify: 'the verify slice could not be proven against the dispatched document',
-  challenge: {
-    capped: 'the challenge cap was reached, so this finding was not challenge-verified',
-    failed: 'the challenger failed or returned no score, so this finding was not challenge-verified',
-    skipped: 'this finding was not challenge-verified',
-  },
-};
-function incompleteVetting(finding) {
-  const missing = [];
-  if (finding.validation === 'skipped') missing.push('validation');
-  if (finding.origin === 'unknown') missing.push('verify');
-  return missing;
+// --- refutations.js ---
+async function checkRefutations(ctx, input, entries, label) {
+  const citations = entries.filter((e) => e.claim === 'refuted' && VERDICT_PROPERTIES.refutation_kind.enum.includes(e.refutation_kind)).map((e) => ({ id: e.id, refutation: e.refutation }));
+  for (const entry of entries) delete entry.refutation_check;
+  if (!citations.length) return;
+  const request = JSON.stringify({ citations });
+  let result;
+  if (input.repoRoot && input.pluginRoot && input.diffPath && input.headShaShort && input.targetKind) {
+    const command = [...pythonArgv(input.python), trustedScriptPath(input.pluginRoot, TRUSTED_SCRIPT_BASENAMES.refutations),
+      '--request', request, '--repo-root', input.repoRoot, '--head-sha', input.headShaShort,
+      '--target-kind', input.targetKind, '--diff-file', input.diffPath].map(shellWord).join(' ');
+    const results = await ctx.parallel([() => ctx.agent(`Run exactly once and return the complete JSON stdout unchanged:\n${command}`, {
+      label, agentType: 'code-gauntlet:executor', model: modelFor('code-gauntlet:executor', input.policy || {}),
+      schema: { type: 'object', properties: { request: { type: 'string' }, checks: { type: 'array', items: {
+        type: 'object', properties: { id: { type: 'string' }, verified: { type: 'boolean' }, reason: { type: 'string' } },
+        required: ['id', 'verified', 'reason'], additionalProperties: false,
+      } } }, required: ['request', 'checks'], additionalProperties: false },
+    })]);
+    result = results[0];
+  }
+  for (const entry of entries.filter((e) => e.claim === 'refuted')) {
+    const checks = result?.request === request && Array.isArray(result.checks) ? result.checks.filter((row) => row.id === entry.id) : [];
+    entry.refutation_check = checks.length === 1 && typeof checks[0].verified === 'boolean' && typeof checks[0].reason === 'string'
+      ? { verified: checks[0].verified, reason: checks[0].reason } : { verified: false, reason: 'unverified_citation' };
+  }
 }
-// --- admission.js ---
-const resolvedReference = (ref) => canonicalRange(ref) !== null;
-const hasValue = (value) => typeof value === 'string' && value.trim().length > 0;
-function admissionRequests(finding) {
-  const requests = {};
-  if (canonicalRange(finding)) requests.primary = { file: finding.file, line_start: finding.line_start, line_end: finding.line_end };
-  for (const [name, kind] of Object.entries(VERIFY_REFERENCE_DESCRIPTORS)) {
-    const value = finding.resolved_references?.[name];
-    const refs = kind !== 'reference' ? value : [value];
-    for (const [index, ref] of (Array.isArray(refs) ? refs : []).entries()) {
-      if (kind === 'search_paths' ? ref?.available === true : resolvedReference(ref)) {
-        requests[kind !== 'reference' ? `${name}:${index}` : name] = ref;
-      }
+// --- verdict.js ---
+function verdictRejections(value) {
+  if (!value || typeof value !== 'object') return ['missing_verdict'];
+  const reasons = [];
+  for (const [key, schema] of Object.entries(VERDICT_SCHEMA.properties)) {
+    if (VERDICT_SCHEMA.required.includes(key) || value[key] !== undefined) {
+      if (schema.enum ? !schema.enum.includes(value[key]) : schema.type === 'string'
+        && (typeof value[key] !== 'string' || !value[key].trim())) reasons.push(`invalid_${key}`);
     }
   }
-  return requests;
-}
-function matchAssessments(finding, entries) {
-  const requests = admissionRequests(finding);
-  if (!Array.isArray(entries)) return [];
-  return entries.filter((entry) => {
-    const descriptor = ADMISSION_PREDICATES[entry?.predicate];
-    if (!ASSESSED_PREDICATES.includes(entry?.predicate) || !['confirmed', 'rejected', 'unresolved'].includes(entry.status)
-      || entries.filter((other) => other?.predicate === entry.predicate).length !== 1
-      || !Array.isArray(entry.references) || new Set(entry.references).size !== entry.references.length
-      || entry.references.some((key) => typeof key !== 'string' || !Object.hasOwn(requests, key))) return false;
-    const expected = Object.keys(requests).filter((key) => descriptor.references.some((name) => key === name || key.startsWith(`${name}:`)));
-    return expected.length === entry.references.length && expected.every((key) => entry.references.includes(key));
-  }).map(({ predicate, status, references }) => ({ predicate,
-    status: references.length === 0 && status === 'confirmed' ? 'unresolved' : status, references: [...references] }));
-}
-function hasPresentDefect(finding, entries) {
-  const { promotion } = admissionPolicy(finding);
-  return !!promotion && matchAssessments(finding, entries)
-    .some((entry) => entry.predicate === promotion.predicate && entry.status === 'confirmed');
-}
-const MISSING_ASSESSMENT = 'missing_assessment:';
-function missingAssessments(finding, validation) {
-  const assessments = matchAssessments(finding, validation?.admission_assessments);
-  const assessed = new Set(assessments.map((entry) => entry.predicate));
-  return requiredAssessments(finding, validation?.policy_subject, hasPresentDefect(finding, assessments))
-    .filter((predicate) => !assessed.has(predicate));
-}
-function validationRejections(finding, validation) {
-  if (!validation) return ['missing_entry'];
-  const reasons = [];
-  if (coerceInt(validation.confidence, INT_POLICY.validation) === null) reasons.push('invalid_confidence');
-  if (!VALIDATION_RETURN_PROPERTIES.policy_subject.enum.includes(validation.policy_subject)) reasons.push('invalid_policy_subject');
-  reasons.push(...missingAssessments(finding, validation).map((predicate) => `${MISSING_ASSESSMENT}${predicate}`));
+  if (value.claim === 'not_established' && (typeof value.missing_fact !== 'string' || !value.missing_fact.trim())) reasons.push('missing_fact');
+  if (value.consequence === 'latent' && (typeof value.latent_condition !== 'string' || !value.latent_condition.trim())) reasons.push('latent_condition');
   return reasons;
 }
-const ADMISSION_INPUT_FIELDS = [...new Set(['id', 'file', 'anchor', 'dimension', 'origin_dimension', 'agent', 'origin', 'validation',
-  'policy_subject', 'admission_assessments', 'reachability', 'location_status', 'line_start', 'line_end', 'diff_validation',
-  'reference_diagnostics', ...Object.keys(VERIFY_FACT_PROPERTIES),
-  ...DIMENSIONS.flatMap((row) => row.admission ? [row.admission.field,
-    ...Object.values(row.admission.kinds).flatMap((kind) => [...kind.required, ...(kind.optional || [])])] : [])])];
-function admissionProof(finding, fields) {
-  const verdict = { ...finding.admission };
-  delete verdict.input_proof;
-  return fnv1a32(JSON.stringify({ verdict, inputs: [...ADMISSION_INPUT_FIELDS, ...fields].map((key) =>
-    ADMISSION_PRESENCE_FIELDS.has(key) ? hasValue(finding[key]) : finding[key] ?? null) }));
+function verdictRule(finding) {
+  const value = finding.verdict;
+  if (verdictRejections(value).length) return VERDICT_ROUTES.not_established;
+  if (value.claim === 'refuted') return VERDICT_ROUTES.refuted[finding.refutation_check?.verified === true ? 'verified' : 'unverified'];
+  return value.claim === 'confirmed' ? VERDICT_ROUTES.confirmed[value.consequence] : VERDICT_ROUTES.not_established;
 }
-const ADMISSION_PRESENCE_FIELDS = new Set(DIMENSIONS.flatMap((row) => row.admission
-  ? Object.values(row.admission.kinds).flatMap((kind) => [...kind.required, ...(kind.optional || []), ...(kind.anyOf || [])])
-    .filter((key) => { const schema = row.schemaExtra[key] || FINDING_PROP_TYPES[key]; return schema === 'string' || (schema?.type === 'string' && !schema.enum); })
-  : []));
-function referenceResult(finding, name) {
-  if (resolvedReference(finding.resolved_references?.[name])) return null;
-  const supplied = finding[name] !== undefined || finding.reference_diagnostics?.some((diagnostic) => diagnostic.field === name);
-  return supplied ? 'held_back' : 'report_only';
-}
-const prOwnedTest = (finding) => finding.path_role === 'test' && finding.diff_validation?.in_diff === true;
-function hasAdmission(finding) {
-  const stamp = finding?.admission;
-  return stamp?.version === 1 && ['admitted', 'report_only', 'held_back'].includes(stamp.status)
-    && Array.isArray(stamp.reasons) && Array.isArray(stamp.input_fields)
-    && stamp.input_proof === admissionProof(finding, stamp.input_fields);
-}
-function factAssessment(finding, predicate) {
-  const ref = finding.resolved_references;
-  const facts = {
-    pr_owned_test: () => {
-      if (prOwnedTest(finding)) return null;
-      return finding.diff_validation?.in_diff == null ? 'held_back' : 'report_only';
-    },
-    criticality: () => typeof finding.criticality === 'number' && finding.criticality >= 8 ? null : 'report_only',
-    searches: () => {
-      const incomplete = !Array.isArray(ref?.searched_paths) || ref.searched_paths.length === 0
-        || ref.searched_paths.some((path) => path.available !== true) || !Array.isArray(ref?.candidate_tests)
-        || ref.candidate_tests.some((test) => !resolvedReference(test))
-        || !Array.isArray(finding.candidate_tests) || finding.candidate_tests.some((test) => !hasValue(test?.input) || !hasValue(test?.assertion))
-        || finding.reference_diagnostics?.length;
-      return incomplete ? 'held_back' : null;
-    },
-    duplicate_of: () => referenceResult(finding, 'duplicate_of'),
-    precedent: () => referenceResult(finding, 'precedent'),
-    precedent_not_added: () => {
-      const result = referenceResult(finding, 'precedent');
-      if (result) return result;
-      if (ref.precedent.file_added == null) return 'held_back';
-      return ref.precedent.file_added ? 'report_only' : null;
-    },
-    equivalent: () => hasValue(finding.suggestion) || hasValue(finding.suggested_fix_code) ? null : 'report_only',
-    reachability: () => finding.reachability === 'current' ? null : 'held_back',
-    location: () => canonicalRange(finding) ? null : 'held_back',
-  };
-  return Object.hasOwn(facts, predicate) ? facts[predicate]() : 'held_back';
-}
-function predicateResult(finding, predicate) {
-  const descriptor = ADMISSION_PREDICATES[predicate];
-  if (!descriptor) return 'held_back';
-  if (descriptor.placement) return null;
-  const fact = descriptor.fact ? factAssessment(finding, descriptor.fact) : null;
-  if (fact) return fact;
-  if (descriptor.references) {
-    for (const name of descriptor.references) {
-      if (name === 'primary' && !canonicalRange(finding)) return 'held_back';
-      if (['production_element', 'duplicate_of', 'precedent'].includes(name)) {
-        const result = referenceResult(finding, name);
-        if (result) return result;
-      }
-    }
-    const assessment = matchAssessments(finding, finding.admission_assessments).find((entry) => entry.predicate === predicate);
-    if (!assessment || assessment.status === 'unresolved') return 'held_back';
-    if (assessment.status === 'rejected') return 'report_only';
+function routeVerdict(finding) {
+  const rule = verdictRule(finding);
+  if (['reachability', 'consequence'].includes(finding.demoted_by) && !rule.severity) {
+    if (finding.original_severity) finding.severity = finding.original_severity;
+    delete finding.demoted_by;
+    delete finding.demotion_reason;
   }
-  return null;
-}
-function evaluateAdmission(finding) {
-  delete finding.admission;
-  delete finding.effective_test_kind;
-  const promoted = hasPresentDefect(finding, finding.admission_assessments);
-  const { original, promotion, terminal, policyFinding, row, kind, core, tier } = admissionPolicy(finding, finding.policy_subject, promoted);
-  const subject = row?.policySubjects[policyFinding.policy_subject];
-  const reasons = [];
-  const fail = (predicate, status) => { if (status) reasons.push({ predicate, status }); };
-  if (!['new', 'modified', 'surfaced', 'pre_existing'].includes(finding.origin)) fail('verification', 'held_back');
-  if (finding.validation !== 'validated') fail('validation', 'held_back');
-  if (!terminal && ((row?.admission && !subject) || policyFinding.policy_subject === 'unresolved')) fail('policy_subject', 'held_back');
-  if (!row || (row.admission && !kind)) fail('kind', 'held_back');
-  if (kind?.defaultDisposition === 'report_only') fail('value', 'report_only');
-  for (const predicate of kind?.predicates || []) fail(predicate, predicateResult(finding, predicate));
-  const assessed = new Set(matchAssessments(finding, finding.admission_assessments).map((entry) => entry.predicate));
-  for (const predicate of requiredAssessments(finding, finding.policy_subject, promoted)) {
-    if (!assessed.has(predicate) && !reasons.some((reason) => reason.predicate === predicate && reason.status === 'held_back')) {
-      fail(predicate, 'held_back');
-    }
+  delete finding.route_reason;
+  finding.verdict_route = rule.route;
+  finding.reachability = finding.verdict?.reachability ?? 'uncertain';
+  finding.report_destination = finding.report_tag = rule.tier;
+  if (rule.severity) {
+    finding.original_severity ??= finding.severity;
+    finding.severity = rule.severity;
+    finding.demoted_by = rule.demotion ?? 'reachability';
+    finding.demotion_reason = finding.verdict.latent_condition ?? finding.verdict.justification;
   }
-  let status = 'admitted';
-  if (reasons.some((reason) => reason.status === 'held_back')) status = 'held_back';
-  else if (reasons.length) status = 'report_only';
-  if (subject?.stamp && status === 'admitted') finding[subject.stamp] = subject.kind;
-  const selectedKind = (promoted && promotion.kind) || (!terminal && subject?.kind) || (row?.admission ? finding[row.admission.field] : 'ordinary');
-  if (promoted && status === 'admitted') {
-    finding.origin_dimension ??= original.row.dimension;
-    if (kind.dimension) finding.dimension = kind.dimension;
-    if (promotion.stamp) finding[promotion.stamp] = promotion.kind;
-  }
-  const inputFields = kind?.anyOf || [];
-  const routedTier = finding.report_tag ?? finding.report_destination;
-  let effectiveTier = tier || 'main';
-  if (!promoted && ['main', 'suggestion'].includes(routedTier)) effectiveTier = routedTier;
-  finding.admission = { version: 1, input_fields: inputFields, status, reasons,
-    kind: selectedKind || 'unknown', core, tier: effectiveTier,
-    inline_eligible: !kind?.predicates.includes('test_diff_site_for_inline')
-      || prOwnedTest(finding) };
-  finding.admission.input_proof = admissionProof(finding, inputFields);
-  finding.body_fix_task_eligible = status === 'admitted' && RIGHT_ELIGIBILITY.body.fixTask.every((predicate) => predicateResult(finding, predicate) === null);
-  if (status === 'admitted') finding.report_destination = finding.report_tag = finding.admission.tier;
   return finding;
 }
-function admissionContext(finding, validation) {
-  const { promotion, original } = admissionPolicy(finding);
-  const promoted = hasPresentDefect(finding, validation?.admission_assessments);
-  const subjects = validation ? [validation.policy_subject] : Object.keys(original.row?.policySubjects || {});
-  const requirements = Object.fromEntries(subjects.map((subject) =>
-    [subject, requiredAssessments(finding, subject, promoted)]));
-  const missing = validation ? missingAssessments(finding, validation) : null;
-  const predicates = [...new Set(missing || [...Object.values(requirements).flat(), ...RIGHT_ELIGIBILITY.body.fixTask])]
-    .filter((predicate) => ASSESSED_PREDICATES.includes(predicate));
-  return { requests: admissionRequests(finding), facts: Object.fromEntries(Object.keys(VERIFY_FACT_PROPERTIES).map((key) => [key, finding[key]])),
-    policy: { policy_subjects: validation ? { [validation.policy_subject]: missing } : requirements,
-      ...(!validation && promotion ? { promotion: { predicate: promotion.predicate,
-        confirmed: requiredAssessments(finding, 'ordinary', true) } } : {}),
-      ...(!validation ? { body_fix_task: RIGHT_ELIGIBILITY.body.fixTask } : {}) },
-    predicates: Object.fromEntries(predicates.map((predicate) => [predicate, ADMISSION_PREDICATES[predicate]])),
-    claim: Object.fromEntries(DIMENSIONS.flatMap((row) => Object.keys(row.schemaExtra)).map((key) => [key, finding[key]])),
-    fix: finding.suggestion || finding.suggested_fix_code };
-}
 // --- applyValidations.js ---
-const REACHABILITY_VALUES = ['current', 'future_change_only', 'uncertain'];
 function applyValidations(findings, validations) {
-  const findingById = new Map();
+  const byId = new Map();
   for (const finding of findings) {
-    delete finding.sites;
-    delete finding.reachability;
-    for (const field of ['policy_subject', 'admission_assessments', 'admission', 'body_fix_task_eligible', 'effective_test_kind']) delete finding[field];
-    const fid = 'id' in finding ? finding.id : undefined;
-    if (fid !== null && fid !== undefined) findingById.set(fid, finding);
+    for (const field of ['sites', 'verdict', 'validator_verdict', 'verdict_route', 'refutation_check', 'reachability',
+      'policy_subject', 'admission_assessments', 'admission', 'body_fix_task_eligible', 'effective_test_kind',
+      'contested', 'contestation_drop', 'contestation_reason', 'validator_confidence']) delete finding[field];
+    byId.set(finding.id, finding);
   }
   let adjustedCount = 0;
   const unmatchedIds = [];
   for (const validation of validations) {
-    const vid = 'id' in validation ? validation.id : undefined;
-    if (vid === null || vid === undefined) continue; // missing id -- skipped (warning)
-    const rawConf = 'confidence' in validation ? validation.confidence : undefined;
-    if (rawConf === null || rawConf === undefined) continue; // missing confidence -- skipped (warning)
-    const parsed = coerceInt(rawConf, INT_POLICY.validation);
-    if (parsed === null) continue; // non-integer confidence -- skipped (warning)
-    const newConf = Math.max(0, Math.min(100, parsed));
-    const finding = findingById.get(vid);
-    if (finding === undefined) {
-      unmatchedIds.push(vid);
-      continue;
-    }
-    if (!('original_confidence' in finding)) {
-      finding.original_confidence = 'confidence' in finding ? finding.confidence : 0;
-    }
-    finding.validator_confidence = newConf;
-    finding.confidence = newConf;
-    const justification = 'justification' in validation ? validation.justification : undefined;
-    if (justification) finding.validation_justification = justification;
-    const reachability = 'reachability' in validation ? validation.reachability : undefined;
-    if (REACHABILITY_VALUES.includes(reachability)) finding.reachability = reachability;
-    if (VALIDATION_RETURN_PROPERTIES.policy_subject.enum.includes(validation.policy_subject)) finding.policy_subject = validation.policy_subject;
-    if (Array.isArray(validation.admission_assessments)) finding.admission_assessments = matchAssessments(finding, validation.admission_assessments);
+    if (verdictRejections(validation).length) continue;
+    const finding = byId.get(validation.id);
+    if (!finding) { unmatchedIds.push(validation.id); continue; }
+    const verdict = Object.fromEntries(Object.keys(VERDICT_PROPERTIES).filter((key) => validation[key] !== undefined)
+      .map((key) => [key, deepClone(validation[key])]));
+    finding.verdict = finding.validator_verdict = verdict;
+    finding.validation_justification = verdict.justification;
+    if (validation.refutation_check) finding.refutation_check = deepClone(validation.refutation_check);
     const key = (site) => JSON.stringify([site.file, site.line_start, site.line_end]);
-    const confirmations = new Map((Array.isArray(validation.site_confirmations) ? validation.site_confirmations : [])
-      .filter((site) => site && typeof site === 'object').map((site, _, sites) => [key(site),
-        site.confirmed === true && sites.filter((other) => key(other) === key(site)).length === 1]));
-    if (finding.resolved_sites) finding.sites = finding.resolved_sites.filter((site) => canonicalRange(site) && confirmations.get(key(site)) === true);
+    const confirmations = validation.site_confirmations || [];
+    if (finding.resolved_sites) finding.sites = finding.resolved_sites.filter((site) => canonicalRange(site)
+      && confirmations.filter((s) => key(s) === key(site)).length === 1
+      && confirmations.find((s) => key(s) === key(site)).confirmed === true);
+    routeVerdict(finding);
     adjustedCount += 1;
   }
+  for (const finding of findings) routeVerdict(finding);
   return { adjustedCount, unmatchedIds };
 }
 // --- groupRanking.js ---
@@ -2700,212 +2531,23 @@ function groupSeverityRank(finding) {
   const index = SEVERITY_ORDER.indexOf(asText(finding.severity).trim().toLowerCase());
   return index < 0 ? 0 : SEVERITY_ORDER.length - index;
 }
-function chooseGroupLead(members) {
-  const key = (f) => [groupSeverityRank(f), (f.dimension ?? '').toLowerCase() === 'security' ? 1 : 0,
-    groupTier(f), deliveryAllows(f, 'inline') ? 1 : 0, asConfidence(f.confidence),
-    findingPolicy(f).core ? 1 : 0, asText(f.description).length];
-  return [...members].sort((a, b) => {
-    const ka = key(a), kb = key(b);
-    for (let i = 0; i < ka.length; i++) if (ka[i] !== kb[i]) return kb[i] - ka[i];
-    return 0;
-  })[0];
+function rankKey(finding) {
+  return [-groupSeverityRank(finding), (finding.dimension ?? '').toLowerCase() === 'security' ? 0 : 1,
+    finding.origin === 'unknown' ? 1 : 0, -groupTier(finding), deliveryAllows(finding, 'inline') ? 0 : 1,
+    asText(finding.file), Number(finding.line_start) || 0, asText(finding.id)];
 }
+function compareFindings(a, b) {
+  const ka = rankKey(a), kb = rankKey(b);
+  for (let i = 0; i < ka.length; i++) if (ka[i] !== kb[i]) return ka[i] < kb[i] ? -1 : 1;
+  return 0;
+}
+function rankFindings(findings) { return [...findings].sort(compareFindings); }
+function chooseGroupLead(members) { return rankFindings(members)[0]; }
 function groupDelivery(primary, corroborators = []) {
   const members = [primary, ...corroborators];
   const severity = SEVERITY_ORDER[SEVERITY_ORDER.length - Math.max(...members.map(groupSeverityRank))] ?? 'low';
   const tier = members.some((f) => groupTier(f)) ? 'main' : 'suggestion';
   return { ...primary, severity, report_tag: tier, report_destination: tier };
-}
-// --- reviewConfig.js ---
-function cfgGet(config, key, fallback) {
-  const v = config ? config[key] : undefined;
-  return v === undefined || v === null ? fallback : v;
-}
-function stripMatchingQuotes(item) {
-  if (item.length >= 2) {
-    const first = item[0];
-    const last = item[item.length - 1];
-    if ((first === '"' || first === "'") && first === last) {
-      return item.slice(1, -1);
-    }
-  }
-  return item;
-}
-function splitReviewLines(text) {
-  return text.split(/\r\n|\r|\n/);
-}
-const REVIEW_BLOCK_PATTERNS = deepFreeze([
-  /```(?:yaml|)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*#?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*code-gauntlet(?:[^\n]*)?\n([^\x00]*?)```/i,
-  /<!--[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*code-gauntlet-config[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\n([^\x00]*?)-->/i,
-  /```(?:yaml|)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*#?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*deep-review(?:[^\n]*)?\n([^\x00]*?)```/i,
-  /<!--[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*deep-review-config[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\n([^\x00]*?)-->/i,
-]);
-const REVIEW_CONFIDENCE_RE =
-  /(?:^|\n)[ \t]*confidence_threshold[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[:=][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*([0-9]{1,3})(?![0-9])/i;
-const REVIEW_SECURITY_RE =
-  /(?:^|\n)[ \t]*security_min_confidence[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[:=][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*([0-9]{1,3})(?![0-9])/i;
-const REVIEW_SEVERITY_RE =
-  /(?:^|\n)[ \t]*severity_threshold[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[:=][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(critical|high|medium|low)/i;
-const REVIEW_IGNORE_RE =
-  /(?:^|\n)[ \t]*ignore[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*:[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\n((?:[ \t]*-[^\n]*\n?)+)/i;
-const REVIEW_IGNORE_ITEM_RE =
-  /^[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*-[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*/;
-const REVIEW_EXCL_BLOCK_RE =
-  /```[^\n]*\n([^\x00]*?)```/;
-const REVIEW_EXCL_BULLET_RE =
-  /^[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[-*][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+([^\n]+)$/;
-const REVIEW_CONFIG_RULES = deepFreeze([
-  ...REVIEW_BLOCK_PATTERNS.map((pattern) => ({ kind: 'block', pattern })),
-  { kind: 'numeric', key: 'confidence_threshold', pattern: REVIEW_CONFIDENCE_RE },
-  { kind: 'numeric', key: 'security_min_confidence', pattern: REVIEW_SECURITY_RE },
-  { kind: 'severity', key: 'severity_threshold', pattern: REVIEW_SEVERITY_RE },
-  { kind: 'ignore', pattern: REVIEW_IGNORE_RE, itemPattern: REVIEW_IGNORE_ITEM_RE },
-]);
-function parseReviewMd(text, rules = REVIEW_CONFIG_RULES) {
-  const config = { ignore: [] };
-  if (text === undefined || text === null) return config;
-  let blockText = '';
-  for (const row of rules) {
-    if (row.kind !== 'block') continue;
-    const m = row.pattern.exec(text);
-    if (m) {
-      blockText = m[1];
-      break;
-    }
-  }
-  if (!blockText) blockText = text;
-  for (const row of rules) {
-    if (row.kind === 'block') continue;
-    const m = row.pattern.exec(blockText);
-    if (!m) continue;
-    if (row.kind === 'numeric') {
-      const value = parseInt(m[1], 10);
-      if (value <= 100) config[row.key] = value;
-    } else if (row.kind === 'severity') {
-      config[row.key] = m[1].toLowerCase();
-    } else if (row.kind === 'ignore') {
-      for (const line of splitReviewLines(m[1])) {
-        const item = line.replace(row.itemPattern, '').replace(WS_TRIM_RE, '');
-        if (item) config.ignore.push(stripMatchingQuotes(item));
-      }
-    }
-  }
-  return config;
-}
-function reviewScopeDir(path) {
-  const slash = path.lastIndexOf('/');
-  return slash < 0 ? '' : path.slice(0, slash);
-}
-function reviewScopeDepth(dir) {
-  return dir.split('/').length;
-}
-function mergeReviewLayer(layer, parsed, rules) {
-  for (const row of rules) {
-    if (row.key !== undefined && parsed[row.key] !== undefined) layer[row.key] = parsed[row.key];
-  }
-  layer.ignore.push(...parsed.ignore);
-}
-function buildReviewConfig(entries, rules = REVIEW_CONFIG_RULES) {
-  const root = { ignore: [] };
-  const scopes = [];
-  for (let index = 0; index < entries.length; index++) {
-    const entry = entries[index];
-    const dir = reviewScopeDir(entry.path);
-    const parsed = parseReviewMd(entry.text, rules);
-    if (dir === '') {
-      mergeReviewLayer(root, parsed, rules);
-      continue;
-    }
-    let scope = scopes.find((candidate) => candidate.dir === dir);
-    if (!scope) {
-      scope = { dir, ignore: [], _index: index };
-      scopes.push(scope);
-    }
-    mergeReviewLayer(scope, parsed, rules);
-  }
-  scopes.sort((a, b) =>
-    (reviewScopeDepth(a.dir) - reviewScopeDepth(b.dir)) || (a._index - b._index));
-  for (const scope of scopes) delete scope._index;
-  if (scopes.length > 0) root.scopes = scopes;
-  return root;
-}
-function scopeMatchesFile(scope, file) {
-  return typeof file === 'string'
-    && scope && typeof scope.dir === 'string'
-    && scope.dir !== ''
-    && file.startsWith(`${scope.dir}/`);
-}
-function configForFile(config, file, keys = REVIEW_SETTING_KEYS) {
-  const source = config || {};
-  const view = { ignore: [...(source.ignore === undefined ? [] : source.ignore)] };
-  for (const key of keys) {
-    if (key in source) view[key] = source[key];
-  }
-  if (!Array.isArray(source.scopes) || typeof file !== 'string') return view;
-  const matching = source.scopes
-    .map((scope, index) => ({ scope, index }))
-    .filter(({ scope }) => scopeMatchesFile(scope, file))
-    .sort(({ scope: a, index: ai }, { scope: b, index: bi }) =>
-      (reviewScopeDepth(a.dir) - reviewScopeDepth(b.dir)) || (ai - bi));
-  for (const { scope } of matching) {
-    for (const key of keys) {
-      if (key in scope) view[key] = scope[key];
-    }
-    view.ignore.push(...(scope.ignore === undefined ? [] : scope.ignore));
-  }
-  return view;
-}
-function loadExclusions(text) {
-  if (text === undefined || text === null) return [];
-  const patterns = [];
-  const blockMatch = REVIEW_EXCL_BLOCK_RE.exec(text);
-  if (blockMatch) {
-    for (const rawLine of splitReviewLines(blockMatch[1])) {
-      const line = rawLine.replace(WS_TRIM_RE, '');
-      if (line && !line.startsWith('#')) patterns.push(line);
-    }
-    return patterns;
-  }
-  for (const line of splitReviewLines(text)) {
-    const m = REVIEW_EXCL_BULLET_RE.exec(line);
-    if (m) patterns.push(m[1].replace(WS_TRIM_RE, ''));
-  }
-  return patterns;
-}
-function applyExclusions(findings, exclusionPatterns, config = null, keys = REVIEW_SETTING_KEYS) {
-  const hasConfig = config !== null && config !== undefined;
-  if (!hasConfig && (!exclusionPatterns || !exclusionPatterns.length)) {
-    return { kept: findings, eliminated: [] };
-  }
-  const kept = [];
-  const eliminated = [];
-  for (const finding of findings) {
-    const patterns = hasConfig
-      ? [...configForFile(config, finding.file, keys).ignore, ...(exclusionPatterns || [])]
-      : (exclusionPatterns || []);
-    const title = asText(finding.title);
-    const description = asText(finding.description);
-    const suggestion = typeof finding.suggestion === 'string' ? finding.suggestion : '';
-    const combined = `${title}\n${description}\n${suggestion}`;
-    let matchedPattern = null;
-    for (const pattern of patterns) {
-      const rx = new RegExp(escapeRegExp(pattern), 'i');
-      if (rx.test(combined)) {
-        matchedPattern = pattern;
-        break;
-      }
-    }
-    if (matchedPattern) {
-      eliminated.push({
-        ...finding,
-        eliminated_by: 'exclusion',
-        elimination_reason: `matched exclusion pattern: ${JSON.stringify(matchedPattern)}`,
-      });
-    } else {
-      kept.push(finding);
-    }
-  }
-  return { kept, eliminated };
 }
 // --- injection.js ---
 const INJECTION_TITLE_PATTERNS = deepFreeze([
@@ -3262,7 +2904,7 @@ function injectionScanCore(findings, includeH4, rules) {
         const folded = row.domain === 'title' ? titleFolded : combinedFolded;
         const m = firstMatch(raw, folded, row.patterns);
         if (m) reasons.push(`${row.label}: ${JSON.stringify(m)}`);
-      } else if (row.kind === 'shortBody' && includeH4) {
+      } else if (row.kind === 'shortBody' && includeH4 && !finding.verdict) {
         const wordCount = countWords(description);
         if (wordCount < row.minimumWords && confidence >= row.confidence) {
           reasons.push(row.label.replace('{words}', wordCount).replace('{confidence}', confidence));
@@ -3296,15 +2938,6 @@ function applyReplayInjectionScan(findings, rules = INJECTION_RULES) {
   return injectionScanCore(findings, false, rules);
 }
 // --- filterFindings.js ---
-const FUNCTIONAL_VIOLATION_KEYWORDS =
-  /\bcrash\b|\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+loss\b|\bsilent(?:ly)?\b|\bincorrect\b|\bwrong\b|\bfail(?:s|ure)?\b|\bruntime[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bexception\b|\bpanic\b|\bundefined[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavio(?:u)?r\b/i;
-const FILTER_DIMENSION_ROUTES = deepFreeze({ convention: { patterns: [FUNCTIONAL_VIOLATION_KEYWORDS] } });
-const FILTER_SUPPRESSION_RULES = deepFreeze([
-  { agent: AGENT_BUG_DETECTOR, pattern: /\bintentional\b|\bby[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+design\b|\bexpected[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavior\b|\bdeliberate\b/,
-    eliminatedBy: 'suppressed:intentional', subject: 'behaviour', conclusion: 'intentional' },
-  { agent: AGENT_TEST_ANALYZER, pattern: /\bgenerated\b|\bscaffolding\b|\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?generated\b|\bboilerplate\b/,
-    eliminatedBy: 'suppressed:generated', subject: 'code', conclusion: 'generated/scaffolding' },
-]);
 function normalizeFieldNames(findings, renames = FIELD_RENAMES) {
   let normalizedCount = 0;
   for (const finding of findings) {
@@ -3320,84 +2953,18 @@ function normalizeFieldNames(findings, renames = FIELD_RENAMES) {
   }
   return normalizedCount;
 }
-const FILTER_DEFAULTS = deepFreeze({
-  confidenceThreshold: 70,
-  nonsecurityConfidenceThreshold: 55,
-  securityMinConfidence: 70,
-  severityThreshold: 'low',
-});
-const CONTESTATION_DROP_THRESHOLD = 25;
-function applyThresholdFilter(findings, config, severityOrder = SEVERITY_ORDER) {
-  const kept = [];
-  const eliminated = [];
-  let contestedCount = 0;
+function applyVerdictRoutes(findings) {
+  const kept = [], eliminated = [];
   for (const finding of findings) {
-    const fileConfig = configForFile(config, finding.file);
-    const confidence = asConfidence(pyGet(finding, 'confidence', 0));
-    let severity = (asText(finding.severity) || 'low').toLowerCase();
-    const dimensions = finding.dimension ? [String(finding.dimension).toLowerCase()] : [];
-    const isSecurity = dimensions.includes('security');
-    let effectiveThreshold;
-    if (isSecurity) {
-      const minConf = cfgGet(fileConfig, 'security_min_confidence', FILTER_DEFAULTS.securityMinConfidence);
-      effectiveThreshold = Math.min(cfgGet(fileConfig, 'confidence_threshold', FILTER_DEFAULTS.confidenceThreshold), minConf);
-    } else {
-      effectiveThreshold = cfgGet(fileConfig, 'confidence_threshold', FILTER_DEFAULTS.nonsecurityConfidenceThreshold);
-    }
-    let isContested = false;
-    const originalConfidence = 'original_confidence' in finding ? finding.original_confidence : undefined;
-    if (originalConfidence !== undefined && originalConfidence !== null) {
-      const drop = originalConfidence - confidence;
-      if (drop > CONTESTATION_DROP_THRESHOLD) {
-        isContested = true;
-        contestedCount += 1;
-        finding.contested = true;
-        finding.contestation_drop = drop;
-        finding.contestation_reason =
-          `validator dropped confidence by ${drop} points (original: ${originalConfidence}, current: ${confidence})`;
-      }
-    }
-    if (!isContested && confidence < effectiveThreshold) {
-      eliminated.push({
-        ...finding,
-        eliminated_by: 'threshold',
-        elimination_reason: `confidence ${confidence} < threshold ${effectiveThreshold}`,
-      });
+    for (const key of ['consensus_boost', 'singleton_penalty', 'contested', 'contestation_drop', 'contestation_reason']) delete finding[key];
+    routeVerdict(finding);
+    if (finding.verdict_route === 'eliminated') {
+      eliminated.push({ ...finding, eliminated_by: 'verified_refutation', elimination_reason: finding.verdict.justification });
       continue;
-    }
-    if (!isContested) {
-      const severityThreshold = cfgGet(fileConfig, 'severity_threshold', FILTER_DEFAULTS.severityThreshold);
-      const sevThresholdIdx = severityOrder.indexOf(severityThreshold);
-      if (!severityOrder.includes(severity)) severity = 'low';
-      const sevIdx = severityOrder.indexOf(severity);
-      if (sevIdx > sevThresholdIdx) {
-        eliminated.push({
-          ...finding,
-          eliminated_by: 'threshold',
-          elimination_reason: `severity '${severity}' is below threshold '${severityOrder[sevThresholdIdx]}'`,
-        });
-        continue;
-      }
     }
     kept.push(finding);
   }
-  return { kept, eliminated, contestedCount };
-}
-const REACHABILITY_DEMOTION_REASON =
-  'validator found no code path that reaches this issue without a future change';
-function applyReachabilityDemotion(findings) {
-  let demotedCount = 0;
-  for (const finding of findings) {
-    if (finding.reachability !== 'future_change_only') continue;
-    if (finding.severity !== 'low') {
-      if ('severity' in finding) finding.original_severity = finding.severity;
-      finding.severity = 'low';
-    }
-    finding.demoted_by = 'reachability';
-    finding.demotion_reason = REACHABILITY_DEMOTION_REASON;
-    demotedCount += 1;
-  }
-  return { findings, demotedCount };
+  return { kept, eliminated };
 }
 function pyGet(obj, key, dflt) {
   return key in obj ? obj[key] : dflt;
@@ -3414,8 +2981,6 @@ function lineBucket(line, proximity) {
   if (n === null) return 0;
   return pyRound(n / proximity) * proximity;
 }
-const CONSENSUS_BOOST = 10;
-const SINGLETON_PENALTY = 15;
 function groupFilterFindings(findings, keyFor) {
   const groups = new Map();
   for (const finding of findings) {
@@ -3424,111 +2989,6 @@ function groupFilterFindings(findings, keyFor) {
     groups.get(key).push(finding);
   }
   return groups;
-}
-function detectDisagreement(findings, rules = FILTER_SUPPRESSION_RULES) {
-  for (const f of findings) {
-    for (const key of ['consensus_count', 'consensus_boost', 'corroborated_by', 'singleton_penalty', 'contradiction', 'security_escalation', 'escalation_note']) delete f[key];
-  }
-  const locationGroups = groupFilterFindings(findings, (finding) => JSON.stringify([
-    pyGet(finding, 'file', ''), lineBucket(finding.line_start, 10),
-  ]));
-  const suppressedIds = new Set();
-  const suppressed = [];
-  const idKey = (f) => (('id' in f) ? f.id : f);
-  for (const group of locationGroups.values()) {
-    if (group.length < 2) continue;
-    const agentMap = groupFilterFindings(group, (f) => pyGet(f, 'agent', '').toLowerCase());
-    for (const row of rules) {
-      if (!agentMap.has(row.agent) || !agentMap.has(AGENT_CONVENTIONS)) continue;
-      for (const convFinding of agentMap.get(AGENT_CONVENTIONS)) {
-        const convText = `${asText(convFinding.description)} ${asText(convFinding.title)}`.toLowerCase();
-        if (!row.pattern.test(convText)) continue;
-        for (const target of agentMap.get(row.agent)) {
-          const fid = idKey(target);
-          if (suppressedIds.has(fid)) continue;
-          suppressedIds.add(fid);
-          suppressed.push({
-            ...target,
-            eliminated_by: row.eliminatedBy,
-            elimination_reason:
-              `conventions-and-intent confirms ${row.subject} at ${pyGet(target, 'file', '?')}:` +
-              `${pyGet(target, 'line_start', '?')} is ${row.conclusion}`,
-          });
-        }
-        break;
-      }
-    }
-  }
-  const active = findings.filter((f) => !suppressedIds.has(idKey(f)));
-  const consensusGroups = groupFilterFindings(active, (finding) => JSON.stringify([
-    pyGet(finding, 'file', ''), lineBucket(finding.line_start, 10), pyGet(finding, 'origin', '') === 'unknown',
-  ]));
-  let boostedCount = 0;
-  for (const group of consensusGroups.values()) {
-    const count = group.length;
-    const agentsInGroup = group.filter((f) => f.agent).map((f) => f.agent);
-    if (count > 1) {
-      boostedCount += count;
-      for (const finding of group) {
-        const thisAgent = pyGet(finding, 'agent', '');
-        const otherAgents = agentsInGroup.filter((a) => a !== thisAgent);
-        finding.consensus_count = count;
-        finding.consensus_boost = CONSENSUS_BOOST;
-        finding.corroborated_by = otherAgents;
-        const originalConf = asConfidence(finding.confidence);
-        finding.confidence = Math.min(originalConf + CONSENSUS_BOOST, 100);
-      }
-    } else {
-      const finding = group[0];
-      finding.consensus_count = 1;
-      finding.consensus_boost = 0;
-      if (!('corroborated_by' in finding)) finding.corroborated_by = [];
-      if (finding.dimension && !findingPolicy(finding).core) {
-        const originalConf = asConfidence(finding.confidence);
-        finding.confidence = Math.max(0, originalConf - SINGLETON_PENALTY);
-        finding.singleton_penalty = true;
-      }
-    }
-  }
-  const locationGroupsActive = groupFilterFindings(active, (finding) => JSON.stringify([
-    pyGet(finding, 'file', ''), pyGet(finding, 'line_start', 0),
-  ]));
-  for (const group of locationGroupsActive.values()) {
-    if (group.length < 2) {
-      if (!('contradiction' in group[0])) group[0].contradiction = false;
-      if (!('security_escalation' in group[0])) group[0].security_escalation = false;
-      continue;
-    }
-    const severities = new Set(group.map((f) => (asText(f.severity) || 'low').toLowerCase()));
-    const agentsHere = new Set(group.map((f) => pyGet(f, 'agent', '').toLowerCase()));
-    const hasContradiction = severities.has('critical') && severities.has('low');
-    const hasSecurityEscalation =
-      agentsHere.has(AGENT_SECURITY_REVIEWER) && agentsHere.size > 1 && severities.has('low');
-    for (const finding of group) {
-      finding.contradiction = hasContradiction;
-      finding.security_escalation = hasSecurityEscalation;
-      if (hasSecurityEscalation && pyGet(finding, 'agent', '').toLowerCase() === AGENT_SECURITY_REVIEWER) {
-        finding.escalation_note =
-          'Kept: security-reviewer finding retained despite conflicting low-severity ' +
-          'signal from another agent (security escalation rule)';
-      }
-    }
-  }
-  return { active, suppressed, boostedCount };
-}
-function routeByDimension(finding, routes = FILTER_DIMENSION_ROUTES) {
-  const dimension = pyGet(finding, 'dimension', '').toLowerCase();
-  if (!dimension) return null;
-  if (!dimensionRow(finding.origin_dimension) && !dimensionRow(dimension)) return null;
-  const policy = findingPolicy(finding);
-  if (policy.row?.functionalRouting && Object.hasOwn(routes, dimension)) {
-    return findingMatchesPatterns(finding, routes[dimension].patterns) ? 'main' : 'suggestion';
-  }
-  return policy.tier ?? null;
-}
-function findingMatchesPatterns(finding, patterns) {
-  const combined = `${asText(finding.title)}\n${asText(finding.description)}`;
-  return patterns.some((rx) => rx.test(combined));
 }
 function groupByProximity(findings, lineProximity) {
   return groupFilterFindings(findings, (finding) => JSON.stringify([
@@ -3561,48 +3021,25 @@ function consolidateCrossAgent(findings) {
   }
   return { findings, consolidatedCount };
 }
-function tagFindings(findings, routes = FILTER_DIMENSION_ROUTES) {
-  let mainCount = 0;
-  let suggestionCount = 0;
+function tagFindings(findings) {
+  let mainCount = 0, suggestionCount = 0;
   for (const finding of findings) {
     delete finding.consolidation_key;
     delete finding.consolidation_primary;
-    const agent = pyGet(finding, 'agent', '').toLowerCase();
-    let destination;
-    if (finding.demoted_by === 'reachability') {
-      destination = 'suggestion';
-      finding.routed_by = 'reachability';
-    } else {
-      const dimRoute = routeByDimension(finding, routes);
-      if (dimRoute !== null) {
-        destination = dimRoute;
-        if (dimRoute === 'suggestion') finding.routed_by = 'dimension';
-      } else {
-        const rows = DIMENSIONS.filter((row) => row.agentType.split(':').pop() === agent);
-        destination = (rows.find((row) => row.agentFallback) || rows[0])?.defaultTier || 'main';
-      }
-    }
-    finding.report_destination = destination;
-    finding.report_tag = destination; // Artifact readers consume both routing names.
-    if (destination === 'main') mainCount += 1;
+    const tier = finding.verdict_route === 'posted' || finding.verdict_route === 'not-established' ? 'main' : 'suggestion';
+    finding.report_destination = finding.report_tag = tier;
+    if (tier === 'main') mainCount += 1;
     else suggestionCount += 1;
   }
   return { tagged: findings, mainCount, suggestionCount };
 }
-function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
+function applyFilterPipeline(findings, generatedAt) {
   const total = findings.length;
   normalizeFieldNames(findings);
-  applyReachabilityDemotion(findings);
   const allEliminated = [];
-  const { kept: afterThreshold, eliminated: elimThreshold, contestedCount } = applyThresholdFilter(findings, config);
-  allEliminated.push(...elimThreshold);
-  const passedThreshold = afterThreshold.length;
-  const { kept: afterExclusions, eliminated: elimExclusions } = applyExclusions(
-    afterThreshold, exclusionPatterns, config,
-  );
-  allEliminated.push(...elimExclusions);
-  const exclusionsRemoved = elimExclusions.length;
-  const { kept: afterInjection, eliminated: elimInjection } = applyInjectionFilter(afterExclusions);
+  const { kept: routed, eliminated: refuted } = applyVerdictRoutes(findings);
+  allEliminated.push(...refuted);
+  const { kept: afterInjection, eliminated: elimInjection } = applyInjectionFilter(routed);
   allEliminated.push(...elimInjection);
   const injectionsRemoved = elimInjection.length;
   const proseFieldsRemoved = Object.fromEntries(
@@ -3614,9 +3051,7 @@ function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
   const suggestedFixCodesRemoved = afterInjection.filter(
     (f) => f.suggested_fix_code_removed_by === 'injection',
   ).length;
-  const { active, suppressed: elimSuppressed, boostedCount: consensusBoosted } = detectDisagreement(afterInjection);
-  allEliminated.push(...elimSuppressed);
-  const { tagged, mainCount, suggestionCount } = tagFindings(active);
+  const { tagged, mainCount, suggestionCount } = tagFindings(afterInjection);
   const promotedCount = tagged.filter((finding) => {
     const { row, kind } = findingPolicy(finding);
     return kind?.dimension && kind.dimension === finding.dimension && row.dimension !== finding.dimension;
@@ -3630,13 +3065,10 @@ function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
     eliminated: allEliminated,
     stats: {
       total,
-      passed_threshold: passedThreshold,
-      contested_count: contestedCount,
-      exclusions_removed: exclusionsRemoved,
       injections_removed: injectionsRemoved,
       ...proseFieldsRemoved,
       suggested_fix_codes_removed: suggestedFixCodesRemoved,
-      consensus_boosted: consensusBoosted,
+      consensus_boosted: 0,
       singleton_penalized: singletonPenalized,
       dimension_routed: dimensionRouted,
       reachability_demoted: reachabilityDemoted,
@@ -3647,134 +3079,229 @@ function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
     generated_at: generatedAt,
   };
 }
-// --- applyChallenges.js ---
-function downgradeSeverity(severity) {
-  const idx = typeof severity === 'string' ? SEVERITY_ORDER.indexOf(severity.toLowerCase()) : -1;
-  if (idx < 0 || idx + 1 >= SEVERITY_ORDER.length) return null;
-  return SEVERITY_ORDER[idx + 1];
-}
-function rankKey(finding) {
-  const sev = (finding.severity ?? 'low').toLowerCase();
-  let sevIdx = SEVERITY_ORDER.indexOf(sev);
-  if (sevIdx < 0) sevIdx = SEVERITY_ORDER.length;
-  const degraded = finding.origin === 'unknown' ? 1 : 0;
-  const conf = finding.confidence ?? 0;
-  let tertiary;
-  const rl = finding.risk_level;
-  if (rl !== undefined && rl !== null && Number.isFinite(Number(rl))) tertiary = -Number(rl);
-  else tertiary = -((finding.description ?? '').length);
-  return [sevIdx, degraded, -conf, tertiary];
-}
-function rankFindings(findings) {
-  return [...findings].sort((a, b) => {
-    const ka = rankKey(a);
-    const kb = rankKey(b);
-    return ka[0] - kb[0] || ka[1] - kb[1] || ka[2] - kb[2] || ka[3] - kb[3];
-  });
-}
-function challengeOutcome(score, isSecurity = false) {
-  if (score < 25 && !isSecurity) return 'removed';
-  if (score < 50) return 'downgraded';
-  if (score < 75) return 'contested';
-  return 'survived';
-}
-function applyChallenges(findings, challenges) {
-  const challengeById = new Map();
-  for (const entry of challenges) {
-    const cid = 'id' in entry ? entry.id : undefined;
-    if (cid === undefined || cid === null) continue;
-    const rawScore = 'score' in entry ? entry.score : undefined;
-    if (rawScore === undefined || rawScore === null) continue;
-    if (coerceInt(rawScore, INT_POLICY.validation) === null) continue;
-    challengeById.set(cid, entry);
-  }
-  const active = [];
-  const eliminated = [];
-  const stats = {
-    challenge_removed: 0,
-    challenge_downgraded: 0,
-    challenge_contested: 0,
-    challenge_survived: 0,
-    unchallenged: 0,
-  };
-  for (let finding of findings) {
-    const fid = 'id' in finding ? finding.id : undefined;
-    const entry = challengeById.get(fid);
-    if (entry === undefined) {
-      stats.unchallenged += 1;
-      active.push(finding);
-      continue;
+// --- admission.js ---
+const resolvedReference = (ref) => canonicalRange(ref) !== null;
+const hasValue = (value) => typeof value === 'string' && value.trim().length > 0;
+function admissionRequests(finding) {
+  const requests = {};
+  if (canonicalRange(finding)) requests.primary = { file: finding.file, line_start: finding.line_start, line_end: finding.line_end };
+  for (const [name, kind] of Object.entries(VERIFY_REFERENCE_DESCRIPTORS)) {
+    const value = finding.resolved_references?.[name];
+    const refs = kind !== 'reference' ? value : [value];
+    for (const [index, ref] of (Array.isArray(refs) ? refs : []).entries()) {
+      if (kind === 'search_paths' ? ref?.available === true : resolvedReference(ref)) {
+        requests[kind !== 'reference' ? `${name}:${index}` : name] = ref;
+      }
     }
-    const rawScore = 'score' in entry ? entry.score : 0;
-    const score = coerceInt(rawScore, INT_POLICY.validation);
-    const justification = 'justification' in entry ? entry.justification : undefined;
-    finding = deepClone(finding);
-    finding.challenge_score = score;
-    if (justification) finding.challenge_justification = justification;
-    const isSurfaced = ('origin' in finding ? finding.origin : '').toLowerCase() === 'surfaced';
-    const isSecurity = ('dimension' in finding ? finding.dimension : '').toLowerCase() === 'security';
-    const outcome = challengeOutcome(score, isSecurity);
-    if (outcome === 'removed') {
-      eliminated.push({
-        ...finding,
-        eliminated_by: 'challenge:removed',
-        elimination_reason: `challenge score ${score} < 25; finding does not survive blind challenge`,
-      });
+  }
+  return requests;
+}
+function matchAssessments(finding, entries) {
+  const requests = admissionRequests(finding);
+  if (!Array.isArray(entries)) return [];
+  return entries.filter((entry) => {
+    const descriptor = ADMISSION_PREDICATES[entry?.predicate];
+    if (!ASSESSED_PREDICATES.includes(entry?.predicate) || !['confirmed', 'rejected', 'unresolved'].includes(entry.status)
+      || entries.filter((other) => other?.predicate === entry.predicate).length !== 1
+      || !Array.isArray(entry.references) || new Set(entry.references).size !== entry.references.length
+      || entry.references.some((key) => typeof key !== 'string' || !Object.hasOwn(requests, key))) return false;
+    const expected = Object.keys(requests).filter((key) => descriptor.references.some((name) => key === name || key.startsWith(`${name}:`)));
+    return expected.length === entry.references.length && expected.every((key) => entry.references.includes(key));
+  }).map(({ predicate, status, references }) => ({ predicate,
+    status: references.length === 0 && status === 'confirmed' ? 'unresolved' : status, references: [...references] }));
+}
+function hasPresentDefect(finding, entries) {
+  const { promotion } = admissionPolicy(finding);
+  return !!promotion && matchAssessments(finding, entries)
+    .some((entry) => entry.predicate === promotion.predicate && entry.status === 'confirmed');
+}
+const ADMISSION_INPUT_FIELDS = [...new Set(['id', 'file', 'anchor', 'dimension', 'origin_dimension', 'agent', 'origin', 'validation',
+  'verdict', 'verdict_route', 'refutation_check', 'policy_subject', 'admission_assessments', 'reachability', 'location_status', 'line_start', 'line_end', 'diff_validation',
+  'reference_diagnostics', ...Object.keys(VERIFY_FACT_PROPERTIES),
+  ...DIMENSIONS.flatMap((row) => row.admission ? [row.admission.field,
+    ...Object.values(row.admission.kinds).flatMap((kind) => [...kind.required, ...(kind.optional || [])])] : [])])];
+function admissionProof(finding, fields) {
+  const verdict = { ...finding.admission };
+  delete verdict.input_proof;
+  return fnv1a32(JSON.stringify({ verdict, inputs: [...ADMISSION_INPUT_FIELDS, ...fields].map((key) =>
+    ADMISSION_PRESENCE_FIELDS.has(key) ? hasValue(finding[key]) : finding[key] ?? null) }));
+}
+const ADMISSION_PRESENCE_FIELDS = new Set(DIMENSIONS.flatMap((row) => row.admission
+  ? Object.values(row.admission.kinds).flatMap((kind) => [...kind.required, ...(kind.optional || []), ...(kind.anyOf || [])])
+    .filter((key) => { const schema = row.schemaExtra[key] || FINDING_PROP_TYPES[key]; return schema === 'string' || (schema?.type === 'string' && !schema.enum); })
+  : []));
+function referenceResult(finding, name) {
+  if (resolvedReference(finding.resolved_references?.[name])) return null;
+  const supplied = finding[name] !== undefined || finding.reference_diagnostics?.some((diagnostic) => diagnostic.field === name);
+  return supplied ? 'held_back' : 'report_only';
+}
+const prOwnedTest = (finding) => finding.path_role === 'test' && finding.diff_validation?.in_diff === true;
+function hasAdmission(finding) {
+  const stamp = finding?.admission;
+  return stamp?.version === 1 && ['admitted', 'report_only', 'held_back'].includes(stamp.status)
+    && Array.isArray(stamp.reasons) && Array.isArray(stamp.input_fields)
+    && stamp.input_proof === admissionProof(finding, stamp.input_fields);
+}
+function factAssessment(finding, predicate) {
+  const ref = finding.resolved_references;
+  const facts = {
+    pr_owned_test: () => {
+      if (prOwnedTest(finding)) return null;
+      return finding.diff_validation?.in_diff == null ? 'held_back' : 'report_only';
+    },
+    criticality: () => typeof finding.criticality === 'number' && finding.criticality >= 8 ? null : 'report_only',
+    searches: () => {
+      const incomplete = !Array.isArray(ref?.searched_paths) || ref.searched_paths.length === 0
+        || ref.searched_paths.some((path) => path.available !== true) || !Array.isArray(ref?.candidate_tests)
+        || ref.candidate_tests.some((test) => !resolvedReference(test))
+        || !Array.isArray(finding.candidate_tests) || finding.candidate_tests.some((test) => !hasValue(test?.input) || !hasValue(test?.assertion))
+        || finding.reference_diagnostics?.length;
+      return incomplete ? 'held_back' : null;
+    },
+    duplicate_of: () => referenceResult(finding, 'duplicate_of'),
+    precedent: () => referenceResult(finding, 'precedent'),
+    precedent_not_added: () => {
+      const result = referenceResult(finding, 'precedent');
+      if (result) return result;
+      if (ref.precedent.file_added == null) return 'held_back';
+      return ref.precedent.file_added ? 'report_only' : null;
+    },
+    equivalent: () => hasValue(finding.suggestion) || hasValue(finding.suggested_fix_code) ? null : 'report_only',
+    reachability: () => finding.reachability === 'current' ? null : 'held_back',
+    location: () => canonicalRange(finding) ? null : 'held_back',
+  };
+  return Object.hasOwn(facts, predicate) ? facts[predicate]() : 'held_back';
+}
+function predicateResult(finding, predicate) {
+  const descriptor = ADMISSION_PREDICATES[predicate];
+  if (!descriptor) return 'held_back';
+  if (descriptor.placement) return null;
+  const fact = descriptor.fact ? factAssessment(finding, descriptor.fact) : null;
+  if (fact) return fact;
+  if (descriptor.references) {
+    for (const name of descriptor.references) {
+      if (name === 'primary' && !canonicalRange(finding)) return 'held_back';
+      if (['production_element', 'duplicate_of', 'precedent'].includes(name)) {
+        const result = referenceResult(finding, name);
+        if (result) return result;
+      }
+    }
+    const assessment = matchAssessments(finding, finding.admission_assessments).find((entry) => entry.predicate === predicate);
+    if (!assessment || assessment.status === 'unresolved') return 'held_back';
+    if (assessment.status === 'rejected') return 'report_only';
+  }
+  return null;
+}
+function evaluateAdmission(finding) {
+  delete finding.admission;
+  delete finding.effective_test_kind;
+  if (finding.verdict || finding.verdict_route) {
+    const rule = verdictRule(finding);
+    const verified = ['new', 'modified', 'surfaced', 'pre_existing'].includes(finding.origin);
+    const { row, kind } = findingPolicy(finding);
+    const kindReasons = [];
+    if (rule.admission === 'kind') {
+      if (!row || (row.admission && !kind)) kindReasons.push({ predicate: 'kind', status: 'held_back' });
+      if (kind?.defaultDisposition === 'report_only') kindReasons.push({ predicate: 'value', status: 'report_only' });
+      for (const predicate of kind?.predicates || []) {
+        const result = predicate === 'confirmed_test_defect' ? null : predicateResult(finding, predicate);
+        if (result) kindReasons.push({ predicate, status: result });
+      }
+    }
+    let status = !verified ? 'held_back' : finding.verdict_route === 'report-only' ? 'report_only' : rule.status;
+    if (status === 'admitted' && kindReasons.length) status = kindReasons.some((r) => r.status === 'held_back') ? 'held_back' : 'report_only';
+    finding.admission = { version: 1, input_fields: [], status,
+      reasons: kindReasons.length ? kindReasons : status === 'admitted' ? [] : [{ predicate: verified ? 'verdict' : 'verification', status }],
+      kind: rule.admission === 'kind' ? finding[row?.admission?.field] ?? 'ordinary' : 'ordinary',
+      core: findingPolicy(finding).core, tier: rule.tier,
+      inline_eligible: rule.admission !== 'kind' || !kind?.predicates.includes('test_diff_site_for_inline') || prOwnedTest(finding) };
+    finding.admission.input_proof = admissionProof(finding, []);
+    finding.body_fix_task_eligible = status === 'admitted' && finding.verdict_route === 'posted' && canonicalRange(finding) !== null;
+    return finding;
+  }
+  const promoted = hasPresentDefect(finding, finding.admission_assessments);
+  const { original, promotion, terminal, policyFinding, row, kind, core, tier } = admissionPolicy(finding, finding.policy_subject, promoted);
+  const subject = row?.policySubjects[policyFinding.policy_subject];
+  const reasons = [];
+  const fail = (predicate, status) => { if (status) reasons.push({ predicate, status }); };
+  if (!['new', 'modified', 'surfaced', 'pre_existing'].includes(finding.origin)) fail('verification', 'held_back');
+  if (finding.validation !== 'validated') fail('validation', 'held_back');
+  if (!terminal && ((row?.admission && !subject) || policyFinding.policy_subject === 'unresolved')) fail('policy_subject', 'held_back');
+  if (!row || (row.admission && !kind)) fail('kind', 'held_back');
+  if (kind?.defaultDisposition === 'report_only') fail('value', 'report_only');
+  for (const predicate of kind?.predicates || []) fail(predicate, predicateResult(finding, predicate));
+  const assessed = new Set(matchAssessments(finding, finding.admission_assessments).map((entry) => entry.predicate));
+  for (const predicate of requiredAssessments(finding, finding.policy_subject, promoted)) {
+    if (!assessed.has(predicate) && !reasons.some((reason) => reason.predicate === predicate && reason.status === 'held_back')) {
+      fail(predicate, 'held_back');
+    }
+  }
+  let status = 'admitted';
+  if (reasons.some((reason) => reason.status === 'held_back')) status = 'held_back';
+  else if (reasons.length) status = 'report_only';
+  if (subject?.stamp && status === 'admitted') finding[subject.stamp] = subject.kind;
+  const selectedKind = (promoted && promotion.kind) || (!terminal && subject?.kind) || (row?.admission ? finding[row.admission.field] : 'ordinary');
+  if (promoted && status === 'admitted') {
+    finding.origin_dimension ??= original.row.dimension;
+    if (kind.dimension) finding.dimension = kind.dimension;
+    if (promotion.stamp) finding[promotion.stamp] = promotion.kind;
+  }
+  const inputFields = kind?.anyOf || [];
+  const routedTier = finding.report_tag ?? finding.report_destination;
+  let effectiveTier = tier || 'main';
+  if (!promoted && ['main', 'suggestion'].includes(routedTier)) effectiveTier = routedTier;
+  finding.admission = { version: 1, input_fields: inputFields, status, reasons,
+    kind: selectedKind || 'unknown', core, tier: effectiveTier,
+    inline_eligible: !kind?.predicates.includes('test_diff_site_for_inline')
+      || prOwnedTest(finding) };
+  finding.admission.input_proof = admissionProof(finding, inputFields);
+  finding.body_fix_task_eligible = status === 'admitted' && RIGHT_ELIGIBILITY.body.fixTask.every((predicate) => predicateResult(finding, predicate) === null);
+  if (status === 'admitted') finding.report_destination = finding.report_tag = finding.admission.tier;
+  return finding;
+}
+// --- applyChallenges.js ---
+function applyChallenges(findings, challenges) {
+  const byId = new Map(challenges.filter((entry) => verdictRejections(entry).length === 0).map((entry) => [entry.id, entry]));
+  const active = [], eliminated = [];
+  const stats = { total_input: findings.length, challenge_removed: 0, challenge_downgraded: 0,
+    challenge_contested: 0, challenge_survived: 0, unchallenged: 0 };
+  for (const original of findings) {
+    const entry = byId.get(original.id);
+    if (!entry) { active.push(original); stats.unchallenged += 1; continue; }
+    const finding = deepClone(original);
+    const { id, refutation_check, ...verdict } = entry;
+    finding.verdict = finding.challenge_verdict = verdict;
+    delete finding.refutation_check;
+    if (refutation_check) finding.refutation_check = refutation_check;
+    finding.validation = 'validated';
+    finding.challenge_justification = verdict.justification;
+    routeVerdict(finding);
+    finding.challenge = finding.verdict_route === 'not-established' ? 'failed' : 'survived';
+    if (finding.verdict_route === 'eliminated') {
+      eliminated.push({ ...finding, eliminated_by: 'verified_refutation', elimination_reason: verdict.justification });
       stats.challenge_removed += 1;
-    } else if (outcome === 'downgraded') {
-      const currentSev = ('severity' in finding ? finding.severity : 'low').toLowerCase();
-      const newSev = downgradeSeverity(currentSev);
-      finding.challenge_contested = false;
-      const belowRemovalThreshold = challengeOutcome(score) === 'removed';
-      const removed = belowRemovalThreshold && newSev === null;
-      if (newSev === null) {
-        eliminated.push({
-          ...finding,
-          eliminated_by: removed ? 'challenge:removed' : 'challenge:downgraded',
-          elimination_reason: belowRemovalThreshold
-            ? `challenge score ${score} < 25; security finding severity already ` +
-              `'${currentSev}' (lowest) — finding removed`
-            : `challenge score ${score} in 25-49 range; severity already ` +
-              `'${currentSev}' (lowest) — finding removed`,
-        });
-      } else {
-        finding.severity = newSev;
-        finding.severity_downgraded = true;
-        finding.original_severity = currentSev;
-        finding.report_destination = 'suggestion';
-        finding.report_tag = 'suggestion';
-        active.push(finding);
-      }
-      stats[removed ? 'challenge_removed' : 'challenge_downgraded'] += 1;
-    } else if (outcome === 'contested') {
-      finding.challenge_contested = true;
-      if (isSurfaced) {
-        finding.report_destination = 'suggestion';
-        finding.report_tag = 'suggestion';
-      }
-      active.push(finding);
-      stats.challenge_contested += 1;
     } else {
-      finding.challenge_contested = false;
-      active.push(finding);
+      active.push(evaluateAdmission(finding));
       stats.challenge_survived += 1;
     }
   }
-  const totalInput = findings.length;
-  const ranked = rankFindings(active);
-  return {
-    findings: ranked,
-    eliminated,
-    stats: {
-      total_input: totalInput,
-      challenge_removed: stats.challenge_removed,
-      challenge_downgraded: stats.challenge_downgraded,
-      challenge_contested: stats.challenge_contested,
-      challenge_survived: stats.challenge_survived,
-      unchallenged: stats.unchallenged,
-      final_count: ranked.length,
-    },
-  };
+  return { findings: rankFindings(active), eliminated, stats: { ...stats, final_count: active.length } };
+}
+// --- vetting.js ---
+const UNVERIFIED_REASONS = {
+  validation: 'the validator did not establish this finding, so it was not skeptically validated',
+  verify: 'the verify slice could not be proven against the dispatched document',
+  challenge: {
+    capped: 'the challenge cap was reached, so this finding was not challenge-verified',
+    failed: 'the challenger failed or returned no typed verdict, so this finding was not challenge-verified',
+    skipped: 'this finding was not challenge-verified',
+  },
+};
+function incompleteVetting(finding) {
+  const missing = [];
+  if (finding.validation === 'skipped') missing.push('validation');
+  if (finding.origin === 'unknown') missing.push('verify');
+  return missing;
 }
 // --- dispose.js ---
 const DELIVERABLE_CHALLENGES = ['survived', 'contested', 'downgraded'];
@@ -3863,9 +3390,7 @@ function disposeFindings(challenged) {
     if (ids.every((id) => typeof id === 'string' && id)) for (const member of members) member.delivery_group = stamp;
     return { ...stamp, sites: members.flatMap((f) => f.sites || []),
       severity: delivered.severity, tier: delivered.report_tag,
-      disposition: primary.disposition, same_challenge_verdict: new Set(members.map((f) => typeof f.challenge_score === 'number'
-        ? challengeOutcome(f.challenge_score, (f.dimension ?? '').toLowerCase() === 'security')
-        : f.challenge_contested ? 'contested' : f.challenge)).size === 1 };
+      disposition: primary.disposition, same_challenge_verdict: new Set(members.map((f) => f.verdict_route ?? f.challenge)).size === 1 };
   });
   for (const finding of findings.filter((f) => f.consolidation_key && !f.consolidation_primary && f.trace_id)) {
     const related = findings.filter((f) => f.consolidation_key === finding.consolidation_key && f !== finding && f.trace_id).map((f) => f.trace_id);
@@ -4656,6 +4181,9 @@ function coerceReportFinding(finding, severities) {
       value = raw;
     } else if (key === 'confidence') {
       value = reportAsConfidence(raw);
+    } else if (key === 'verdict') {
+      value = plainReportObject(raw) ? { claim: reportOptionalText(safeReportField(raw, 'claim')),
+        consequence: reportOptionalText(safeReportField(raw, 'consequence')) } : undefined;
     } else if (key === 'corroborations') {
       value = Array.isArray(raw) ? raw.map(reportCorroboration) : undefined;
     } else if (key === 'sites') {
@@ -4871,7 +4399,8 @@ function renderFinding(builder, finding, unverified, permalinks) {
   }
   const classification = [];
   if (isPresent(finding.dimension)) classification.push(`**Dimension:** ${inline(finding.dimension)}`);
-  if (isPresent(finding.confidence)) classification.push(`**Confidence:** ${inline(finding.confidence)}%`);
+  if (finding.verdict) classification.push(`**Verdict:** ${inline(finding.verdict.claim)} / ${inline(finding.verdict.consequence)}`);
+  else if (isPresent(finding.confidence)) classification.push(`**Discovery confidence:** ${inline(finding.confidence)}%`);
   if (classification.length) bullets.push(`- ${classification.join(' · ')}`);
   if (finding.origin === 'surfaced') {
     bullets.push('- **Origin:** surfaced — pre-existing, surfaced by this change');
@@ -4929,9 +4458,8 @@ function renderFinding(builder, finding, unverified, permalinks) {
       for (const corroboration of finding.corroborations) {
         const agent = preparedCodeSpan(corroboration.agent, false, undefined, REPORT_FOLD_LIMITS.inlineChars);
         const dimension = preparedCodeSpan(corroboration.dimension, false, undefined, REPORT_FOLD_LIMITS.inlineChars);
-        const confidence = inline(corroboration.confidence);
         const title = inline(corroboration.title);
-        builder.addSpans(`- **Corroborated by** ${agent} (${dimension}, severity ${inline(normalizeReportSeverity(corroboration.severity))}, tier ${inline(corroboration.report_tag ?? 'main')}, confidence ${confidence}): ${title}`, [agent, dimension]);
+        builder.addSpans(`- **Corroborated by** ${agent} (${dimension}, severity ${inline(normalizeReportSeverity(corroboration.severity))}, tier ${inline(corroboration.report_tag ?? 'main')}): ${title}`, [agent, dimension]);
         if (isPresent(corroboration.description)) {
           builder.add(foldedProse(corroboration.description).split(/\r?\n/).map((line) => `  ${line}`).join('\n'));
         }
@@ -5309,6 +4837,7 @@ function renderReport(input, knobs = KNOB_REGISTRY) {
   builder.add();
   summaryBlock(builder, inp, 'report');
   builder.add();
+  if (inp.unsupportedReviewConfig === true) builder.add('REVIEW.md settings are no longer supported; its prose is read as project rules.');
   builder.add('## Change Context');
   builder.add();
   if (isPresent(inp.summary)) {
@@ -5357,64 +4886,15 @@ function renderReport(input, knobs = KNOB_REGISTRY) {
   builder.add();
   builder.add(dimensionsTable);
   renderMethodology(builder, { ...inp, mode: inp.mode || 'interactive' }, rawFindings, knobs);
-  if (inp.hasReviewMd === false) {
-    builder.add();
-    builder.add('A REVIEW.md at the repository root is the preferred way to state review rules: focus, ignore paths, and severity.');
-    builder.add('Format reference: https://github.com/liatrio-labs/claude-code-gauntlet/blob/main/skills/code-gauntlet/references/review-md-spec.md');
-  }
   return builder.finish();
 }
 // --- reviewStages.js ---
-const VALIDATE_SCHEMA = {
-  type: 'object',
-  properties: {
-    validations: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          finding_id: { type: 'string' },
-          confidence: { type: 'number' },
-          justification: { type: 'string' },
-          reachability: { type: 'string', enum: REACHABILITY_VALUES },
-          ...VALIDATION_RETURN_PROPERTIES,
-        },
-        required: ['finding_id', 'confidence', 'policy_subject'],
-      },
-    },
-  },
-  required: ['validations'],
-};
-function assessmentRequirement(predicates) {
-  return { ...(predicates.length ? { properties: { admission_assessments: { allOf: predicates.map((predicate) => ({
-    contains: { properties: { predicate: { const: predicate } }, required: ['predicate'] },
-  })) } } } : {}), required: predicates.length ? ['admission_assessments'] : [] };
-}
-function validateSchema(batch, accepted) {
-  const base = VALIDATE_SCHEMA.properties.validations.items;
-  const variants = batch.flatMap((finding) => {
-    const previous = accepted.get(finding.id);
-    if (previous) {
-      const requirements = assessmentRequirement(missingAssessments(finding, previous));
-      return [{ ...requirements, properties: { finding_id: { enum: [finding.id] }, ...requirements.properties } }];
-    }
-    const { promotion } = admissionPolicy(finding);
-    const references = Object.hasOwn(admissionRequests(finding), 'primary') ? ['primary'] : [];
-    return VALIDATION_RETURN_PROPERTIES.policy_subject.enum.map((subject) => {
-      const requirements = assessmentRequirement(requiredAssessments(finding, subject));
-      const properties = { finding_id: { enum: [finding.id] }, policy_subject: { enum: [subject] } };
-      const plain = { properties: { ...properties, ...requirements.properties }, required: [...base.required, ...requirements.required] };
-      if (!promotion || references.length === 0) return plain;
-      return { properties, required: base.required, if: { properties: { admission_assessments: { contains: {
-          properties: { predicate: { const: promotion.predicate }, status: { const: 'confirmed' },
-            references: { const: references } }, required: ['predicate', 'status', 'references'],
-        } } }, required: ['admission_assessments'] },
-        then: assessmentRequirement(requiredAssessments(finding, subject, true)), else: requirements,
-      };
-    });
-  });
-  return { ...VALIDATE_SCHEMA, properties: { validations: { type: 'array', items: { ...base, required: ['finding_id'], anyOf: variants } } } };
-}
+const VALIDATE_SCHEMA = { type: 'object', properties: { validations: { type: 'array', items: {
+  ...VERDICT_SCHEMA, properties: { finding_id: { type: 'string' }, ...VERDICT_SCHEMA.properties,
+    site_confirmations: VALIDATION_RETURN_PROPERTIES.site_confirmations },
+  required: ['finding_id', ...VERDICT_SCHEMA.required],
+} } }, required: ['validations'], additionalProperties: false };
+function validateSchema() { return VALIDATE_SCHEMA; }
 function validatorAudit(audit, label, result, rejections) {
   const raw = JSON.stringify(result ?? null);
   const record = { label, raw: raw.slice(0, 8192), raw_characters: raw.length, truncated: raw.length > 8192,
@@ -5454,16 +4934,9 @@ async function validateStage(ctx, input) {
       const matches = entries.filter((entry) => entry.id === finding.id);
       if (!matches.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons: [list ? 'missing_entry' : 'malformed_return'] });
       for (const entry of matches) {
-        const previous = accepted.get(finding.id);
-        const missing = previous ? missingAssessments(finding, previous) : [];
-        const replacements = (Array.isArray(entry.admission_assessments) ? entry.admission_assessments : [])
-          .filter((assessment) => missing.includes(assessment?.predicate));
-        const merged = previous && label.startsWith('validate-retry-') ? { ...previous,
-          admission_assessments: [...(Array.isArray(previous.admission_assessments) ? previous.admission_assessments : []).filter((assessment) =>
-            !replacements.some((replacement) => replacement?.predicate === assessment?.predicate)), ...replacements] } : entry;
-        const reasons = validationRejections(finding, merged);
+        const reasons = matches.length === 1 ? verdictRejections(entry) : ['duplicate_entry'];
         if (reasons.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons });
-        if (reasons.every((reason) => reason.startsWith(MISSING_ASSESSMENT))) accepted.set(finding.id, merged);
+        else accepted.set(finding.id, entry);
       }
     }
     validatorAudit(audit, label, res, rejections);
@@ -5473,7 +4946,7 @@ async function validateStage(ctx, input) {
   const results = await ctx.parallel(batches.map((batch, idx) => dispatch(batch, `validate-batch-${idx}`)));
   dispatched += batches.length;
   const mainLists = batches.map((batch, idx) => consume(results[idx], batch, `validate-batch-${idx}`));
-  const pending = findings.filter((finding) => validationRejections(finding, accepted.get(finding.id)).length);
+  const pending = findings.filter((finding) => verdictRejections(accepted.get(finding.id)).length);
   if (pending.length) {
     const retries = [];
     const retrySize = effectiveValidationRetrySize(limits, findings.length);
@@ -5483,17 +4956,17 @@ async function validateStage(ctx, input) {
     retries.forEach((batch, idx) => consume(retried[idx], batch, `validate-retry-${idx}`));
   }
   batches.forEach((batch, idx) => {
-    const unscored = batch.filter((finding) => !accepted.has(finding.id));
-    if (unscored.length) {
-      const reasons = [...new Set(unscored.flatMap((finding) => terminalRejections.get(String(finding.id).slice(0, 128)) || []))]
-        .filter((reason) => !reason.startsWith(MISSING_ASSESSMENT));
-      let problem = mainLists[idx] ? 'omitted scores' : 'returned null/malformed';
+    const unanswered = batch.filter((finding) => !accepted.has(finding.id));
+    if (unanswered.length) {
+      const reasons = [...new Set(unanswered.flatMap((finding) => terminalRejections.get(String(finding.id).slice(0, 128)) || []))];
+      let problem = mainLists[idx] ? 'omitted verdicts' : 'returned null/malformed';
       if (reasons.some((reason) => !['missing_entry', 'malformed_return'].includes(reason))) {
         problem = `returned invalid/incomplete entries (${reasons.join(', ')})`;
       }
-      gaps.push(`validate-batch-${idx}: validator ${problem} — ${unscored.length} finding(s) unvalidated (validation=skipped, held back to the report)`);
+      gaps.push(`validate-batch-${idx}: validator ${problem} — ${unanswered.length} finding(s) unvalidated (validation=skipped, sent to blind challenge)`);
     }
   });
+  await checkRefutations(ctx, inp, [...accepted.values()], 'validate-refutations');
   const { adjustedCount } = applyValidations(findings, [...accepted.values()]);
   let skipped = 0;
   for (const f of findings) {
@@ -5513,35 +4986,16 @@ async function validateStage(ctx, input) {
     },
   };
 }
-function validatePrompt(inp, batch, accepted) {
-  const ctxLine = inp.contextLine || '';
-  const block = batch.map((f) => {
-    const range = !locationAllows(f, 'sourceLink') ? 'location unconfirmed' : f.line_end != null && f.line_end !== f.line_start
-      ? `${f.line_start}-${f.line_end}`
-      : `${f.line_start != null ? f.line_start : '?'}`;
-    const ev = f.evidence ? ` | evidence: ${f.evidence}` : '';
-    const sites = (f.resolved_sites || []).filter((site) => locationAllows(site, 'sourceLink'));
-    const requests = sites.length ? ` | site_requests: ${JSON.stringify(sites)}` : '';
-    return `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${range} — ${f.description || ''}${ev}${requests} | admission_context: ${JSON.stringify(admissionContext(f, accepted.get(f.id)))}`;
-  }).join('\n');
-  if (batch.every((finding) => accepted.has(finding.id))) return `${ctxLine}Supply missing admission assessments in admission_context; correctness, reachability and policy_subject are fixed. References name inspected requests.\nFindings:\n${block}`;
-  return `${ctxLine}Judge correctness and reachability independently of admission evidence or posting value. Classify policy_subject by the claim, regardless of producer or test location. Assess admission_context predicates; references name inspected requests. Resolved locations and confidence alone do not confirm predicates. Assess body_fix_task separately. Confirm site_requests only for the same defect requiring the same correction.\nFindings:\n${block}`;
+function validatePrompt(inp, batch) {
+  const block = batch.map((f) => `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${f.line_start ?? '?'} — ${f.description || ''}${f.evidence ? ` | evidence: ${f.evidence}` : ''}${f.resolved_sites?.length ? ` | site_requests: ${JSON.stringify(f.resolved_sites)}` : ''}`).join('\n');
+  return `${inp.contextLine || ''}Return factual claim and consequence separately using the schema. Confirm additional sites only for the same correction.\nFindings:\n${block}`;
 }
 function filterStage(input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
   const findings = inp.findings || [];
-  const config = inp.reviewConfig || {};
-  const exclusionPatterns = inp.exclusionPatterns || [];
-  return applyFilterPipeline(findings, config, exclusionPatterns, inp.generatedAt);
+  return applyFilterPipeline(findings, inp.generatedAt);
 }
-const CHALLENGE_SCHEMA = {
-  type: 'object',
-  properties: {
-    confidence_claim_is_correct: { type: 'number' },
-    justification: { type: 'string' },
-  },
-  required: ['confidence_claim_is_correct'],
-};
+const CHALLENGE_SCHEMA = VERDICT_SCHEMA;
 function blindChallengeFields(finding, diffPath) {
   return {
     title: finding.title || '',
@@ -5583,7 +5037,8 @@ async function challengeStage(ctx, input) {
     };
   }
   const model = modelFor('code-gauntlet:challenger', policy);
-  const actionable = (f) => hasAdmission(f) && f.admission.status === 'admitted' && incompleteVetting(f).length === 0;
+  const actionable = (f) => (f.verdict_route === 'not-established' || (hasAdmission(f) && f.admission.status === 'admitted'))
+    && f.origin !== 'unknown';
   const terminal = findings.filter((f) => !actionable(f)).map((f) => ({ ...f, challenge: 'admission_terminal' }));
   const ranked = rankFindings(findings.filter(actionable));
   const candidates = ranked.slice(0, cap);
@@ -5601,20 +5056,23 @@ async function challengeStage(ctx, input) {
   const skipped = [];
   results.forEach((res, idx) => {
     const finding = candidates[idx];
-    const rawScore = res && typeof res === 'object' ? (res.confidence_claim_is_correct ?? res.score) : undefined;
-    if (res === null || res === undefined || coerceInt(rawScore, INT_POLICY.validation) === null) {
-      gaps.push(`challenge-${idx}: challenger returned null/unscored — finding ${finding.id} unchallenged (challenge=failed, pipeline-degraded)`);
+    if (verdictRejections(res).length) {
+      gaps.push(`challenge-${idx}: challenger returned no typed verdict — finding ${finding.id} unchallenged`);
       skipped.push({ ...finding, challenge: 'failed' });
       return;
     }
-    challenges.push({ id: finding.id, score: rawScore, justification: res.justification });
+    challenges.push({ ...res, id: finding.id });
     challenged.push({ ...finding, challenge: 'survived' });
   });
   for (const f of overflow) skipped.push({ ...f, challenge: 'capped' });
   if (overflow.length) {
     gaps.push(`challenge: ${overflow.length} finding(s) over challengeCap=${cap} left unchallenged (challenge=capped, pipeline-degraded)`);
   }
+  await checkRefutations(ctx, inp, challenges, 'challenge-refutations');
   const applied = applyChallenges(challenged, challenges);
+  const unresolved = applied.findings.filter((f) => f.verdict_route === 'not-established');
+  skipped.push(...unresolved);
+  applied.findings = applied.findings.filter((f) => f.verdict_route !== 'not-established');
   const unverified = rankFindings(skipped);
   return {
     findings: [...applied.findings, ...terminal],
@@ -6043,16 +5501,10 @@ function resolveRemovedTestsArgs(args) {
 }
 const ARGS_VERSION = 1;
 const NONCE_RE = /^[A-Za-z0-9._-]+$/;
-const NULLABLE_TOP_LEVEL = deepFreeze(['reviewConfig', 'exclusionPatterns', 'reviewMd', 'exclusionsText', 'delivery', 'checkpoints',
+const NULLABLE_TOP_LEVEL = deepFreeze(['delivery', 'checkpoints',
   'persist', 'scopeAnswer']);
 const RISK_LEVELS = deepFreeze(['low', 'medium', 'high']);
 const NULL_TOLERANCE_CONSEQUENCE = deepFreeze({
-  reviewConfig: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with ' +
-    'no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
-  exclusionPatterns: 'no exclusion patterns are applied, so the delivered findings can differ',
-  reviewMd: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with ' +
-    'no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
-  exclusionsText: 'no exclusion patterns are applied, so the delivered findings can differ',
   delivery: 'delivery falls back to tier "all" with no PR identity',
   'delivery.tier': 'delivery falls back to tier "all", so a narrowing intent is lost',
   'delivery.prIdentity': 'the post-review artifact is persisted as a bare findings array instead of the post_review-ready wrapper',
@@ -6069,8 +5521,6 @@ const LIMIT_KEYS = deepFreeze([
 const ARGS_SHAPES = deepFreeze({
   pathFields: ['repoRoot', 'outputDir', 'headShaShort', 'diffPath', 'pluginRoot'],
   riskFields: ['path', 'risk'],
-  reviewMdFields: ['path', 'text', 'checksum'],
-  scopeLayerFields: ['dir', 'ignore', ...REVIEW_SETTING_KEYS],
   scopeFields: ['requested', 'kind', 'since', 'commits', 'detector'],
   scopeKinds: ['full', 'incremental'],
   detectorFields: ['previously_reviewed', 'sha_resolvable', 'head_advanced', 'sha_is_ancestor', 'incremental_safe', 'error'],
@@ -6085,6 +5535,7 @@ const ARGS_FIELD_CHECKS = deepFreeze({
       message: `invalid {label}: {value} (expected distinct values from ${MODEL_ALIASES.join(', ')})` },
   ],
   changed: [
+    { key: 'unsupportedReviewConfig', domain: 'boolean', message: 'unsupportedReviewConfig must be a boolean when present' },
     { key: 'measurementTrace', domain: 'boolean', message: 'measurementTrace must be a boolean when present' },
     { key: 'changedFiles', domain: 'array', message: 'changedFiles must be an array of repo-relative paths' },
     { key: 'changedLines', domain: 'number', message: 'changedLines must be a number' },
@@ -6095,14 +5546,6 @@ const ARGS_FIELD_CHECKS = deepFreeze({
     boundMessage: '{label} is {value}, above the {maximum} ceiling '
       + '\u2014 that is not a review context, it is a mis-measurement',
   })),
-  review: REVIEW_SETTING_KEYS.map((key) => key === 'severity_threshold'
-    ? { key, presence: 'in', values: SEVERITY_ORDER, separator: '|',
-      message: '{label} must be one of {values} when present (pre-parsed REVIEW.md enum)' }
-    : { key, presence: 'in', domain: 'integer', minimum: 0, maximum: 100,
-      message: '{label} must be an integer from 0 through 100 when present' }),
-  exclusions: [
-    { key: 'exclusionsText', domain: 'string', message: 'exclusionsText must be a string when present' },
-  ],
   persist: [
     { key: 'returnPrimaries', domain: 'boolean', message: 'persist.returnPrimaries must be a boolean when present' },
   ],
@@ -6166,36 +5609,6 @@ function validatePrIdentity(id, errors) {
       for (const extra of field.extraChecks || []) {
         if (!extra.check(value)) errors.push(`delivery.prIdentity.${field.name} ${extra.message}`);
       }
-    }
-  }
-}
-function validatePathSegments(value, label, reviewFile = false) {
-  const errors = [];
-  if (reviewFile) {
-    if (value.startsWith('/')) errors.push(`${label} must be repo-relative (must not start with /)`);
-    if (value.endsWith('/')) errors.push(`${label} must not have a trailing /`);
-  } else if (value.startsWith('/') || value.endsWith('/')) {
-    errors.push(`${label} must not have a leading or trailing /`);
-  }
-  if (value.includes('\\')) errors.push(`${label} must use / separators, not backslashes`);
-  if (CONTROL_RE.test(value)) errors.push(`${label} must not contain a control character`);
-  const segments = value.split('/');
-  if (segments.some((segment) => segment === '')) errors.push(`${label} must not contain an empty path segment`);
-  if (segments.some((segment) => segment === '.' || segment === '..')) errors.push(`${label} must not contain . or .. path segments`);
-  if (reviewFile && segments[segments.length - 1] !== 'REVIEW.md') {
-    errors.push(`${label} must end with exactly REVIEW.md`);
-  }
-  return errors;
-}
-function validateFlatPatterns(value, label, errors, ignore = false) {
-  if (!Array.isArray(value)) {
-    errors.push(`${label} must be an array of flat pattern strings`);
-    return;
-  }
-  for (let i = 0; i < value.length; i++) {
-    if (typeof value[i] !== 'string') {
-      const suffix = ignore ? ' \u2014 parseReviewMd emits strings, never objects' : '';
-      errors.push(`${label}[${i}] must be a flat pattern string (got ${typeof value[i]})${suffix}`);
     }
   }
 }
@@ -6407,93 +5820,6 @@ function validateArgs(args, descriptors = KNOB_REGISTRY) {
   if (args.contextMaxLineChars !== undefined && args.contextLines === undefined) {
     errors.push('contextMaxLineChars requires contextLines — line width alone cannot size a line-offset read plan');
   }
-  if (args.reviewConfig !== undefined) {
-    if (!isPlainObject(args.reviewConfig)) {
-      errors.push('reviewConfig must be an object (the parseReviewMd output shape) when present');
-    } else {
-      const validateLayer = (layer, label, allowDir) => {
-        validateArgsFields(layer, 'review', errors, label);
-        if (layer.ignore !== undefined) validateFlatPatterns(layer.ignore, `${label}.ignore`, errors, true);
-        if (!allowDir) return;
-        if (typeof layer.dir !== 'string' || layer.dir === '') {
-          errors.push(`${label}.dir must be a non-empty string`);
-          return;
-        }
-        errors.push(...validatePathSegments(`${layer.dir}`, `${label}.dir`));
-      };
-      validateLayer(args.reviewConfig, 'reviewConfig', false);
-      if (args.reviewConfig.scopes !== undefined) {
-        if (!Array.isArray(args.reviewConfig.scopes)) {
-          errors.push('reviewConfig.scopes must be an array when present');
-        } else {
-          const seenDirs = new Set();
-          for (let i = 0; i < args.reviewConfig.scopes.length; i++) {
-            const label = `reviewConfig.scopes[${i}]`;
-            const scope = args.reviewConfig.scopes[i];
-            if (!isPlainObject(scope)) {
-              errors.push(`${label} must be a plain object`);
-              continue;
-            }
-            const extra = extraKeys(scope, ARGS_SHAPES.scopeLayerFields, true);
-            if (extra.length > 0) errors.push(`${label} has unexpected key(s): ${extra.join(', ')}`);
-            validateLayer(scope, label, true);
-            if (typeof scope.dir === 'string' && scope.dir !== '') {
-              if (seenDirs.has(scope.dir)) errors.push(`${label}.dir duplicates another scope dir: ${scope.dir}`);
-              seenDirs.add(scope.dir);
-            }
-          }
-        }
-      }
-    }
-  }
-  if (args.exclusionPatterns !== undefined) validateFlatPatterns(args.exclusionPatterns, 'exclusionPatterns', errors);
-  if (args.reviewMd !== undefined) {
-    if (typeof args.reviewMdSetChecksum !== 'string') {
-      errors.push('reviewMdSetChecksum must be a string when reviewMd is present');
-    }
-    if (!Array.isArray(args.reviewMd)) {
-      errors.push('reviewMd must be an array of {path, text, checksum} objects when present');
-    } else {
-      for (let i = 0; i < args.reviewMd.length; i++) {
-        const entry = args.reviewMd[i];
-        if (!isPlainObject(entry)) {
-          errors.push(`reviewMd[${i}] must be an object of the form {path, text, checksum}`);
-          continue;
-        }
-        const extra = extraKeys(entry, ARGS_SHAPES.reviewMdFields, true);
-        if (extra.length > 0) {
-          errors.push(`reviewMd[${i}] has unexpected key(s): ${extra.join(', ')} (only path, text and checksum are allowed)`);
-        }
-        if (typeof entry.path !== 'string' || entry.path === '') {
-          errors.push(`reviewMd[${i}].path must be a non-empty string`);
-        } else {
-          errors.push(...validatePathSegments(entry.path, `reviewMd[${i}].path`, true));
-        }
-        if (entry.checksum !== null && typeof entry.checksum !== 'string') {
-          errors.push(`reviewMd[${i}].checksum must be a string or null`);
-        }
-        if (typeof entry.text !== 'string') {
-          errors.push(`reviewMd[${i}].text must be a string`);
-        }
-      }
-      const hasRootReviewMd = args.reviewMd.some((entry) => (
-        isPlainObject(entry) && entry.path === 'REVIEW.md'
-      ));
-      const hasReviewConfigPath = args.reviewConfigPath != null;
-      if (hasRootReviewMd !== hasReviewConfigPath) {
-        errors.push('reviewMd and reviewConfigPath must agree: reviewConfigPath must be non-null iff reviewMd ' +
-          'contains an entry with path exactly REVIEW.md');
-      }
-    }
-  }
-  validateArgsFields(args, 'exclusions', errors);
-  if (args.reviewMd !== undefined && args.reviewConfig !== undefined) {
-    errors.push('reviewMd and reviewConfig are both present — pass raw reviewMd or pre-parsed reviewConfig, not both (single authority)');
-  }
-  if (args.exclusionsText !== undefined && args.exclusionPatterns !== undefined) {
-    errors.push('exclusionsText and exclusionPatterns are both present — pass raw exclusionsText or ' +
-      'pre-parsed exclusionPatterns, not both (single authority)');
-  }
   if (args.delivery !== undefined) {
     if (!isPlainObject(args.delivery)) {
       errors.push('delivery must be an object of the form { tier } when present');
@@ -6631,52 +5957,8 @@ function validateArgs(args, descriptors = KNOB_REGISTRY) {
         : stamped === expected;
       if (!matches) errors.push(`${descriptor.waistPath} does not match configEcho.${descriptor.key}`);
     }
-    for (const descriptor of descriptors) {
-      if (!descriptor.modes.includes(args.mode)
-        || descriptor.derivedFrom === null
-        || !Object.hasOwn(DERIVED_FROM, descriptor.derivedFrom)) continue;
-      const entry = receiptEntryFor(args, descriptor);
-      if (entry !== null && entry.value !== DERIVED_FROM[descriptor.derivedFrom].fill(args)) {
-        errors.push(`configEcho.${descriptor.key} does not match ${descriptor.derivedFrom}`);
-      }
-    }
   }
   return { ok: errors.length === 0, errors };
-}
-function reviewMdSetChecksum(entries) {
-  return fnv1a32(entries.map((entry) => `${entry.path}\0${entry.checksum || 'null'}`).join('\n'));
-}
-function resolveReviewConfig(A) {
-  const a = A || {};
-  const reviewConfigSource = a.reviewMd !== undefined ? 'reviewMd'
-    : (a.reviewConfig !== undefined ? 'preParsed' : 'none');
-  const exclusionsSource = a.exclusionsText !== undefined ? 'exclusionsText'
-    : (a.exclusionPatterns !== undefined ? 'preParsed' : 'none');
-  let reviewConfig;
-  let reviewMdEntryCount = 0;
-  const gaps = [];
-  if (a.reviewMd !== undefined) {
-    const entries = a.reviewMd.map((entry) => {
-      const text = normalizeReviewText(entry.text);
-      if (entry.checksum === null) {
-        gaps.push(`review_md: ${entry.path} text is unproven (no collector checksum); its settings were applied as stamped`);
-      } else if (fnv1a32(text) !== entry.checksum) {
-        gaps.push(`review_md: ${entry.path} text differs from the collected file (checksum mismatch); its settings were applied as stamped`);
-      }
-      return { ...entry, text };
-    });
-    reviewConfig = buildReviewConfig(entries);
-    reviewMdEntryCount = a.reviewMd.length;
-  } else {
-    reviewConfig = a.reviewConfig || {};
-  }
-  if ((a.reviewMd !== undefined || a.reviewMdSetChecksum !== undefined) &&
-      reviewMdSetChecksum(a.reviewMd || []) !== a.reviewMdSetChecksum) {
-    gaps.push('review_md: stamped entries differ from the collected list (omitted, extra or reordered REVIEW.md); settings were applied as stamped');
-  }
-  const exclusionPatterns = a.exclusionsText !== undefined ? loadExclusions(a.exclusionsText)
-    : (a.exclusionPatterns || []);
-  return { reviewConfig, exclusionPatterns, reviewConfigSource, exclusionsSource, reviewMdEntryCount, gaps };
 }
 // --- entry.js ---
 const REVIEW_TARGET_LABEL = deepFreeze({
@@ -7708,8 +6990,8 @@ function promptSha256(text) {
   return hash.map((word) => (word >>> 0).toString(16).padStart(8, '0')).join('');
 }
 function captureDeliveryReplay(c, args, state) {
-  const { limits, gaps, completed, phaseOutputs, resolvedReview, reviewMdSubtrees, derivedAgentFlags, phaseReached } = state;
-  const saved = deepClone({ limits, gaps, completed, phaseOutputs, resolvedReview, reviewMdSubtrees, derivedAgentFlags, phaseReached });
+  const { limits, gaps, completed, phaseOutputs, derivedAgentFlags, phaseReached } = state;
+  const saved = deepClone({ limits, gaps, completed, phaseOutputs, derivedAgentFlags, phaseReached });
   stripTraceFields(saved);
   const record = { args: deepClone(state.replayArgs || args), pipelineVersion: c.pipelineVersion, state: saved, persistence: [] };
   const dispatch = c.agent;
@@ -7807,8 +7089,7 @@ function compactMethodology(m) {
 }
 async function deliverFromCheckpoint(c, A, state) {
   const policy = A.policy || {};
-  const { limits, gaps, completed, phaseOutputs, measurementTrace, resolvedReview,
-    reviewMdSubtrees, derivedAgentFlags, runPhase, measured } = state;
+  const { limits, gaps, completed, phaseOutputs, measurementTrace, derivedAgentFlags, runPhase, measured } = state;
   const replay = measurementTrace ? captureDeliveryReplay(c, A, state) : null;
   if (replay) c = replay.ctx;
   const { summarize: summaryOut, discover: discoverOut, merge: mergeOut,
@@ -7874,7 +7155,7 @@ async function deliverFromCheckpoint(c, A, state) {
     pluginRoot: A.pluginRoot,
     pipelineVersion: c.pipelineVersion,
     reviewScope: A.reviewScope,
-    hasReviewMd: Array.isArray(A.reviewMd) ? A.reviewMd.length > 0 : A.reviewConfigPath != null,
+    unsupportedReviewConfig: A.unsupportedReviewConfig === true,
     policy,
     deliveryTier: deliveryTier ?? 'all',
     deliveryCap: limits.deliveryCap ?? null,
@@ -7915,10 +7196,6 @@ async function deliverFromCheckpoint(c, A, state) {
       degraded: discoverOut.degraded || [],
       validate: validateOut.stats,
       filter: filterOut.stats,
-      reviewConfigSource: resolvedReview.reviewConfigSource,
-      exclusionsSource: resolvedReview.exclusionsSource,
-      reviewMdEntryCount: resolvedReview.reviewMdEntryCount,
-      reviewMdSubtrees,
       scope: {
         lightEligible: computeLightEligible(A.riskTable, A.changedLines),
         scopeAnswer: A.scopeAnswer !== undefined ? A.scopeAnswer : null,
@@ -8065,20 +7342,12 @@ async function runWith(ctx, rawArgs) {
     gaps.push(...(verifyOut.gaps || []));
     const validateOut = await runPhase('validate', () => validateStage(c, {
       findings: verifyOut.findings || [], limits, policy, contextLine,
+      python: A.python, repoRoot: A.repoRoot, pluginRoot: A.pluginRoot, headShaShort: A.headShaShort,
+      diffPath: A.diffPath, targetKind: A.verify.targetKind,
     }));
     gaps.push(...(validateOut.gaps || []));
-    const resolvedReview = resolveReviewConfig(A);
-    gaps.push(...resolvedReview.gaps);
-    const reviewMdSubtrees = (Array.isArray(resolvedReview.reviewConfig.scopes)
-      ? resolvedReview.reviewConfig.scopes
-      : []).map((scope) => ({
-        dir: scope.dir,
-        matched: (validateOut.findings || []).filter((finding) =>
-          scopeMatchesFile(scope, finding.file)).length,
-      }));
     const filterOut = await runPhase('filter', () => filterStage({
-      findings: (validateOut.findings || []).map((finding) => evaluateAdmission(deepClone(finding))), reviewConfig: resolvedReview.reviewConfig,
-      exclusionPatterns: resolvedReview.exclusionPatterns, generatedAt: A.generatedAt,
+      findings: (validateOut.findings || []).map((finding) => evaluateAdmission(deepClone(finding))), generatedAt: A.generatedAt,
     }));
     gaps.push(...(filterOut.gaps || []));
     await runPhase('challenge', async () => {
@@ -8089,14 +7358,14 @@ async function runWith(ctx, rawArgs) {
       });
       const out = await challengeStage(c, {
         findings: admitted, limits, policy, generatedAt: A.generatedAt, diffPath: A.diffPath,
+        python: A.python, repoRoot: A.repoRoot, pluginRoot: A.pluginRoot, headShaShort: A.headShaShort, targetKind: A.verify.targetKind,
       });
       Object.assign(out, await groupFindings(c, (out.findings || []).filter(isDeliveryCandidate), policy));
       out.eliminated = [...(verifyOut.eliminated || []), ...(filterOut.eliminated || []), ...(out.eliminated || [])];
       return out;
     });
     return await deliverFromCheckpoint(c, A, {
-      limits, gaps, completed, phaseOutputs, measurementTrace, resolvedReview,
-      reviewMdSubtrees, derivedAgentFlags, runPhase, measured, replayArgs,
+      limits, gaps, completed, phaseOutputs, measurementTrace, derivedAgentFlags, runPhase, measured, replayArgs,
       get phaseReached() { return phaseReached; },
     });
   } catch (e) {

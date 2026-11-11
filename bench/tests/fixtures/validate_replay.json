@@ -1,0 +1,359 @@
+{
+  "source": {
+    "run_id": "custom-20261109-154634-90f7ced8",
+    "score_id": "79e154d1b35a43158579e1f414f8dc71",
+    "pr_url": "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/5",
+    "trimmed_finding_ids": [
+      "bug-detector-1",
+      "bug-detector-2",
+      "bug-detector-3",
+      "cross-file-impact-1"
+    ]
+  },
+  "payload": {
+    "args": {
+      "argsVersion": 1,
+      "mode": "headless",
+      "repoRoot": "/frozen/worktree",
+      "outputDir": "/frozen/context",
+      "headShaShort": "5b229316",
+      "nonce": "043ea1775eac5b10",
+      "generatedAt": "2026-11-09T15:58:00Z",
+      "python": "python3",
+      "diffPath": "/frozen/context/code-gauntlet-diff-5b229316.patch",
+      "changedFilesPath": "/frozen/context/code-gauntlet-files-5b229316.json",
+      "removedTests": {
+        "status": "available",
+        "items": [],
+        "omitted": 0,
+        "checksum": "fnv1a32:0x6c377a08"
+      },
+      "riskTable": [
+        {
+          "path": "app/assets/stylesheets/common/base/header.scss",
+          "risk": "medium"
+        },
+        {
+          "path": "app/assets/stylesheets/common/base/topic-post.scss",
+          "risk": "medium"
+        },
+        {
+          "path": "app/assets/stylesheets/common/base/topic.scss",
+          "risk": "medium"
+        },
+        {
+          "path": "app/assets/stylesheets/common/components/badges.css.scss",
+          "risk": "medium"
+        },
+        {
+          "path": "app/assets/stylesheets/common/foundation/mixins.scss",
+          "risk": "medium"
+        }
+      ],
+      "policy": {
+        "tier": "optimized",
+        "subagentModel": null,
+        "provider": "firstParty",
+        "gateway": false,
+        "mappedAliases": []
+      },
+      "configEcho": {
+        "model_tier": {
+          "value": "optimized",
+          "source": "env"
+        },
+        "delivery": {
+          "value": "pr_comments,markdown",
+          "source": "env"
+        },
+        "post_mode": {
+          "value": "dry-run",
+          "source": "env"
+        },
+        "pr_comment_cap": {
+          "value": "25",
+          "source": "env"
+        },
+        "delivery_tier": {
+          "value": "all",
+          "source": "env"
+        },
+        "draft_policy": {
+          "value": "review",
+          "source": "env"
+        },
+        "reviewed_policy": {
+          "value": "full",
+          "source": "env"
+        },
+        "pr_not_found_policy": {
+          "value": "error",
+          "source": "env"
+        },
+        "trivial_scope": {
+          "value": "full",
+          "source": "env"
+        }
+      },
+      "measurementTrace": true,
+      "pluginRoot": "/frozen/treatment",
+      "reviewScope": {
+        "kind": "full",
+        "since": null,
+        "commits": null,
+        "detector": {
+          "previously_reviewed": false,
+          "sha_resolvable": false,
+          "head_advanced": false,
+          "sha_is_ancestor": false,
+          "incremental_safe": false,
+          "error": null
+        },
+        "requested": "full"
+      },
+      "limits": {
+        "summarizeBucketSize": 20,
+        "validateBatch": 25,
+        "challengeCap": 40,
+        "verifySliceSize": 25,
+        "maxLineSpan": 100,
+        "deliveryCap": 25
+      },
+      "delivery": {
+        "prIdentity": {
+          "owner": "ai-code-review-evaluation",
+          "repo": "discourse-graphite",
+          "pr_number": 5,
+          "sha_full": "5b229316ee4c661836ed1161139692a3e8527444",
+          "platform": "github",
+          "web_origin": "https://github.com",
+          "title": "Optimize header layout performance with flexbox mixins"
+        },
+        "tier": "all"
+      },
+      "changedFiles": [
+        "app/assets/stylesheets/common/base/header.scss",
+        "app/assets/stylesheets/common/base/topic-post.scss",
+        "app/assets/stylesheets/common/base/topic.scss",
+        "app/assets/stylesheets/common/components/badges.css.scss",
+        "app/assets/stylesheets/common/foundation/mixins.scss"
+      ],
+      "changedLines": 67,
+      "baseBranch": "header-layout-optimization-pre",
+      "contextLines": 279,
+      "contextChars": 9755,
+      "contextMaxLineChars": 303,
+      "persist": {
+        "returnPrimaries": true
+      },
+      "verify": {}
+    },
+    "findings": [
+      {
+        "file": "app/assets/stylesheets/common/base/topic-post.scss",
+        "title": "Small-action padding change leaves mobile negative margin compensating for removed 4em indent",
+        "description": "The description's left padding drops from 0.5em/4em to 1.5% and the element becomes a shrink-wrapped flex item beside the avatar. mobile/topic-post.scss still applies `.small-action-desc .custom-message { margin-left: -40px }`, which offset the old 4em padding. With the new tiny padding, the custom message is pulled about 40px left, over the avatar icon or off the edge. The float:right delete button inside the desc also no longer reaches the row's right edge, because the desc is only as wide as its content.",
+        "severity": "low",
+        "confidence": 33,
+        "anchor": "    padding: 0 1.5%;",
+        "evidence": "mobile/topic-post.scss lines 516-523: `.small-action .small-action-desc { .custom-message { margin-left: -40px; } }` was not updated. The common rule now has `.small-action { display:flex }` and `.small-action-desc { padding: 0 1.5% }`. The small-action.hbs template puts the `<button>` (float:right in common CSS) inside `.small-action-desc`.",
+        "cross_file_refs": [
+          "app/assets/stylesheets/mobile/topic-post.scss",
+          "app/assets/javascripts/discourse/templates/components/small-action.hbs"
+        ],
+        "id": "bug-detector-1",
+        "dimension": "bug",
+        "agent": "bug-detector",
+        "location_status": "confirmed",
+        "claimed_line_start": 280,
+        "origin_dimension": "bug",
+        "trace_id": "043ea1775eac5b10:0:0",
+        "discovery_agent": "bug-detector",
+        "discovery_dimension": "bug",
+        "origin": "surfaced",
+        "line_start": 280,
+        "line_end": 280,
+        "diff_validation": {
+          "in_diff": true
+        },
+        "path_role": "source",
+        "file_added": false,
+        "blame_class": "surfaced",
+        "blame_source": "cross_file_refs",
+        "resolved_references": {},
+        "line": 280,
+        "end_line": 280
+      },
+      {
+        "file": "app/assets/stylesheets/common/foundation/mixins.scss",
+        "title": "align-items mixin emits invalid or incorrect legacy declarations",
+        "description": "`-ms-align-items` is not a real property, so it is dead output. The legacy `-webkit-box-align` and `-ms-flex-align` properties use different keywords from the standard ones: `start`, `end`, `center`, `baseline` and `stretch`, not `flex-start` or `flex-end`. Passing a standard value like flex-start or flex-end would produce invalid declarations for those engines. Current callers pass only center and baseline, which work. The mixin also has inconsistent indentation and trailing whitespace.",
+        "severity": "low",
+        "confidence": 30,
+        "anchor": "@mixin align-items($alignment) {\n    -webkit-box-align: $alignment;\n    -webkit-align-items: $alignment;\n    -ms-flex-align: $alignment;  \n    -ms-align-items: $alignment;",
+        "evidence": "The mixin copies a single $alignment value into -webkit-box-align, -ms-flex-align and the invented -ms-align-items. The legacy property keyword sets differ from the standard align-items set.",
+        "id": "bug-detector-2",
+        "dimension": "bug",
+        "agent": "bug-detector",
+        "location_status": "confirmed",
+        "claimed_line_start": 117,
+        "origin_dimension": "bug",
+        "trace_id": "043ea1775eac5b10:0:1",
+        "discovery_agent": "bug-detector",
+        "discovery_dimension": "bug",
+        "origin": "new",
+        "line_start": 117,
+        "line_end": 121,
+        "diff_validation": {
+          "in_diff": true
+        },
+        "path_role": "source",
+        "file_added": false,
+        "blame_class": "new",
+        "blame_source": "git_blame",
+        "resolved_references": {},
+        "line": 117,
+        "end_line": 121
+      },
+      {
+        "file": "app/assets/stylesheets/common/base/header.scss",
+        "title": "Flexbox applied to a clearfix container makes the clearfix pseudo-elements flex items",
+        "description": "The header template gives `.contents` the `clearfix` class, whose :before/:after pseudo-elements have `content: \" \"; display: table`. Once `.contents` is `display:flex`, those pseudo-elements become flex items. They take part in ordering and `align-items`, and the `:after` item is placed before `.panel` (order 3). Floats on `.title` were removed, but the `.login-button`, `.icons` and `li` floats remain. This is probably harmless visually, but the clearfix is now dead weight and interacts with the `margin-left:auto` layout.",
+        "severity": "low",
+        "confidence": 30,
+        "anchor": "      @include flexbox();\n      @include align-items(center);",
+        "evidence": "header.hbs line 2: `<div class='contents clearfix'>`. helpers.scss `.clearfix:before/:after { display: table; content: \" \"; }`.",
+        "id": "bug-detector-3",
+        "dimension": "bug",
+        "agent": "bug-detector",
+        "location_status": "confirmed",
+        "claimed_line_start": 17,
+        "origin_dimension": "bug",
+        "trace_id": "043ea1775eac5b10:0:2",
+        "discovery_agent": "bug-detector",
+        "discovery_dimension": "bug",
+        "origin": "new",
+        "line_start": 17,
+        "line_end": 18,
+        "diff_validation": {
+          "in_diff": true
+        },
+        "path_role": "source",
+        "file_added": false,
+        "blame_class": "new",
+        "blame_source": "git_blame",
+        "resolved_references": {},
+        "line": 17,
+        "end_line": 18
+      },
+      {
+        "file": "app/assets/stylesheets/common/base/topic-post.scss",
+        "title": "Removing small-action-desc left padding leaves mobile -40px custom-message offset uncompensated",
+        "description": "The common rule replaced `padding: 0.5em 0 0.5em 4em` with `padding: 0 1.5%`. The untouched mobile override `.small-action .small-action-desc .custom-message { margin-left: -40px }` was written to offset that 4em left padding. With only about 1.5% padding now, the custom message is pulled left past the content box, under or over the icon and possibly off-screen. The mobile override was not updated. The mobile `.small-action .topic-avatar` and `.time-gap .topic-avatar` overrides were also tuned to the old float layout.",
+        "severity": "medium",
+        "confidence": 30,
+        "anchor": "    padding: 0 1.5%;",
+        "evidence": "mobile/topic-post.scss:516-523 keeps `.custom-message { margin-left: -40px; }`. It is in the same `.small-action-desc` scope, and the `padding-top: 0` on `p` is also stale. The base padding that it compensated for was removed in this PR.",
+        "suggestion": "Remove or retune the mobile `.custom-message` negative margin, and re-check the mobile `.small-action` and `.time-gap` avatar margins against the new flex layout.",
+        "affected_consumers": [
+          "app/assets/stylesheets/mobile/topic-post.scss",
+          "app/assets/javascripts/discourse/templates/components/small-action.hbs"
+        ],
+        "id": "cross-file-impact-1",
+        "dimension": "cross_file_impact",
+        "agent": "cross-file-impact",
+        "location_status": "relocated",
+        "claimed_line_start": 279,
+        "claimed_line_end": 280,
+        "origin_dimension": "cross_file_impact",
+        "trace_id": "043ea1775eac5b10:2:0",
+        "discovery_agent": "cross-file-impact",
+        "discovery_dimension": "cross_file_impact",
+        "origin": "new",
+        "line_start": 280,
+        "line_end": 280,
+        "diff_validation": {
+          "in_diff": true
+        },
+        "path_role": "source",
+        "file_added": false,
+        "blame_class": "new",
+        "blame_source": "git_blame",
+        "resolved_references": {},
+        "line": 280,
+        "end_line": 280
+      }
+    ],
+    "limits": {
+      "summarizeBucketSize": 20,
+      "validateBatch": 25,
+      "challengeCap": 40,
+      "verifySliceSize": 25,
+      "maxLineSpan": 100,
+      "deliveryCap": 25
+    }
+  },
+  "dispatches": [
+    {
+      "options": {
+        "label": "validate-batch-0"
+      },
+      "result": {
+        "validations": [
+          {
+            "finding_id": "bug-detector-1",
+            "reachability": "current",
+            "justification": "Inspected code",
+            "claim": "confirmed",
+            "consequence": "present_failure"
+          },
+          {
+            "finding_id": "bug-detector-2",
+            "reachability": "future_change_only",
+            "justification": "Inspected code",
+            "claim": "confirmed",
+            "consequence": "no_practical_effect"
+          },
+          {
+            "finding_id": "bug-detector-3",
+            "reachability": "uncertain",
+            "justification": "Inspected code",
+            "claim": "confirmed",
+            "consequence": "latent",
+            "latent_condition": "Add a caller"
+          },
+          {
+            "finding_id": "cross-file-impact-1",
+            "reachability": "current",
+            "justification": "Inspected code",
+            "claim": "not_established",
+            "consequence": "present_failure",
+            "missing_fact": "Whether the external caller passes zero"
+          }
+        ]
+      }
+    }
+  ],
+  "expected": [
+    {
+      "id": "bug-detector-1",
+      "passes_filter": true,
+      "filter_reason": "passed"
+    },
+    {
+      "id": "cross-file-impact-1",
+      "passes_filter": false,
+      "filter_reason": "passed"
+    },
+    {
+      "id": "bug-detector-2",
+      "passes_filter": false,
+      "filter_reason": "passed"
+    },
+    {
+      "id": "bug-detector-3",
+      "passes_filter": true,
+      "filter_reason": "passed"
+    }
+  ]
+}

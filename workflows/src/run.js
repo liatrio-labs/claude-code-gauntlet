@@ -9,10 +9,9 @@ import { verifyStage } from './verifyStage.js';
 import { FINDING_TEXT_FIELD_NAMES, FINDING_REWRITE_EXEMPT_FIELDS, conditionalSchemaActive } from './registry.js';
 import { mentionsPreparedHostRoot, prepareHostRootPatterns, rewritePreparedRepoRoot, safeFindingLabel } from './paths.js';
 import { normalizeArgsReport, nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys, validateArgs } from './args.js';
-import { resolveReviewConfig, resolveRemovedTestsArgs } from './args.js';
+import { resolveRemovedTestsArgs } from './args.js';
 import { entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE } from './entry.js';
-import { computeLightEligible } from './knobs.js';
-import { scopeMatchesFile } from './reviewConfig.js';
+import { computeLightEligible, configEchoValue } from './knobs.js';
 import { renderReport, renderPublicSummary } from './renderReport.js';
 import { writeArtifacts } from './persist.js';
 import { applyChallengeReplayBelt, normalizePhaseFindings, buildResumeCheckpoints, checkpointDiscardGap } from './checkpoints.js';
@@ -112,8 +111,7 @@ export function compactMethodology(m) {
 
 export async function deliverFromCheckpoint(c, A, state) {
   const policy = A.policy || {};
-  const { limits, gaps, completed, phaseOutputs, measurementTrace, resolvedReview,
-    reviewMdSubtrees, derivedAgentFlags, runPhase, measured } = state;
+  const { limits, gaps, completed, phaseOutputs, measurementTrace, derivedAgentFlags, runPhase, measured } = state;
   const replay = measurementTrace ? captureDeliveryReplay(c, A, state) : null;
   if (replay) c = replay.ctx;
   const { summarize: summaryOut, discover: discoverOut, merge: mergeOut,
@@ -185,7 +183,7 @@ export async function deliverFromCheckpoint(c, A, state) {
     pluginRoot: A.pluginRoot,
     pipelineVersion: c.pipelineVersion,
     reviewScope: A.reviewScope,
-    hasReviewMd: Array.isArray(A.reviewMd) ? A.reviewMd.length > 0 : A.reviewConfigPath != null,
+    unsupportedReviewConfig: A.unsupportedReviewConfig === true,
     policy,
     deliveryTier: deliveryTier ?? 'all',
     deliveryCap: limits.deliveryCap ?? null,
@@ -234,12 +232,6 @@ export async function deliverFromCheckpoint(c, A, state) {
       degraded: discoverOut.degraded || [],
       validate: validateOut.stats,
       filter: filterOut.stats,
-      // Provenance needs labels and counts without returning document contents.
-      // Report this run's provenance because replayed filter statistics can describe different inputs.
-      reviewConfigSource: resolvedReview.reviewConfigSource,
-      exclusionsSource: resolvedReview.exclusionsSource,
-      reviewMdEntryCount: resolvedReview.reviewMdEntryCount,
-      reviewMdSubtrees,
       // Echo the derived decision so readers can verify scope without recomputing it.
       scope: {
         lightEligible: computeLightEligible(A.riskTable, A.changedLines),
@@ -418,22 +410,13 @@ export async function runWith(ctx, rawArgs) {
 
     const validateOut = await runPhase('validate', () => validateStage(c, {
       findings: verifyOut.findings || [], limits, policy, contextLine,
+      python: A.python, repoRoot: A.repoRoot, pluginRoot: A.pluginRoot, headShaShort: A.headShaShort,
+      diffPath: A.diffPath, targetKind: A.verify.targetKind,
     }));
     gaps.push(...(validateOut.gaps || []));
 
-    const resolvedReview = resolveReviewConfig(A);
-    // Keep input disclosures outside phase outputs so checkpoint replay cannot duplicate them.
-    gaps.push(...resolvedReview.gaps);
-    const reviewMdSubtrees = (Array.isArray(resolvedReview.reviewConfig.scopes)
-      ? resolvedReview.reviewConfig.scopes
-      : []).map((scope) => ({
-        dir: scope.dir,
-        matched: (validateOut.findings || []).filter((finding) =>
-          scopeMatchesFile(scope, finding.file)).length,
-      }));
     const filterOut = await runPhase('filter', () => filterStage({
-      findings: (validateOut.findings || []).map((finding) => evaluateAdmission(deepClone(finding))), reviewConfig: resolvedReview.reviewConfig,
-      exclusionPatterns: resolvedReview.exclusionPatterns, generatedAt: A.generatedAt,
+      findings: (validateOut.findings || []).map((finding) => evaluateAdmission(deepClone(finding))), generatedAt: A.generatedAt,
     }));
     gaps.push(...(filterOut.gaps || []));
 
@@ -446,14 +429,14 @@ export async function runWith(ctx, rawArgs) {
       const out = await challengeStage(c, {
         // Shared context would weaken the challenger's independent check, so its prompt contains only the claim and location.
         findings: admitted, limits, policy, generatedAt: A.generatedAt, diffPath: A.diffPath,
+        python: A.python, repoRoot: A.repoRoot, pluginRoot: A.pluginRoot, headShaShort: A.headShaShort, targetKind: A.verify.targetKind,
       });
       Object.assign(out, await groupFindings(c, (out.findings || []).filter(isDeliveryCandidate), policy));
       out.eliminated = [...(verifyOut.eliminated || []), ...(filterOut.eliminated || []), ...(out.eliminated || [])];
       return out;
     });
     return await deliverFromCheckpoint(c, A, {
-      limits, gaps, completed, phaseOutputs, measurementTrace, resolvedReview,
-      reviewMdSubtrees, derivedAgentFlags, runPhase, measured, replayArgs,
+      limits, gaps, completed, phaseOutputs, measurementTrace, derivedAgentFlags, runPhase, measured, replayArgs,
       get phaseReached() { return phaseReached; },
     });
   } catch (e) {

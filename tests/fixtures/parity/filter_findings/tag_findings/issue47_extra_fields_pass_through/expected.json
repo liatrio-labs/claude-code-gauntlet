@@ -1,6 +1,6 @@
 {
-  "main_count": 2,
-  "suggestion_count": 0,
+  "main_count": 0,
+  "suggestion_count": 2,
   "tagged": [
     {
       "agent": "test-analyzer",
@@ -20,8 +20,8 @@
       "line_start": 67,
       "location_status": "unconfirmed",
       "origin": "new",
-      "report_destination": "main",
-      "report_tag": "main",
+      "report_destination": "suggestion",
+      "report_tag": "suggestion",
       "severity": "high",
       "suggestion": "Mock the gateway to raise PaymentGatewayError and assert the transaction is rolled back.",
       "title": "Missing test for the payment failure rollback path"
@@ -40,8 +40,8 @@
       "line_start": 112,
       "location_status": "confirmed",
       "origin": "new",
-      "report_destination": "main",
-      "report_tag": "main",
+      "report_destination": "suggestion",
+      "report_tag": "suggestion",
       "severity": "medium",
       "spec_text": "A request failing schema validation MUST return 422 Unprocessable Entity.",
       "suggestion": "Return a 422 with the validation detail instead of a 200.",

@@ -105,7 +105,7 @@ export const SEVERITY_ORDER = deepFreeze(['critical', 'high', 'medium', 'low']);
 // Use full schema fragments for arrays because the host requires items; scalar fields can use type shorthand.
 // Verification stamps origin, so discovery does not require it.
 export const FINDING_PROP_TYPES = deepFreeze({
-  // Numeric confidence prevents consensus boosts from concatenating strings; resumed findings still need coercion.
+  // Discovery confidence is retained for older artifact consumers, never for routing or ranking.
   id: 'string', file: 'string', line_start: 'number', line_end: 'number',
   title: 'string', description: 'string', severity: 'string', confidence: 'number',
   dimension: 'string', origin: 'string', evidence: 'string',
@@ -198,7 +198,7 @@ export const DIMENSIONS = deepFreeze([
       production_defect: { required: [], predicates: ['present_defect'], phase: 'semantic', dimension: 'bug', core: true, tier: 'main' },
       additional_case: { required: [], predicates: [], phase: 'deterministic', defaultDisposition: 'report_only', tier: 'suggestion' },
     } },
-    // Bound the impact scale at dispatch; confidence remains unbounded here because runtime validators adjust it.
+    // Bound the impact scale at dispatch.
     schemaExtra: {
       criticality: { type: 'number', minimum: 1, maximum: 10, description: 'Impact of the untested behavior on a 1 to 10 scale.' },
       failure_scenario: { type: 'string', description: 'Concrete input or condition and the failure it exposes.' },
@@ -296,7 +296,37 @@ const ASSESSMENT = { type: 'object', properties: {
   status: { type: 'string', enum: ['confirmed', 'rejected', 'unresolved'] },
   references: { type: 'array', items: { type: 'string' } },
 }, required: ['predicate', 'status', 'references'], additionalProperties: false };
-export const VALIDATION_RETURN_PROPERTIES = deepFreeze({ ...RECURRENCE_RETURN_PROPERTIES,
+// Truth and consequence are independent axes; only code-checked counter-evidence refutes.
+export const VERDICT_ROUTES = deepFreeze({
+  confirmed: {
+    present_failure: { route: 'posted', status: 'admitted', tier: 'main' },
+    latent: { route: 'posted-latent', status: 'admitted', tier: 'suggestion', severity: 'low' },
+    artifact_defect: { route: 'posted-artifact', status: 'admitted', tier: 'suggestion', severity: 'low', admission: 'kind', demotion: 'consequence' },
+    no_practical_effect: { route: 'report-only', status: 'report_only', tier: 'suggestion' },
+  },
+  refuted: { verified: { route: 'eliminated', status: 'report_only', tier: 'suggestion' },
+    unverified: { route: 'not-established', status: 'held_back', tier: 'main' } },
+  not_established: { route: 'not-established', status: 'held_back', tier: 'main' },
+});
+export const VERDICT_PROPERTIES = deepFreeze({
+  claim: { type: 'string', enum: ['confirmed', 'refuted', 'not_established'] },
+  consequence: { type: 'string', enum: Object.keys(VERDICT_ROUTES.confirmed) },
+  reachability: { type: 'string', enum: ['current', 'future_change_only', 'uncertain'] },
+  justification: { type: 'string', minLength: 1 },
+  refutation_kind: { type: 'string', enum: ['premise_false', 'guard_exists', 'no_reachable_caller'] },
+  refutation: SOURCE_REFERENCE,
+  missing_fact: { type: 'string', minLength: 1 },
+  latent_condition: { type: 'string', minLength: 1 },
+});
+export const VERDICT_SCHEMA = deepFreeze({ type: 'object', properties: VERDICT_PROPERTIES,
+  required: ['claim', 'consequence', 'reachability', 'justification'], additionalProperties: false,
+  allOf: [
+    { if: { properties: { claim: { const: 'refuted' } }, required: ['claim'] }, then: { required: ['refutation_kind', 'refutation'] } },
+    { if: { properties: { claim: { const: 'not_established' } }, required: ['claim'] }, then: { required: ['missing_fact'] } },
+    { if: { properties: { consequence: { const: 'latent' } }, required: ['consequence'] }, then: { required: ['latent_condition'] } },
+  ],
+});
+export const VALIDATION_RETURN_PROPERTIES = deepFreeze({ ...RECURRENCE_RETURN_PROPERTIES, ...VERDICT_PROPERTIES,
   policy_subject: { type: 'string', enum: Object.keys(POLICY_SUBJECTS) },
   admission_assessments: { type: 'array', items: ASSESSMENT },
 });
@@ -429,6 +459,7 @@ export const PIPELINE_FINDING_FIELDS = deepFreeze([
   'agent', 'body', 'line', 'end_line', 'verified', 'validation', 'challenge',
   'validation_justification', 'challenge_justification', 'elimination_reason',
   'original_confidence', 'validator_confidence', 'reachability', 'challenge_score',
+  'verdict', 'validator_verdict', 'challenge_verdict', 'verdict_route', 'refutation_check',
   'challenge_contested', 'severity_downgraded', 'original_severity',
   'report_destination', 'report_tag', 'eliminated_by', 'replay_belt',
   'contested', 'contestation_drop', 'contestation_reason', 'demoted_by', 'demotion_reason',
@@ -542,15 +573,10 @@ export const LIGHT_SCOPE_MAX_CHANGED_LINES = 50;
 export const TRUSTED_SCRIPT_BASENAMES = deepFreeze({
   assemble: 'assemble_artifacts.py',
   verify: 'verify_findings.py',
+  refutations: 'check_refutations.py',
 });
 
 export const FIELD_RENAMES = deepFreeze({ body: 'description', line: 'line_start', blame_tag: 'origin' });
-
-export const REVIEW_SETTING_KEYS = deepFreeze([
-  'confidence_threshold',
-  'security_min_confidence',
-  'severity_threshold',
-]);
 
 export const INJECTION_STRIPPED_PROSE_FIELDS = deepFreeze(['suggestion', 'claude_md_rule', 'spec_text']);
 
@@ -578,7 +604,6 @@ export const KNOB_VOCAB = deepFreeze({
   interactive: ['interactive'],
   envDefault: ['env', 'default'],
   fixed: ['fixed'],
-  envReviewMdDefault: ['env', 'review_md', 'default'],
   discovery: ['discovery'],
   modelTiers: ['optimized'],
   deliveryChannels: ['chat', 'pr_comments', 'markdown'],
@@ -586,7 +611,6 @@ export const KNOB_VOCAB = deepFreeze({
   draftPolicies: ['review', 'skip'],
   reviewedPolicies: ['incremental', 'full', 'skip'],
   prNotFoundPolicies: ['local', 'error'],
-  reviewMdValues: ['present', 'absent'],
   receiptEntryKeys: ['value', 'source'],
 });
 

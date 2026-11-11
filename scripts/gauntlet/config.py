@@ -134,13 +134,9 @@ def _invalid_message(
     value: object,
     mode: str,
     *,
-    review_value: bool = False,
     values_override: list[str] | None = None,
 ) -> str:
-    if review_value:
-        name = "REVIEW.md default_delivery"
-    else:
-        name = str(row.get("env") or row.get("key") or "configuration")
+    name = str(row.get("env") or row.get("key") or "configuration")
     return (
         f"HEADLESS CONFIG ERROR: {name}={_error_value(value)} not in "
         f"{_rule_display(row.get('rule'), mode, values_override)}"
@@ -194,7 +190,6 @@ def serialize_receipt(
 def resolve(
     mode: str,
     environ: Mapping[str, str],
-    review_md_text: str | None,
     target: str | None,
     *,
     registry: Sequence[Mapping[str, Any]] | None = None,
@@ -205,7 +200,6 @@ def resolve(
     if target not in {None, "pr", "mr", "local"}:
         raise ResolverSetupError(f"unsupported target: {target}")
 
-    review_value = parse_default_delivery(review_md_text)
     config_echo: dict[str, ConfigEchoEntry] = {}
     resolved: dict[str, object] = {}
     for row in rows:
@@ -213,8 +207,6 @@ def resolve(
             continue
         key = row.get("key")
         if not isinstance(key, str):
-            continue
-        if row.get("derivedFrom") is not None:
             continue
         default = _default_for(row, mode)
         if default is None:
@@ -228,16 +220,6 @@ def resolve(
             # Interactive model pins validate without changing the fixed source.
             if "env" in row.get("allowedSources", {}).get(mode, []):
                 value, source = env_value, "env"
-        elif (
-            review_value is not None
-            and row.get("reviewMdKey") is not None
-            and "review_md" in row.get("allowedSources", {}).get(mode, [])
-        ):
-            if not matches_rule(row.get("rule"), review_value, mode):
-                raise ResolverError(
-                    _invalid_message(row, review_value, mode, review_value=True)
-                )
-            value, source = review_value, "review_md"
 
         selected_rule = _selected_rule(row.get("rule"), mode)
         selected_values = (
@@ -255,7 +237,6 @@ def resolve(
                     row,
                     value,
                     mode,
-                    review_value=source == "review_md",
                     values_override=allowed,
                 )
             )
@@ -315,8 +296,6 @@ def render_block(
         key = row.get("key")
         if not isinstance(key, str):
             continue
-        if row.get("derivedFrom") is not None and key not in config_echo:
-            continue
         entry = config_echo.get(key) if isinstance(config_echo, Mapping) else None
         entry_map = entry if isinstance(entry, Mapping) else None
         valid = (
@@ -334,43 +313,6 @@ def render_block(
         f"  plugin_root={receipt_safe(identity.get('plugin_root'))} (resolved)"
     )
     return "\n".join(lines)
-
-
-def parse_default_delivery(text: str | None) -> str | None:
-    if not isinstance(text, str):
-        return None
-    body = _default_delivery_body(re.split(r"\r\n|\r|\n", text))
-    if body is None:
-        return None
-    cleaned = re.sub(r"<!--.*?-->", "", "\n".join(body), flags=re.DOTALL)
-    candidate = next(
-        (line.strip() for line in re.split(r"\r\n|\r|\n", cleaned) if line.strip()),
-        None,
-    )
-    if candidate is None or not _CANDIDATE_RE.fullmatch(candidate):
-        return None
-    return candidate
-
-
-def _default_delivery_body(lines: Sequence[str]) -> list[str] | None:
-    start = next(
-        (
-            index
-            for index, line in enumerate(lines)
-            if re.fullmatch(r"## Default Delivery[ \t]*", line)
-        ),
-        None,
-    )
-    if start is None:
-        return None
-    body: list[str] = []
-    for line in lines[start + 1 :]:
-        if re.match(r"^#{1,6}[ \t]", line) or re.match(
-            r"^[ \t]{0,3}(?:`{3,}|~{3,})", line
-        ):
-            break
-        body.append(line)
-    return body
 
 
 def _git_repo_root(cwd: str) -> str:
@@ -398,16 +340,6 @@ def read_pipeline_version(plugin_root: str) -> str:
     return match.group(2)
 
 
-def probe_review_md(repo_root: str) -> str | None:
-    path = os.path.join(repo_root, "REVIEW.md")
-    if not os.path.isfile(path):
-        return None
-    try:
-        return read_text(path)
-    except OSError as exc:
-        raise ResolverSetupError(f"cannot read root REVIEW.md: {exc}") from exc
-
-
 def build_parser() -> Parser:
     parser = Parser(
         prog="resolve_config",
@@ -433,13 +365,12 @@ def _handle(args: argparse.Namespace) -> int:
             raise ResolverSetupError("plugin root mismatch")
         repo_root = _git_repo_root(cwd)
         version = read_pipeline_version(plugin_root)
-        review_text = probe_review_md(repo_root)
         mode = (
             "headless"
             if os.environ.get("CODE_GAUNTLET_HEADLESS") == "1"
             else "interactive"
         )
-        result = resolve(mode, os.environ, review_text, args.target)
+        result = resolve(mode, os.environ, args.target)
         try:
             identity: RuntimeIdentity = {
                 "pipeline_version": version,

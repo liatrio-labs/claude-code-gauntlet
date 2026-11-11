@@ -6,11 +6,11 @@
       "description": "alpha\ufeffbravo\ufeffcharlie\ufeffdelta\ufeffecho\ufefffoxtrot\ufeffgolf\ufeffhotel\ufeffindia\ufeffjuliet\ufeffkilo",
       "file": "src/handler.py",
       "id": "WC1",
-      "line_start": 8,
-      "severity": "medium",
-      "title": "Terse high-confidence finding",
       "line_end": 8,
-      "location_status": "confirmed"
+      "line_start": 8,
+      "location_status": "confirmed",
+      "severity": "medium",
+      "title": "Terse high-confidence finding"
     }
   ]
 }

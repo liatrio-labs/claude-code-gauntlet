@@ -42,16 +42,16 @@ for (const mode of ['legacy', 'derived', 'return']) test(`trace opt-in preserves
   assert.equal(trace.complete, true);
   const first = trace.versions.find((v) => v.finding.id === 'FILTER');
   assert.equal(first.finding.confidence, 65);
-  assert.ok(trace.versions.some((v) => v.trace_id === first.trace_id && v.finding.confidence === 45));
+  assert.ok(trace.versions.some((v) => v.trace_id === first.trace_id && v.finding.admission?.status === 'report_only'));
   const decisions = trace.snapshots.flatMap((s) => s.decisions);
-  for (const code of ['duplicate_id', 'verify_eliminated', 'threshold', 'challenge_removed', 'challenge_cap', 'validation_skipped', 'delivery_cap']) {
+  for (const code of ['duplicate_id', 'verify_eliminated', 'report_only', 'challenge_cap', 'delivery_cap']) {
     assert.ok(decisions.some((d) => d.reason_code === code), code);
   }
   assert.ok(decisions.every((d) => TRACE_REASONS.includes(d.reason_code)));
   const report = trace.versions.find((v) => v.finding.id === 'REPORT');
   const selection = trace.snapshots.find((s) => s.stage === 'select').decisions.find((d) => d.trace_id === report.trace_id);
   assert.equal(selection.reason_code, 'report_only');
-  assert.deepEqual(selection.detail, { kind: 'additional_case' });
+  assert.deepEqual(selection.detail, { kind: 'ordinary' });
   assert.ok(trace.snapshots.some((s) => s.cap_hit));
 });
 
@@ -171,8 +171,18 @@ test('malformed discovery preserves sibling review with tracing on and off', asy
 test('main_only tier exclusions do not count as a delivery cap hit', async () => {
   const args = validArgs({ measurementTrace: true, delivery: { tier: 'main_only' },
     limits: { deliveryCap: 25 }, persist: { returnPrimaries: true } });
-  const ctx = makeCtx(args, { findings: [makeFinding('MAIN'),
-    makeFinding('SUGGESTION', { dimension: 'comment_accuracy' })] });
+  const ctx = makeCtx(args, { findings: [makeFinding('MAIN'), makeFinding('SUGGESTION')] });
+  const agent = ctx.agent;
+  ctx.agent = async (prompt, dispatch) => {
+    const result = await agent(prompt, dispatch);
+    if (dispatch.label.startsWith('validate-')) for (const row of result.validations) {
+      if (row.finding_id === 'SUGGESTION') Object.assign(row, { consequence: 'latent', latent_condition: 'New caller' });
+    }
+    if (dispatch.label.startsWith('challenge-') && prompt.includes('finding SUGGESTION')) {
+      Object.assign(result, { consequence: 'latent', latent_condition: 'New caller' });
+    }
+    return result;
+  };
   const out = await runWith(ctx, args);
   assert.equal(out.ok, true);
   const trace = JSON.parse(out.measurement.text);

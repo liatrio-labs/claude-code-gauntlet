@@ -56,9 +56,10 @@ export function measurementScenario(mode = 'return', overrides = {}, options = {
     if (/^validate-(batch|retry)-/.test(label)) {
       ctx.calls.push({ prompt, ...dispatch });
       const ids = [...prompt.matchAll(/^- (\S+) \[/gm)].map((m) => m[1]);
-      return { validations: ids.filter((id) => id !== 'SKIP').map((finding_id) => ({ finding_id, policy_subject: 'ordinary',
-        confidence: finding_id === 'FILTER' ? 45 : seed.find((f) => f.id === finding_id)?.confidence ?? 90,
-        ...(finding_id === 'REPORT' ? { admission_assessments: [{ predicate: 'present_defect', status: 'rejected', references: ['primary'] }] } : {}) })) };
+      return { validations: ids.filter((id) => id !== 'SKIP').map((finding_id) => ({ finding_id,
+        claim: 'confirmed', consequence: ['FILTER', 'REPORT'].includes(finding_id) ? 'no_practical_effect' : 'present_failure',
+        reachability: 'current', justification: 'Independent code inspection' })) };
+
     }
     if (label === 'group-findings') {
       ctx.calls.push({ prompt, ...dispatch });
@@ -68,7 +69,8 @@ export function measurementScenario(mode = 'return', overrides = {}, options = {
     }
     if (label.startsWith('challenge-')) {
       ctx.calls.push({ prompt, ...dispatch });
-      return { confidence_claim_is_correct: prompt.includes('finding REMOVE') ? 0 : 90, justification: 'fixed independent check' };
+      if (prompt.includes('finding SKIP')) return { claim: 'not_established', consequence: 'present_failure', reachability: 'uncertain', justification: 'Missing external caller', missing_fact: 'Which external caller supplies zero?' };
+      return { claim: 'confirmed', consequence: prompt.includes('finding REMOVE') ? 'no_practical_effect' : 'present_failure', reachability: 'current', justification: 'fixed independent check' };
     }
     if (label === 'artifact-writer' || label === 'assemble-artifacts') {
       ctx.calls.push({ prompt, ...dispatch });

@@ -229,7 +229,7 @@ This summary describes the change context for the report.
 
 - **Cross-file refs:** {finding.cross_file_refs}
 
-- **Corroborated by** `{corroboration.agent}` (`{corroboration.dimension}`, severity low, tier main, confidence ): {corroboration.title}
+- **Corroborated by** `{corroboration.agent}` (`{corroboration.dimension}`, severity low, tier main): {corroboration.title}
   {corroboration.description}
 
 ### 🟠 High
@@ -271,7 +271,7 @@ These did not clear the full pipeline (a stage was skipped or failed) and carry 
 
 - **Location:** `{finding.file}:10`
 - **Dimension:** {finding.dimension}
-- **Unverified because:** the validator did not score this finding, so it was not skeptically validated; the verify slice could not be proven against the dispatched document; the challenge cap was reached, so this finding was not challenge-verified
+- **Unverified because:** the validator did not establish this finding, so it was not skeptically validated; the verify slice could not be proven against the dispatched document; the challenge cap was reached, so this finding was not challenge-verified
 
 {finding.description}
 
@@ -287,7 +287,7 @@ These did not clear the full pipeline (a stage was skipped or failed) and carry 
 
 - **Location:** `{finding.file}:10`
 - **Dimension:** {finding.dimension}
-- **Unverified because:** the challenger failed or returned no score, so this finding was not challenge-verified
+- **Unverified because:** the challenger failed or returned no typed verdict, so this finding was not challenge-verified
 
 {finding.description}
 
@@ -310,7 +310,6 @@ Resolved config:
   model_tier=optimized (fixed)
   pr_comment_cap=null (default)
   delivery_tier=all (default)
-  review_md=absent (discovery)
   pipeline_version={pipeline_version} (bundle)
   plugin_root=/absolute/path/to/claude-code-gauntlet (resolved)
 ```

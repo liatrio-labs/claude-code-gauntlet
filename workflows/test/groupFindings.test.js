@@ -88,18 +88,17 @@ test('replay filters removed ids after validating the whole grouping reply', () 
   assert.equal(acceptGroupingReply(reply, grouping_ids, []).groups.length, 0);
 });
 
-test('lead ordering uses severity, security, tier, placement, confidence, core, completeness', () => {
+test('lead ordering shares severity, security, origin, tier, placement and stable ties', () => {
   const [a, b] = members().slice(0, 2).map((f) => ({ ...f, disposition: 'deliver' }));
   for (const [left, right] of [
     [{ ...a, severity: 'medium', dimension: 'security' }, b],
     [a, { ...b, dimension: 'security', report_tag: 'suggestion' }],
     [{ ...a, report_tag: 'suggestion' }, b],
     [{ ...a, disposition: 'body' }, b],
-    [{ ...a, confidence: 80 }, b],
-    [{ ...a, dimension: 'comment_accuracy' }, b],
-    [a, { ...b, description: b.description + ' more' }],
+    [{ ...a, origin: 'unknown' }, b],
   ]) assert.equal(chooseGroupLead([left, right]).id, b.id);
-  assert.equal(chooseGroupLead([a, b]).id, a.id);
+  assert.equal(chooseGroupLead([{ ...a, confidence: 0, dimension: 'comment_accuracy' },
+    { ...b, confidence: 100, description: b.description + ' more' }]).id, a.id);
   const singleton = groupDelivery({ severity: 'high', admission: { tier: 'suggestion' } });
   assert.equal(singleton.report_tag, 'suggestion');
   assert.equal(singleton.report_destination, 'suggestion');
@@ -146,7 +145,8 @@ test('challenge checkpoint persists grouping and resume never dispatches it agai
 
 test('group verdict statistics use actual challenge outcomes rather than the pass-through stamp', () => {
   const findings = members();
-  const out = applyChallenges(findings, findings.map((f, i) => ({ id: f.id, score: i === 0 ? 60 : 80 })));
+  const out = applyChallenges(findings, findings.map((f, i) => ({ id: f.id, claim: 'confirmed', consequence: i === 0 ? 'latent' : 'present_failure',
+    reachability: 'current', justification: 'Inspected caller', latent_condition: 'New caller' })));
   assert.ok(out.findings.every((f) => f.challenge === 'survived'));
   const disposed = disposeFindings({ ...out, grouping_reply: reply, grouping_ids: findings.map((f) => f.id) });
   assert.equal(disposed.stats.grouping_verdicts[0].same_challenge_verdict, false);

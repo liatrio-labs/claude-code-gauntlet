@@ -1,63 +1,35 @@
-// Apply validator confidence and reachability updates to findings.
-
-import { INT_POLICY, coerceInt } from './wire.js';
 import { canonicalRange } from './location.js';
-import { matchAssessments } from './admission.js';
-import { VALIDATION_RETURN_PROPERTIES } from './registry.js';
-
-export const REACHABILITY_VALUES = ['current', 'future_change_only', 'uncertain'];
+import { deepClone } from './wire.js';
+import { VERDICT_PROPERTIES } from './registry.js';
+import { verdictRejections, routeVerdict } from './verdict.js';
 
 export function applyValidations(findings, validations) {
-  const findingById = new Map();
+  const byId = new Map();
   for (const finding of findings) {
-    delete finding.sites;
-    delete finding.reachability;
-    for (const field of ['policy_subject', 'admission_assessments', 'admission', 'body_fix_task_eligible', 'effective_test_kind']) delete finding[field];
-    const fid = 'id' in finding ? finding.id : undefined;
-    if (fid !== null && fid !== undefined) findingById.set(fid, finding);
+    for (const field of ['sites', 'verdict', 'validator_verdict', 'verdict_route', 'refutation_check', 'reachability',
+      'policy_subject', 'admission_assessments', 'admission', 'body_fix_task_eligible', 'effective_test_kind',
+      'contested', 'contestation_drop', 'contestation_reason', 'validator_confidence']) delete finding[field];
+    byId.set(finding.id, finding);
   }
-
   let adjustedCount = 0;
   const unmatchedIds = [];
-
   for (const validation of validations) {
-    const vid = 'id' in validation ? validation.id : undefined;
-    if (vid === null || vid === undefined) continue; // missing id -- skipped (warning)
-
-    const rawConf = 'confidence' in validation ? validation.confidence : undefined;
-    if (rawConf === null || rawConf === undefined) continue; // missing confidence -- skipped (warning)
-
-    const parsed = coerceInt(rawConf, INT_POLICY.validation);
-    if (parsed === null) continue; // non-integer confidence -- skipped (warning)
-
-    const newConf = Math.max(0, Math.min(100, parsed));
-
-    const finding = findingById.get(vid);
-    if (finding === undefined) {
-      unmatchedIds.push(vid);
-      continue;
-    }
-
-    if (!('original_confidence' in finding)) {
-      finding.original_confidence = 'confidence' in finding ? finding.confidence : 0;
-    }
-    finding.validator_confidence = newConf;
-    finding.confidence = newConf;
-
-    const justification = 'justification' in validation ? validation.justification : undefined;
-    if (justification) finding.validation_justification = justification;
-    const reachability = 'reachability' in validation ? validation.reachability : undefined;
-    if (REACHABILITY_VALUES.includes(reachability)) finding.reachability = reachability;
-    if (VALIDATION_RETURN_PROPERTIES.policy_subject.enum.includes(validation.policy_subject)) finding.policy_subject = validation.policy_subject;
-    if (Array.isArray(validation.admission_assessments)) finding.admission_assessments = matchAssessments(finding, validation.admission_assessments);
+    if (verdictRejections(validation).length) continue;
+    const finding = byId.get(validation.id);
+    if (!finding) { unmatchedIds.push(validation.id); continue; }
+    const verdict = Object.fromEntries(Object.keys(VERDICT_PROPERTIES).filter((key) => validation[key] !== undefined)
+      .map((key) => [key, deepClone(validation[key])]));
+    finding.verdict = finding.validator_verdict = verdict;
+    finding.validation_justification = verdict.justification;
+    if (validation.refutation_check) finding.refutation_check = deepClone(validation.refutation_check);
     const key = (site) => JSON.stringify([site.file, site.line_start, site.line_end]);
-    const confirmations = new Map((Array.isArray(validation.site_confirmations) ? validation.site_confirmations : [])
-      .filter((site) => site && typeof site === 'object').map((site, _, sites) => [key(site),
-        site.confirmed === true && sites.filter((other) => key(other) === key(site)).length === 1]));
-    if (finding.resolved_sites) finding.sites = finding.resolved_sites.filter((site) => canonicalRange(site) && confirmations.get(key(site)) === true);
-
+    const confirmations = validation.site_confirmations || [];
+    if (finding.resolved_sites) finding.sites = finding.resolved_sites.filter((site) => canonicalRange(site)
+      && confirmations.filter((s) => key(s) === key(site)).length === 1
+      && confirmations.find((s) => key(s) === key(site)).confirmed === true);
+    routeVerdict(finding);
     adjustedCount += 1;
   }
-
+  for (const finding of findings) routeVerdict(finding);
   return { adjustedCount, unmatchedIds };
 }

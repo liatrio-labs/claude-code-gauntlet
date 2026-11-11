@@ -83,19 +83,6 @@ def _slice_inline(inp):
     }
 
 
-def _review_text_checksum(inp):
-    from gauntlet.jsjson import fnv1a32, normalize_review_text
-
-    normalized = normalize_review_text(inp["text"])
-    return {"normalized": normalized, "checksum": fnv1a32(normalized)}
-
-
-def _review_md_set_checksum(inp):
-    from gauntlet.project_rules import review_md_set_checksum
-
-    return {"checksum": review_md_set_checksum(inp["entries"])}
-
-
 def _decisions(inp):
     from pytest import MonkeyPatch
 
@@ -110,8 +97,6 @@ def _decisions(inp):
 
 RECORDERS = {
     "decisions": _decisions,
-    "review_md_set_checksum": _review_md_set_checksum,
-    "review_text_checksum": _review_text_checksum,
     "verify_deltas": _verify_deltas,
     "slice_input_proof": _slice_input_proof,
     "record_proof": _record_proof,

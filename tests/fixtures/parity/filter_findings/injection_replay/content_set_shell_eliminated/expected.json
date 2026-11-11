@@ -7,11 +7,11 @@
       "elimination_reason": "contains shell command pattern: \"\\\\brm[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+-[rf]\"",
       "file": "src/cleanup.sh",
       "id": "RP1",
-      "line_start": 12,
-      "severity": "medium",
-      "title": "Cleanup step review",
       "line_end": 12,
-      "location_status": "confirmed"
+      "line_start": 12,
+      "location_status": "confirmed",
+      "severity": "medium",
+      "title": "Cleanup step review"
     }
   ],
   "kept": []

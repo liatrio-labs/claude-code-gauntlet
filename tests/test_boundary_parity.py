@@ -452,13 +452,11 @@ def test_both_receipt_modes_cross_the_bench_parsers(mode: str) -> None:
             "model_tier": {"value": "optimized", "source": "fixed"},
             "pr_comment_cap": {"value": "null", "source": "default"},
             "delivery_tier": {"value": "all", "source": "default"},
-            "review_md": {"value": "absent", "source": "discovery"},
         }
         expected = {
             "model_tier": "optimized",
             "delivery_tier": "all",
             "pr_comment_cap": "null",
-            "review_md": "absent",
         }
     report = run_node(
         RENDER_REPORT,
@@ -488,10 +486,8 @@ def test_both_receipt_modes_cross_the_bench_parsers(mode: str) -> None:
 def test_receipt_rendering_parity(
     mode: str, carrier: str | None, value: str | None, token: str | None
 ) -> None:
-    resolved = resolve_config.resolve(mode, {}, None, "pr")
+    resolved = resolve_config.resolve(mode, {}, "pr")
     echo = resolved["configEcho"]
-    if mode == "interactive":
-        echo["review_md"] = {"value": "absent", "source": "discovery"}
     identity = {"pipeline_version": "version", "plugin_root": "/absolute/root"}
     if carrier in ("value", "source"):
         echo["model_tier"][carrier] = value
@@ -595,7 +591,7 @@ def test_resolver_payload_crosses_args_waist(
     cap: int | None,
     tier: str,
 ) -> None:
-    payload = resolve_config.resolve(mode, env, None, "pr")
+    payload = resolve_config.resolve(mode, env, "pr")
     payload["mode"] = mode
     if with_detector:
         payload["reviewScope"] = {

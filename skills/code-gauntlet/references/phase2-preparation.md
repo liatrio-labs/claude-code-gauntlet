@@ -4,7 +4,7 @@
 
 - [Phase 2 Composite A — pre-gather (status → checkout → SHA → prior-review gate → stale truncation)](#phase-2-composite-a--pre-gather-status--checkout--sha--prior-review-gate--stale-truncation)
 - [Phase 2 Composite B — gather (diff, changed-files, line count, misc)](#phase-2-composite-b--gather-diff-changed-files-line-count-misc)
-- [Discover REVIEW.md and stamp its raw text](#discover-reviewmd-and-stamp-its-raw-text)
+- [Collect project rules](#collect-project-rules)
 - [Write the shared agent context file](#write-the-shared-agent-context-file)
 - [Args object shape](#args-object-shape)
 
@@ -251,24 +251,20 @@ fi
 
 **Composites A/B do not subsume 2d or 2f.** Run 2d's collector as a separate script call after the changed-file list is saved; its receipt is the only REVIEW.md discovery source. Keep AI-marker scanning (2f) as separate Grep tool calls under `references/phase2-triage.md`; never use `grep` from Bash for those searches.
 
-## Discover REVIEW.md and stamp its raw text
+## Collect project rules
 
-1. **Project-rule inputs.** The script below collects CLAUDE.md, AGENTS.md, QODO.md, and REVIEW.md for shared context; Read REVIEW.md separately only for the raw waist in step 3, and never Read or Glob CLAUDE.md/AGENTS.md/QODO.md directly here.
-2. **Run the collector first**, after 2c saves the changed-file list, as a standalone script call:
+Run the collector after saving the changed-file list. It reads REVIEW.md, CLAUDE.md,
+AGENTS.md and QODO.md through the same bounded discovery and import mechanism.
+See [REVIEW.md rules](review-md-spec.md) for the supported prose format.
 
-   ```bash
-   {python} "{plugin_root}/scripts/collect_project_rules.py" --repo-root "$(git rev-parse --show-toplevel)" --out "{output_dir}/code-gauntlet-project-rules-{head_sha_short}.md" --changed-files "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
-   ```
+```bash
+{python} "{plugin_root}/scripts/collect_project_rules.py" --repo-root "$(git rev-parse --show-toplevel)" --out "{output_dir}/code-gauntlet-project-rules-{head_sha_short}.md" --changed-files "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
+```
 
-   Parse its one-line stdout JSON receipt and retain it; stop on failure instead of stamping a successful empty discovery.
-3. **Stamp REVIEW.md raw inputs from the receipt.** Read exactly the paths in `receipt.review_md`, in receipt order, and stamp `args.reviewMd` as `[{ path, text, checksum }, ...]`, using each repo-relative path and the full raw file text, copying `checksum` from its receipt entry and `args.reviewMdSetChecksum` from `receipt.review_md_checksum`. Do not sort, walk directories, or parse the files yourself. An empty list stamps `[]`, an authoritative "discovered nothing", not an omitted field. Keep the text by value because the workflow has no filesystem. Set `reviewConfigPath` to the root REVIEW.md path when the list contains `REVIEW.md`, otherwise null.
-   A capped REVIEW.md remains listed: Read its full raw text for settings, retain the cap gap, and do not add its text separately to the shared context. A failed raw Read stops this handoff; never replace it with empty text. See `references/review-md-spec.md` for format and hierarchy; `resolveReviewConfig` owns parsing and subtree settings.
-
-Do not `Glob(pattern: "**/REVIEW.md")`; use the collector's receipt, not a second search. Never use `find` from Bash for locating these files.
-
-**Do not stamp both `args.reviewMd` and `args.reviewConfig`** (or both `args.exclusionsText` and
-`args.exclusionPatterns`) — the args waist refuses a waist that stamps both the raw and
-pre-parsed form for the same axis (single authority).
+Parse its one-line JSON receipt and stop on collector failure. Stamp
+`args.unsupportedReviewConfig = receipt.unsupported_review_config`; this controls only the
+single local notice for a retired settings block. Retain its gaps and source disclosures.
+Do not read rule files a second time or parse their prose into workflow settings.
 
 ## Write the shared agent context file
 
@@ -295,7 +291,7 @@ An exit 2 wrote no usable context; stop and report its one-line error.
   mode: "interactive" | "headless",
   repoRoot: configResult.identity.repo_root, outputDir, headShaShort, nonce, generatedAt,
   python,
-  diffPath, changedFilesPath, reviewConfigPath,
+  diffPath, changedFilesPath,
   removedTests: contextReceipt.removedTests,  // verbatim saved-diff inventory and checksum
   riskTable: [ ...{ path, risk } per changed file, from Phase 2e... ],  // REQUIRED, path set === changedFiles
   scopeAnswer: "light" | "full",  // interactive answer only when the trivial-scope question fires
@@ -309,7 +305,7 @@ An exit 2 wrote no usable context; stop and report its one-line error.
   delivery: { prIdentity },  // PR/MR targets only; see phase2-triage.md, "Args Preparation"
 
   // by-value inputs the in-memory stages need (the workflow has no disk):
-  changedFiles, changedLines, baseBranch, reviewMd, reviewMdSetChecksum, exclusionsText,
+  changedFiles, changedLines, baseBranch, unsupportedReviewConfig,
 
   // the shared context file's measured size, from write_shared_context.py's receipt,
   // verbatim. Character measurements require contextLines.

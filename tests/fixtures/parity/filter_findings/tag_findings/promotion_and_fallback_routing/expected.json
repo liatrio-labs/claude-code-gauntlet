@@ -1,6 +1,6 @@
 {
-  "main_count": 3,
-  "suggestion_count": 2,
+  "main_count": 0,
+  "suggestion_count": 5,
   "tagged": [
     {
       "agent": "test-analyzer",
@@ -11,8 +11,8 @@
       "line_end": 100,
       "line_start": 100,
       "location_status": "confirmed",
-      "report_destination": "main",
-      "report_tag": "main",
+      "report_destination": "suggestion",
+      "report_tag": "suggestion",
       "severity": "medium",
       "title": "race condition in worker pool"
     },
@@ -28,7 +28,6 @@
       "location_status": "confirmed",
       "report_destination": "suggestion",
       "report_tag": "suggestion",
-      "routed_by": "dimension",
       "severity": "low",
       "title": "stale comment"
     },
@@ -41,8 +40,8 @@
       "line_end": 300,
       "line_start": 300,
       "location_status": "confirmed",
-      "report_destination": "main",
-      "report_tag": "main",
+      "report_destination": "suggestion",
+      "report_tag": "suggestion",
       "severity": "medium",
       "title": "violates naming convention documented in style guide"
     },
@@ -55,8 +54,8 @@
       "line_end": 400,
       "line_start": 400,
       "location_status": "confirmed",
-      "report_destination": "main",
-      "report_tag": "main",
+      "report_destination": "suggestion",
+      "report_tag": "suggestion",
       "severity": "high",
       "title": "weird finding"
     },

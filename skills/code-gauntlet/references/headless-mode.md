@@ -40,9 +40,9 @@ The resolver is the one reader of configuration pins and the one producer of the
 
 For each knob, resolve in this order and stop at the first hit:
 
-**explicit env pin > REVIEW.md explicit value > headless default**
+**explicit environment pin > mode default**
 
-Only `delivery` has a REVIEW.md source: `default_delivery`. Every other knob resolves from its environment pin or mode default. The model tier remains fixed in interactive mode, while delivery tier and cap pins govern both modes.
+Every knob resolves from its environment pin or mode default. REVIEW.md supplies prose project rules. The model tier remains fixed in interactive mode, while delivery tier and cap pins govern both modes.
 
 ---
 
@@ -104,7 +104,7 @@ Every interactive gate maps to a deterministic headless outcome. Phase 1 eligibi
 | Draft PR | `check_eligibility.py` applies `resolved.draft_policy`: `review` proceeds; `skip` stops the run. |
 | Previously reviewed (Phase 2 2b-post step 3, after checkout) | `resolved.reviewed_policy`, per [Prior-review policy](#prior-review-policy): `skip` stops only when `previously_reviewed` and `sha_is_ancestor` are both true; `incremental` falls back to a disclosed full review unless `incremental_safe`. |
 | Trivial / light-scope (all low-risk, <50 lines) | `CODE_GAUNTLET_TRIVIAL_SCOPE` selects the scope: `light` dispatches only the two core agents (`bug-detector`, `security-reviewer`); `full` runs all seven discovery agents covering nine dimensions. The resolver emits no resolved key for `trivial_scope`. |
-| REVIEW.md detection | Discovered configs apply as in interactive mode: root defaults plus matching subtree overrides. |
+| REVIEW.md detection | Prose is collected as project rules, using the same mechanism as CLAUDE.md, AGENTS.md and QODO.md. |
 | Phase 8 Stage 1 (delivery question) | Not asked. Deliver per `resolved.delivery` and post `artifactPaths.postReview` verbatim, including its renderer-owned outcome-first Summary body. Posting follows `resolved.post_mode`; `dry-run` captures the payload without posting. |
 | Checkpoint recovery | Follow [crash recovery](crash-recovery.md#3-checkpoint-resume-fallback-when-resumefromrunid-is-unavailable): one dispatched review retry (a checksum re-copy dispatches nothing and does not count); after a second checksum refusal deliver partial report plus gaps and stop, with no fresh paid review. |
 | Phase 8 Stage 2 (task board) | Skipped; no tasks are created. |
@@ -119,7 +119,7 @@ read `/user` gets a full review every run. The trust rules are in
 
 ## `Headless config:` echo block
 
-Immediately after resolving all knobs in Phase 1, the resolver renders the block into the Phase 1 Bash result. It has one line per knob, `key=value (source)` where `source ∈ env|review_md|default`.
+Immediately after resolving all knobs in Phase 1, the resolver renders the block into the Phase 1 Bash result. It has one line per knob, `key=value (source)` where `source ∈ env|default`.
 
 ```
 Headless config:

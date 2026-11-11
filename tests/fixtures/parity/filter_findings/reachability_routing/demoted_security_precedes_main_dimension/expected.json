@@ -10,15 +10,14 @@
       "dimension": "security",
       "file": "src/auth.py",
       "id": "R8",
+      "line_end": 12,
       "line_start": 12,
+      "location_status": "confirmed",
       "reachability": "future_change_only",
       "report_destination": "suggestion",
       "report_tag": "suggestion",
-      "routed_by": "reachability",
       "severity": "low",
-      "title": "hypothetical exposure",
-      "line_end": 12,
-      "location_status": "confirmed"
+      "title": "hypothetical exposure"
     }
   ]
 }

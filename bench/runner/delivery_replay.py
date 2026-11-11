@@ -59,8 +59,6 @@ class DeliveryStateWire(TypedDict):
     gaps: list[str]
     completed: list[str]
     phaseOutputs: dict[str, dict[str, Any]]
-    resolvedReview: dict[str, Any]
-    reviewMdSubtrees: list[dict[str, Any]]
     derivedAgentFlags: dict[str, Any]
     phaseReached: str
 

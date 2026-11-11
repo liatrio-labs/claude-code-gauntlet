@@ -1,4 +1,3 @@
-import { challengeOutcome } from './applyChallenges.js';
 import { deepClone } from './wire.js';
 import { incompleteVetting, UNVERIFIED_REASONS } from './vetting.js';
 import { locationAllows, deliveryAllows } from './location.js';
@@ -96,9 +95,7 @@ export function disposeFindings(challenged) {
     if (ids.every((id) => typeof id === 'string' && id)) for (const member of members) member.delivery_group = stamp;
     return { ...stamp, sites: members.flatMap((f) => f.sites || []),
       severity: delivered.severity, tier: delivered.report_tag,
-      disposition: primary.disposition, same_challenge_verdict: new Set(members.map((f) => typeof f.challenge_score === 'number'
-        ? challengeOutcome(f.challenge_score, (f.dimension ?? '').toLowerCase() === 'security')
-        : f.challenge_contested ? 'contested' : f.challenge)).size === 1 };
+      disposition: primary.disposition, same_challenge_verdict: new Set(members.map((f) => f.verdict_route ?? f.challenge)).size === 1 };
   });
   for (const finding of findings.filter((f) => f.consolidation_key && !f.consolidation_primary && f.trace_id)) {
     const related = findings.filter((f) => f.consolidation_key === finding.consolidation_key && f !== finding && f.trace_id).map((f) => f.trace_id);

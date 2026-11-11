@@ -1,0 +1,62 @@
+{
+  "eliminated": [],
+  "findings": [
+    {
+      "admission": {
+        "core": false,
+        "inline_eligible": true,
+        "input_fields": [],
+        "input_proof": "fnv1a32:0x70d2a321",
+        "kind": "ordinary",
+        "reasons": [
+          {
+            "predicate": "verification",
+            "status": "held_back"
+          }
+        ],
+        "status": "held_back",
+        "tier": "main",
+        "version": 1
+      },
+      "body_fix_task_eligible": false,
+      "challenge": "failed",
+      "challenge_justification": "Guard exists",
+      "challenge_verdict": {
+        "claim": "refuted",
+        "consequence": "present_failure",
+        "justification": "Guard exists",
+        "reachability": "current",
+        "refutation_kind": "guard_exists"
+      },
+      "confidence": 90,
+      "file": "src",
+      "id": "f",
+      "line_start": 10,
+      "reachability": "current",
+      "refutation_check": {
+        "verified": false
+      },
+      "report_destination": "main",
+      "report_tag": "main",
+      "severity": "high",
+      "validation": "validated",
+      "verdict": {
+        "claim": "refuted",
+        "consequence": "present_failure",
+        "justification": "Guard exists",
+        "reachability": "current",
+        "refutation_kind": "guard_exists"
+      },
+      "verdict_route": "not-established"
+    }
+  ],
+  "stats": {
+    "challenge_contested": 0,
+    "challenge_downgraded": 0,
+    "challenge_removed": 0,
+    "challenge_survived": 1,
+    "final_count": 1,
+    "total_input": 1,
+    "unchallenged": 0
+  }
+}

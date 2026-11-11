@@ -2,11 +2,10 @@ import { normalizeAbsoluteRoot } from './paths.js';
 import { REQUIRED, DELIVERY_TIERS, SCOPE_ANSWERS, CONTROL_RE } from './registry.js';
 import { LIMIT_DEFAULTS, LIGHT_SCOPE_MAX_CHANGED_LINES } from './registry.js';
 import { PR_IDENTITY_FIELDS, POLICY_PROVIDERS, MODEL_ALIASES } from './registry.js';
-import { REVIEW_SETTING_KEYS, SEVERITY_ORDER, KNOB_VOCAB } from './registry.js';
-import { KNOB_REGISTRY, computeLightEligible, receiptEntryFor, receiptEntryForKey, mappedReceiptValue, DERIVED_FROM } from './knobs.js';
+import { KNOB_VOCAB } from './registry.js';
+import { KNOB_REGISTRY, computeLightEligible, receiptEntryFor, receiptEntryForKey, mappedReceiptValue } from './knobs.js';
 import { deriveWhenHolds, deriveConfigWaist, configEchoValue, validateConfigEcho } from './knobs.js';
-import { PYTHON_COMMAND_ARGV, dottedValue, isPlainObject, deepFreeze, fnv1a32, normalizeReviewText } from './wire.js';
-import { buildReviewConfig, loadExclusions } from './reviewConfig.js';
+import { PYTHON_COMMAND_ARGV, dottedValue, isPlainObject, deepFreeze } from './wire.js';
 import { validateRemovedTests } from './removedTests.js';
 
 export function resolveRemovedTestsArgs(args) {
@@ -20,18 +19,12 @@ const NONCE_RE = /^[A-Za-z0-9._-]+$/;
 
 // Keep null tolerance narrow: null delivery caps and model overrides carry configuration data.
 // Dropped nulls that change validation require disclosure because they can change review outcomes.
-const NULLABLE_TOP_LEVEL = deepFreeze(['reviewConfig', 'exclusionPatterns', 'reviewMd', 'exclusionsText', 'delivery', 'checkpoints',
+const NULLABLE_TOP_LEVEL = deepFreeze(['delivery', 'checkpoints',
   'persist', 'scopeAnswer']);
 
 const RISK_LEVELS = deepFreeze(['low', 'medium', 'high']);
 
 const NULL_TOLERANCE_CONSEQUENCE = deepFreeze({
-  reviewConfig: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with ' +
-    'no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
-  exclusionPatterns: 'no exclusion patterns are applied, so the delivered findings can differ',
-  reviewMd: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with ' +
-    'no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
-  exclusionsText: 'no exclusion patterns are applied, so the delivered findings can differ',
   delivery: 'delivery falls back to tier "all" with no PR identity',
   'delivery.tier': 'delivery falls back to tier "all", so a narrowing intent is lost',
   'delivery.prIdentity': 'the post-review artifact is persisted as a bare findings array instead of the post_review-ready wrapper',
@@ -51,8 +44,6 @@ const LIMIT_KEYS = deepFreeze([
 const ARGS_SHAPES = deepFreeze({
   pathFields: ['repoRoot', 'outputDir', 'headShaShort', 'diffPath', 'pluginRoot'],
   riskFields: ['path', 'risk'],
-  reviewMdFields: ['path', 'text', 'checksum'],
-  scopeLayerFields: ['dir', 'ignore', ...REVIEW_SETTING_KEYS],
   scopeFields: ['requested', 'kind', 'since', 'commits', 'detector'],
   scopeKinds: ['full', 'incremental'],
   detectorFields: ['previously_reviewed', 'sha_resolvable', 'head_advanced', 'sha_is_ancestor', 'incremental_safe', 'error'],
@@ -69,6 +60,7 @@ const ARGS_FIELD_CHECKS = deepFreeze({
       message: `invalid {label}: {value} (expected distinct values from ${MODEL_ALIASES.join(', ')})` },
   ],
   changed: [
+    { key: 'unsupportedReviewConfig', domain: 'boolean', message: 'unsupportedReviewConfig must be a boolean when present' },
     { key: 'measurementTrace', domain: 'boolean', message: 'measurementTrace must be a boolean when present' },
     { key: 'changedFiles', domain: 'array', message: 'changedFiles must be an array of repo-relative paths' },
     { key: 'changedLines', domain: 'number', message: 'changedLines must be a number' },
@@ -79,14 +71,6 @@ const ARGS_FIELD_CHECKS = deepFreeze({
     boundMessage: '{label} is {value}, above the {maximum} ceiling '
       + '\u2014 that is not a review context, it is a mis-measurement',
   })),
-  review: REVIEW_SETTING_KEYS.map((key) => key === 'severity_threshold'
-    ? { key, presence: 'in', values: SEVERITY_ORDER, separator: '|',
-      message: '{label} must be one of {values} when present (pre-parsed REVIEW.md enum)' }
-    : { key, presence: 'in', domain: 'integer', minimum: 0, maximum: 100,
-      message: '{label} must be an integer from 0 through 100 when present' }),
-  exclusions: [
-    { key: 'exclusionsText', domain: 'string', message: 'exclusionsText must be a string when present' },
-  ],
   persist: [
     { key: 'returnPrimaries', domain: 'boolean', message: 'persist.returnPrimaries must be a boolean when present' },
   ],
@@ -154,38 +138,6 @@ function validatePrIdentity(id, errors) {
       for (const extra of field.extraChecks || []) {
         if (!extra.check(value)) errors.push(`delivery.prIdentity.${field.name} ${extra.message}`);
       }
-    }
-  }
-}
-
-function validatePathSegments(value, label, reviewFile = false) {
-  const errors = [];
-  if (reviewFile) {
-    if (value.startsWith('/')) errors.push(`${label} must be repo-relative (must not start with /)`);
-    if (value.endsWith('/')) errors.push(`${label} must not have a trailing /`);
-  } else if (value.startsWith('/') || value.endsWith('/')) {
-    errors.push(`${label} must not have a leading or trailing /`);
-  }
-  if (value.includes('\\')) errors.push(`${label} must use / separators, not backslashes`);
-  if (CONTROL_RE.test(value)) errors.push(`${label} must not contain a control character`);
-  const segments = value.split('/');
-  if (segments.some((segment) => segment === '')) errors.push(`${label} must not contain an empty path segment`);
-  if (segments.some((segment) => segment === '.' || segment === '..')) errors.push(`${label} must not contain . or .. path segments`);
-  if (reviewFile && segments[segments.length - 1] !== 'REVIEW.md') {
-    errors.push(`${label} must end with exactly REVIEW.md`);
-  }
-  return errors;
-}
-
-function validateFlatPatterns(value, label, errors, ignore = false) {
-  if (!Array.isArray(value)) {
-    errors.push(`${label} must be an array of flat pattern strings`);
-    return;
-  }
-  for (let i = 0; i < value.length; i++) {
-    if (typeof value[i] !== 'string') {
-      const suffix = ignore ? ' \u2014 parseReviewMd emits strings, never objects' : '';
-      errors.push(`${label}[${i}] must be a flat pattern string (got ${typeof value[i]})${suffix}`);
     }
   }
 }
@@ -422,98 +374,6 @@ export function validateArgs(args, descriptors = KNOB_REGISTRY) {
   if (args.contextMaxLineChars !== undefined && args.contextLines === undefined) {
     errors.push('contextMaxLineChars requires contextLines — line width alone cannot size a line-offset read plan');
   }
-  // Validate every config layer before paid stages so malformed subtree settings cannot fail during filtering.
-  if (args.reviewConfig !== undefined) {
-    if (!isPlainObject(args.reviewConfig)) {
-      errors.push('reviewConfig must be an object (the parseReviewMd output shape) when present');
-    } else {
-      const validateLayer = (layer, label, allowDir) => {
-        validateArgsFields(layer, 'review', errors, label);
-        if (layer.ignore !== undefined) validateFlatPatterns(layer.ignore, `${label}.ignore`, errors, true);
-        if (!allowDir) return;
-        if (typeof layer.dir !== 'string' || layer.dir === '') {
-          errors.push(`${label}.dir must be a non-empty string`);
-          return;
-        }
-        errors.push(...validatePathSegments(`${layer.dir}`, `${label}.dir`));
-      };
-
-      validateLayer(args.reviewConfig, 'reviewConfig', false);
-      if (args.reviewConfig.scopes !== undefined) {
-        if (!Array.isArray(args.reviewConfig.scopes)) {
-          errors.push('reviewConfig.scopes must be an array when present');
-        } else {
-          const seenDirs = new Set();
-          for (let i = 0; i < args.reviewConfig.scopes.length; i++) {
-            const label = `reviewConfig.scopes[${i}]`;
-            const scope = args.reviewConfig.scopes[i];
-            if (!isPlainObject(scope)) {
-              errors.push(`${label} must be a plain object`);
-              continue;
-            }
-            const extra = extraKeys(scope, ARGS_SHAPES.scopeLayerFields, true);
-            if (extra.length > 0) errors.push(`${label} has unexpected key(s): ${extra.join(', ')}`);
-            validateLayer(scope, label, true);
-            if (typeof scope.dir === 'string' && scope.dir !== '') {
-              if (seenDirs.has(scope.dir)) errors.push(`${label}.dir duplicates another scope dir: ${scope.dir}`);
-              seenDirs.add(scope.dir);
-            }
-          }
-        }
-      }
-    }
-  }
-  // Reject non-string patterns here before literal regex escaping can throw during filtering.
-  if (args.exclusionPatterns !== undefined) validateFlatPatterns(args.exclusionPatterns, 'exclusionPatterns', errors);
-  // An empty raw discovery is authoritative absence; an omitted field means discovery was not supplied.
-  if (args.reviewMd !== undefined) {
-    if (typeof args.reviewMdSetChecksum !== 'string') {
-      errors.push('reviewMdSetChecksum must be a string when reviewMd is present');
-    }
-    if (!Array.isArray(args.reviewMd)) {
-      errors.push('reviewMd must be an array of {path, text, checksum} objects when present');
-    } else {
-      for (let i = 0; i < args.reviewMd.length; i++) {
-        const entry = args.reviewMd[i];
-        if (!isPlainObject(entry)) {
-          errors.push(`reviewMd[${i}] must be an object of the form {path, text, checksum}`);
-          continue;
-        }
-        const extra = extraKeys(entry, ARGS_SHAPES.reviewMdFields, true);
-        if (extra.length > 0) {
-          errors.push(`reviewMd[${i}] has unexpected key(s): ${extra.join(', ')} (only path, text and checksum are allowed)`);
-        }
-        if (typeof entry.path !== 'string' || entry.path === '') {
-          errors.push(`reviewMd[${i}].path must be a non-empty string`);
-        } else {
-          errors.push(...validatePathSegments(entry.path, `reviewMd[${i}].path`, true));
-        }
-        if (entry.checksum !== null && typeof entry.checksum !== 'string') {
-          errors.push(`reviewMd[${i}].checksum must be a string or null`);
-        }
-        if (typeof entry.text !== 'string') {
-          errors.push(`reviewMd[${i}].text must be a string`);
-        }
-      }
-      const hasRootReviewMd = args.reviewMd.some((entry) => (
-        isPlainObject(entry) && entry.path === 'REVIEW.md'
-      ));
-      const hasReviewConfigPath = args.reviewConfigPath != null;
-      if (hasRootReviewMd !== hasReviewConfigPath) {
-        errors.push('reviewMd and reviewConfigPath must agree: reviewConfigPath must be non-null iff reviewMd ' +
-          'contains an entry with path exactly REVIEW.md');
-      }
-    }
-  }
-  validateArgsFields(args, 'exclusions', errors);
-  // Refuse competing raw and parsed authorities so config cannot be silently substituted.
-  if (args.reviewMd !== undefined && args.reviewConfig !== undefined) {
-    errors.push('reviewMd and reviewConfig are both present — pass raw reviewMd or pre-parsed reviewConfig, not both (single authority)');
-  }
-  if (args.exclusionsText !== undefined && args.exclusionPatterns !== undefined) {
-    errors.push('exclusionsText and exclusionPatterns are both present — pass raw exclusionsText or ' +
-      'pre-parsed exclusionPatterns, not both (single authority)');
-  }
   // Reject unknown tiers before selection can default to all and lose the operator's narrowing intent.
   if (args.delivery !== undefined) {
     if (!isPlainObject(args.delivery)) {
@@ -665,58 +525,7 @@ export function validateArgs(args, descriptors = KNOB_REGISTRY) {
         : stamped === expected;
       if (!matches) errors.push(`${descriptor.waistPath} does not match configEcho.${descriptor.key}`);
     }
-    for (const descriptor of descriptors) {
-      if (!descriptor.modes.includes(args.mode)
-        || descriptor.derivedFrom === null
-        || !Object.hasOwn(DERIVED_FROM, descriptor.derivedFrom)) continue;
-      const entry = receiptEntryFor(args, descriptor);
-      if (entry !== null && entry.value !== DERIVED_FROM[descriptor.derivedFrom].fill(args)) {
-        errors.push(`configEcho.${descriptor.key} does not match ${descriptor.derivedFrom}`);
-      }
-    }
+
   }
   return { ok: errors.length === 0, errors };
-}
-
-export function reviewMdSetChecksum(entries) {
-  return fnv1a32(entries.map((entry) => `${entry.path}\0${entry.checksum || 'null'}`).join('\n'));
-}
-
-// Resolve each config axis independently because raw discovery on one axis can coexist with parsed data on the other.
-// Present empty raw inputs remain authoritative and must not fall back to pre-parsed values.
-export function resolveReviewConfig(A) {
-  const a = A || {};
-  const reviewConfigSource = a.reviewMd !== undefined ? 'reviewMd'
-    : (a.reviewConfig !== undefined ? 'preParsed' : 'none');
-  const exclusionsSource = a.exclusionsText !== undefined ? 'exclusionsText'
-    : (a.exclusionPatterns !== undefined ? 'preParsed' : 'none');
-
-  let reviewConfig;
-  let reviewMdEntryCount = 0;
-  const gaps = [];
-  if (a.reviewMd !== undefined) {
-    const entries = a.reviewMd.map((entry) => {
-      const text = normalizeReviewText(entry.text);
-      if (entry.checksum === null) {
-        gaps.push(`review_md: ${entry.path} text is unproven (no collector checksum); its settings were applied as stamped`);
-      } else if (fnv1a32(text) !== entry.checksum) {
-        gaps.push(`review_md: ${entry.path} text differs from the collected file (checksum mismatch); its settings were applied as stamped`);
-      }
-      return { ...entry, text };
-    });
-    reviewConfig = buildReviewConfig(entries);
-    reviewMdEntryCount = a.reviewMd.length;
-  } else {
-    reviewConfig = a.reviewConfig || {};
-  }
-
-  if ((a.reviewMd !== undefined || a.reviewMdSetChecksum !== undefined) &&
-      reviewMdSetChecksum(a.reviewMd || []) !== a.reviewMdSetChecksum) {
-    gaps.push('review_md: stamped entries differ from the collected list (omitted, extra or reordered REVIEW.md); settings were applied as stamped');
-  }
-
-  const exclusionPatterns = a.exclusionsText !== undefined ? loadExclusions(a.exclusionsText)
-    : (a.exclusionPatterns || []);
-
-  return { reviewConfig, exclusionPatterns, reviewConfigSource, exclusionsSource, reviewMdEntryCount, gaps };
 }

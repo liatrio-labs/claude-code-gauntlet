@@ -1,0 +1,24 @@
+{
+  "findings": [
+    {
+      "id": "f",
+      "file": "src",
+      "line_start": 10,
+      "severity": "high",
+      "confidence": 90
+    }
+  ],
+  "challenges": [
+    {
+      "id": "f",
+      "claim": "refuted",
+      "consequence": "present_failure",
+      "reachability": "current",
+      "justification": "Guard exists",
+      "refutation_kind": "guard_exists",
+      "refutation_check": {
+        "verified": false
+      }
+    }
+  ]
+}

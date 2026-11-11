@@ -2077,8 +2077,7 @@ def test_bench_resolver_sets_trace_without_prompt_instructions():
     from gauntlet.config import resolve
 
     assert (
-        resolve("headless", invoke.BENCH_ENV, None, "pr")["waist"]["measurementTrace"]
-        is True
+        resolve("headless", invoke.BENCH_ENV, "pr")["waist"]["measurementTrace"] is True
     )
     for mode in ("headless", "interactive"):
-        assert "measurementTrace" not in resolve(mode, {}, None, "pr")["waist"]
+        assert "measurementTrace" not in resolve(mode, {}, "pr")["waist"]

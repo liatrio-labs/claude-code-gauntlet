@@ -10,15 +10,14 @@
       "dimension": "bug",
       "file": "src/route.py",
       "id": "R6",
+      "line_end": 60,
       "line_start": 60,
+      "location_status": "confirmed",
       "reachability": "future_change_only",
       "report_destination": "suggestion",
       "report_tag": "suggestion",
-      "routed_by": "reachability",
       "severity": "low",
-      "title": "hypothetical bug",
-      "line_end": 60,
-      "location_status": "confirmed"
+      "title": "hypothetical bug"
     }
   ]
 }

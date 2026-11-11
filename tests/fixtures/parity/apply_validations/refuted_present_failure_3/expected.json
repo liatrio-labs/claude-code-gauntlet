@@ -1,0 +1,35 @@
+{
+  "adjusted_count": 1,
+  "findings": [
+    {
+      "confidence": 90,
+      "file": "src",
+      "id": "f",
+      "line_start": 10,
+      "reachability": "current",
+      "refutation_check": {
+        "verified": false
+      },
+      "report_destination": "main",
+      "report_tag": "main",
+      "severity": "high",
+      "validation_justification": "Guard exists",
+      "validator_verdict": {
+        "claim": "refuted",
+        "consequence": "present_failure",
+        "justification": "Guard exists",
+        "reachability": "current",
+        "refutation_kind": "guard_exists"
+      },
+      "verdict": {
+        "claim": "refuted",
+        "consequence": "present_failure",
+        "justification": "Guard exists",
+        "reachability": "current",
+        "refutation_kind": "guard_exists"
+      },
+      "verdict_route": "not-established"
+    }
+  ],
+  "unmatched_ids": []
+}

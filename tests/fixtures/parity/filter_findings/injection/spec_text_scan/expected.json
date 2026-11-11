@@ -6,103 +6,103 @@
       "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
       "file": "src/handlers/t1.py",
       "id": "T1",
+      "line_end": 10,
       "line_start": 10,
+      "location_status": "confirmed",
       "severity": "medium",
       "spec_text_removal_reason": "spec_text contains shell command pattern: \"\\\\brm[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+-[rf]\"",
       "spec_text_removed_by": "injection",
-      "title": "Null check missing in handler t1",
-      "line_end": 10,
-      "location_status": "confirmed"
+      "title": "Null check missing in handler t1"
     },
     {
       "confidence": 60,
       "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
       "file": "src/handlers/t2.py",
       "id": "T2",
+      "line_end": 10,
       "line_start": 10,
+      "location_status": "confirmed",
       "severity": "medium",
       "spec_text_removal_reason": "spec_text contains visit-URL pattern: \"\\\\bvisit[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+[a-z][a-z0-9+.\\\\-]{1,15}:\\\\/\\\\/\"",
       "spec_text_removed_by": "injection",
-      "title": "Null check missing in handler t2",
-      "line_end": 10,
-      "location_status": "confirmed"
+      "title": "Null check missing in handler t2"
     },
     {
       "confidence": 60,
       "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
       "file": "src/handlers/t3.py",
       "id": "T3",
+      "line_end": 10,
       "line_start": 10,
+      "location_status": "confirmed",
       "severity": "medium",
       "spec_text_removal_reason": "spec_text contains encoded payload pattern: \"\\\\b(?:decode|base64|atob|b64decode)\\\\b[^\\\\x00]{0,40}[A-Za-z0-9+\\\\/]{40,}={0,2}\\\\b\"",
       "spec_text_removed_by": "injection",
-      "title": "Null check missing in handler t3",
-      "line_end": 10,
-      "location_status": "confirmed"
+      "title": "Null check missing in handler t3"
     },
     {
       "confidence": 60,
       "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
       "file": "src/handlers/t4.py",
       "id": "T4",
+      "line_end": 10,
       "line_start": 10,
+      "location_status": "confirmed",
       "severity": "medium",
       "spec_text_removal_reason": "spec_text contains bypass/auto-approve instruction: \"\\\\bskip[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+review\\\\b\"",
       "spec_text_removed_by": "injection",
-      "title": "Null check missing in handler t4",
-      "line_end": 10,
-      "location_status": "confirmed"
+      "title": "Null check missing in handler t4"
     },
     {
       "confidence": 60,
       "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
       "file": "src/handlers/t5.py",
       "id": "T5",
+      "line_end": 10,
       "line_start": 10,
+      "location_status": "confirmed",
       "severity": "medium",
       "spec_text_removal_reason": "spec_text uses instructional tone: \"\\\\byou[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+should[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+run\\\\b\"",
       "spec_text_removed_by": "injection",
-      "title": "Null check missing in handler t5",
-      "line_end": 10,
-      "location_status": "confirmed"
+      "title": "Null check missing in handler t5"
     },
     {
       "confidence": 60,
       "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
       "file": "src/handlers/t6.py",
       "id": "T6",
+      "line_end": 10,
       "line_start": 10,
+      "location_status": "confirmed",
       "severity": "medium",
       "spec_text_removal_reason": "spec_text recommends introducing vulnerability: \"\\\\bdisable[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+(?:TLS|SSL|HTTPS)[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+(?:verification|validation)\\\\b\"",
       "spec_text_removed_by": "injection",
-      "title": "Null check missing in handler t6",
-      "line_end": 10,
-      "location_status": "confirmed"
+      "title": "Null check missing in handler t6"
     },
     {
       "confidence": 60,
       "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
       "file": "src/handlers/t7.py",
       "id": "T7",
+      "line_end": 10,
       "line_start": 10,
+      "location_status": "confirmed",
       "severity": "medium",
       "spec_text_removal_reason": "spec_text matches injection marker: \"<finding(?:[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff][^>]*)?>\"",
       "spec_text_removed_by": "injection",
-      "title": "Null check missing in handler t7",
-      "line_end": 10,
-      "location_status": "confirmed"
+      "title": "Null check missing in handler t7"
     },
     {
       "confidence": 60,
       "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
       "file": "src/handlers/t8.py",
       "id": "T8",
+      "line_end": 10,
       "line_start": 10,
+      "location_status": "confirmed",
       "severity": "medium",
       "spec_text": "A failed payment must leave no partial transaction.",
-      "title": "Null check missing in handler t8",
-      "line_end": 10,
-      "location_status": "confirmed"
+      "title": "Null check missing in handler t8"
     }
   ]
 }

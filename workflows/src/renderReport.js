@@ -2,7 +2,7 @@
 // Line fields use the outbound line contract, and repository spans preserve copyable normalized text in dynamic delimiters.
 import { canonicalRange, locationAllows, deliveryAllows } from './location.js';
 import { incompleteVetting, UNVERIFIED_REASONS } from './vetting.js';
-import { rankFindings } from './applyChallenges.js';
+import { rankFindings } from './groupRanking.js';
 import { PERMALINK_TEMPLATES, identityCheck, CODE_OWNED_HEADINGS, FINDING_PROP_TYPES } from './registry.js';
 import { groupDelivery } from './groupRanking.js';
 import { deliveryGroups } from './dispose.js';
@@ -203,6 +203,9 @@ function coerceReportFinding(finding, severities) {
       value = raw;
     } else if (key === 'confidence') {
       value = reportAsConfidence(raw);
+    } else if (key === 'verdict') {
+      value = plainReportObject(raw) ? { claim: reportOptionalText(safeReportField(raw, 'claim')),
+        consequence: reportOptionalText(safeReportField(raw, 'consequence')) } : undefined;
     } else if (key === 'corroborations') {
       value = Array.isArray(raw) ? raw.map(reportCorroboration) : undefined;
     } else if (key === 'sites') {
@@ -449,7 +452,8 @@ function renderFinding(builder, finding, unverified, permalinks) {
   }
   const classification = [];
   if (isPresent(finding.dimension)) classification.push(`**Dimension:** ${inline(finding.dimension)}`);
-  if (isPresent(finding.confidence)) classification.push(`**Confidence:** ${inline(finding.confidence)}%`);
+  if (finding.verdict) classification.push(`**Verdict:** ${inline(finding.verdict.claim)} / ${inline(finding.verdict.consequence)}`);
+  else if (isPresent(finding.confidence)) classification.push(`**Discovery confidence:** ${inline(finding.confidence)}%`);
   if (classification.length) bullets.push(`- ${classification.join(' · ')}`);
   if (finding.origin === 'surfaced') {
     bullets.push('- **Origin:** surfaced — pre-existing, surfaced by this change');
@@ -513,9 +517,8 @@ function renderFinding(builder, finding, unverified, permalinks) {
       for (const corroboration of finding.corroborations) {
         const agent = preparedCodeSpan(corroboration.agent, false, undefined, REPORT_FOLD_LIMITS.inlineChars);
         const dimension = preparedCodeSpan(corroboration.dimension, false, undefined, REPORT_FOLD_LIMITS.inlineChars);
-        const confidence = inline(corroboration.confidence);
         const title = inline(corroboration.title);
-        builder.addSpans(`- **Corroborated by** ${agent} (${dimension}, severity ${inline(normalizeReportSeverity(corroboration.severity))}, tier ${inline(corroboration.report_tag ?? 'main')}, confidence ${confidence}): ${title}`, [agent, dimension]);
+        builder.addSpans(`- **Corroborated by** ${agent} (${dimension}, severity ${inline(normalizeReportSeverity(corroboration.severity))}, tier ${inline(corroboration.report_tag ?? 'main')}): ${title}`, [agent, dimension]);
         if (isPresent(corroboration.description)) {
           builder.add(foldedProse(corroboration.description).split(/\r?\n/).map((line) => `  ${line}`).join('\n'));
         }
@@ -926,6 +929,7 @@ export function renderReport(input, knobs = KNOB_REGISTRY) {
   summaryBlock(builder, inp, 'report');
 
   builder.add();
+  if (inp.unsupportedReviewConfig === true) builder.add('REVIEW.md settings are no longer supported; its prose is read as project rules.');
   builder.add('## Change Context');
   builder.add();
   if (isPresent(inp.summary)) {
@@ -977,10 +981,6 @@ export function renderReport(input, knobs = KNOB_REGISTRY) {
   builder.add();
   builder.add(dimensionsTable);
   renderMethodology(builder, { ...inp, mode: inp.mode || 'interactive' }, rawFindings, knobs);
-  if (inp.hasReviewMd === false) {
-    builder.add();
-    builder.add('A REVIEW.md at the repository root is the preferred way to state review rules: focus, ignore paths, and severity.');
-    builder.add('Format reference: https://github.com/liatrio-labs/claude-code-gauntlet/blob/main/skills/code-gauntlet/references/review-md-spec.md');
-  }
+
   return builder.finish();
 }

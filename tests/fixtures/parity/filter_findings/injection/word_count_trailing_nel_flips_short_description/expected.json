@@ -7,11 +7,11 @@
       "elimination_reason": "suspiciously short description (9 words) with high confidence (90)",
       "file": "src/handler.py",
       "id": "WC9",
-      "line_start": 8,
-      "severity": "medium",
-      "title": "Terse high-confidence finding",
       "line_end": 8,
-      "location_status": "confirmed"
+      "line_start": 8,
+      "location_status": "confirmed",
+      "severity": "medium",
+      "title": "Terse high-confidence finding"
     }
   ],
   "kept": []

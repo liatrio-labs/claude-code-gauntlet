@@ -177,6 +177,3 @@ Parse stdout as a JSON array and assert that its length equals the delivered cou
 call `TaskCreate(subject, description)` and then `TaskUpdate(taskId, metadata)`. Stop on any parse,
 count, or call failure and report it. Never fall back to hand composition. After creating, report the
 number of created tasks.
-
-The `ignore:` list is user-edited by hand (`references/review-md-spec.md` →
-Ignore); no Phase 8 write path exists.

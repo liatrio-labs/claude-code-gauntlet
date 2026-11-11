@@ -68,6 +68,14 @@ QualityBasis = Literal[
 _ResolvedSitesItemLocationStatus_Literal = Literal[
     "confirmed", "relocated", "unconfirmed"
 ]
+_Claim_Literal = Literal["confirmed", "refuted", "not_established"]
+_Consequence_Literal = Literal[
+    "present_failure", "latent", "artifact_defect", "no_practical_effect"
+]
+_Reachability_Literal = Literal["current", "future_change_only", "uncertain"]
+_RefutationKind_Literal = Literal[
+    "premise_false", "guard_exists", "no_reachable_caller"
+]
 _PolicySubject_Literal = Literal["test_defect", "coverage", "ordinary", "unresolved"]
 _AdmissionAssessmentsItemPredicate_Literal = Literal[
     "confirmed_test_defect",
@@ -291,6 +299,11 @@ TRACE_FINDING_FIELDS: tuple[str, ...] = (
     "suggested_fix_code",
     "claude_md_rule",
     "spec_text",
+    "verdict",
+    "validator_verdict",
+    "challenge_verdict",
+    "verdict_route",
+    "refutation_check",
     "rule_source",
     "agent",
     "dimension",
@@ -1289,7 +1302,6 @@ KNOB_REGISTRY = (
             "values": ["optimized"],
         },
         "env": "CODE_GAUNTLET_MODEL_TIER",
-        "reviewMdKey": None,
         "defaults": {
             "headless": ["optimized", "default"],
             "interactive": ["optimized", "fixed"],
@@ -1297,7 +1309,6 @@ KNOB_REGISTRY = (
         "type": "string",
         "waistPath": None,
         "waistMap": None,
-        "derivedFrom": None,
         "deriveWhen": None,
         "nullReceipt": [],
         "resolvedKey": True,
@@ -1306,21 +1317,19 @@ KNOB_REGISTRY = (
         "key": "delivery",
         "modes": ["headless"],
         "allowedSources": {
-            "headless": ["env", "review_md", "default"],
+            "headless": ["env", "default"],
         },
         "rule": {
             "kind": "csv_subset",
             "values": ["chat", "pr_comments", "markdown"],
         },
         "env": "CODE_GAUNTLET_DELIVERY",
-        "reviewMdKey": "default_delivery",
         "defaults": {
             "headless": ["markdown", "default"],
         },
         "type": "csv_list",
         "waistPath": None,
         "waistMap": None,
-        "derivedFrom": None,
         "deriveWhen": None,
         "nullReceipt": [],
         "resolvedKey": True,
@@ -1336,14 +1345,12 @@ KNOB_REGISTRY = (
             "values": ["dry-run", "live"],
         },
         "env": "CODE_GAUNTLET_POST_MODE",
-        "reviewMdKey": None,
         "defaults": {
             "headless": ["dry-run", "default"],
         },
         "type": "string",
         "waistPath": None,
         "waistMap": None,
-        "derivedFrom": None,
         "deriveWhen": None,
         "nullReceipt": [],
         "resolvedKey": True,
@@ -1364,7 +1371,6 @@ KNOB_REGISTRY = (
             },
         },
         "env": "CODE_GAUNTLET_PR_COMMENT_CAP",
-        "reviewMdKey": None,
         "defaults": {
             "headless": ["6", "default"],
             "interactive": ["null", "default"],
@@ -1372,7 +1378,6 @@ KNOB_REGISTRY = (
         "type": "int_or_null",
         "waistPath": "limits.deliveryCap",
         "waistMap": None,
-        "derivedFrom": None,
         "deriveWhen": None,
         "nullReceipt": ["interactive"],
         "resolvedKey": False,
@@ -1389,7 +1394,6 @@ KNOB_REGISTRY = (
             "values": ["all", "main_only"],
         },
         "env": "CODE_GAUNTLET_DELIVERY_TIER",
-        "reviewMdKey": None,
         "defaults": {
             "headless": ["all", "default"],
             "interactive": ["all", "default"],
@@ -1397,7 +1401,6 @@ KNOB_REGISTRY = (
         "type": "string",
         "waistPath": "delivery.tier",
         "waistMap": None,
-        "derivedFrom": None,
         "deriveWhen": None,
         "nullReceipt": [],
         "resolvedKey": False,
@@ -1413,14 +1416,12 @@ KNOB_REGISTRY = (
             "values": ["review", "skip"],
         },
         "env": "CODE_GAUNTLET_DRAFT_POLICY",
-        "reviewMdKey": None,
         "defaults": {
             "headless": ["review", "default"],
         },
         "type": "string",
         "waistPath": None,
         "waistMap": None,
-        "derivedFrom": None,
         "deriveWhen": None,
         "nullReceipt": [],
         "resolvedKey": True,
@@ -1436,7 +1437,6 @@ KNOB_REGISTRY = (
             "values": ["incremental", "full", "skip"],
         },
         "env": "CODE_GAUNTLET_REVIEWED_POLICY",
-        "reviewMdKey": None,
         "defaults": {
             "headless": ["full", "default"],
         },
@@ -1445,7 +1445,6 @@ KNOB_REGISTRY = (
         "waistMap": {
             "skip": "full",
         },
-        "derivedFrom": None,
         "deriveWhen": "priorReviewDetector",
         "nullReceipt": [],
         "resolvedKey": True,
@@ -1461,14 +1460,12 @@ KNOB_REGISTRY = (
             "values": ["local", "error"],
         },
         "env": "CODE_GAUNTLET_PR_NOT_FOUND_POLICY",
-        "reviewMdKey": None,
         "defaults": {
             "headless": ["error", "default"],
         },
         "type": "string",
         "waistPath": None,
         "waistMap": None,
-        "derivedFrom": None,
         "deriveWhen": None,
         "nullReceipt": [],
         "resolvedKey": True,
@@ -1484,38 +1481,13 @@ KNOB_REGISTRY = (
             "values": ["light", "full"],
         },
         "env": "CODE_GAUNTLET_TRIVIAL_SCOPE",
-        "reviewMdKey": None,
         "defaults": {
             "headless": ["full", "default"],
         },
         "type": "string",
         "waistPath": "scopeAnswer",
         "waistMap": None,
-        "derivedFrom": None,
         "deriveWhen": "lightEligible",
-        "nullReceipt": [],
-        "resolvedKey": False,
-    },
-    {
-        "key": "review_md",
-        "modes": ["interactive"],
-        "allowedSources": {
-            "interactive": ["discovery"],
-        },
-        "rule": {
-            "kind": "enum",
-            "values": ["present", "absent"],
-        },
-        "env": None,
-        "reviewMdKey": None,
-        "defaults": {
-            "interactive": ["absent", "discovery"],
-        },
-        "type": "string",
-        "waistPath": None,
-        "waistMap": None,
-        "derivedFrom": "reviewMd",
-        "deriveWhen": None,
         "nullReceipt": [],
         "resolvedKey": False,
     },
@@ -1703,6 +1675,13 @@ class SiteConfirmationsItem(TypedDict):
     line_start: int
     line_end: int
     confirmed: bool
+
+
+class Refutation(TypedDict):
+    file: str
+    line_start: int
+    line_end: int
+    anchor: str
 
 
 class AdmissionAssessmentsItem(TypedDict):

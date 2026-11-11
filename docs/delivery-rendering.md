@@ -27,7 +27,7 @@ platform-shrunk apply range withholds the replacement code while retaining the p
 ## Issue grouping
 
 Accepted groups stay indivisible. The shared lead ranking uses severity first, then security,
-tier, inline placement, confidence, core status, and description length. Posted severity is the
+proven origin, tier, inline placement, file, line, and ID. Confidence and prose length have no role. Posted severity is the
 highest member severity, and any main-tier member makes the whole group main tier. Selection, caps and public counts use
 these group values; findings keep their own assessed severity and tier in checkpoints and the
 local report. Each issue posts its lead sections. Folded security titles appear on one prepared

@@ -161,7 +161,7 @@ BENCH_ENV = {
 
 
 try:
-    EXPECTED_ECHO_RECEIPT = resolve("headless", BENCH_ENV, None, "pr")["configEcho"]
+    EXPECTED_ECHO_RECEIPT = resolve("headless", BENCH_ENV, "pr")["configEcho"]
 except (ResolverError, ResolverSetupError) as exc:
     raise RuntimeError(
         f"BENCH_PINS cannot resolve the expected echo receipt: {exc}"

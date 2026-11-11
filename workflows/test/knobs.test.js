@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { KNOB_REGISTRY, DERIVE_WHEN, DERIVED_FROM, matchesRule, computeLightEligible } from '../src/knobs.js';
+import { KNOB_REGISTRY, DERIVE_WHEN, matchesRule, computeLightEligible } from '../src/knobs.js';
 import { receiptEntryForKey, deriveConfigWaist, configEchoValue, validateConfigEcho } from '../src/knobs.js';
 import { interactiveArgs, headlessArgs, knobRows, priorReviewDetector } from './helpers/argsFixtures.js';
 
@@ -49,7 +49,7 @@ const RECEIPT_ROWS = [
     expected: ['configEcho.model_tier.value is invalid for interactive'] },
   { name: 'headless model', mode: 'headless', key: 'model_tier', entry: { value: 'standard', source: 'env' },
     expected: ['configEcho.model_tier.value is invalid for headless'] },
-  { name: 'delivery', mode: 'headless', key: 'delivery', entry: { value: 'chat,chat', source: 'review_md' },
+  { name: 'delivery', mode: 'headless', key: 'delivery', entry: { value: 'chat,chat', source: 'env' },
     expected: ['configEcho.delivery.value is invalid for headless'] },
   { name: 'post mode', mode: 'headless', key: 'post_mode', entry: { value: 'later', source: 'default' },
     expected: ['configEcho.post_mode.value is invalid for headless'] },
@@ -83,8 +83,6 @@ const RECEIPT_ROWS = [
     entry: { value: 'null', source: 'fixed' }, expected: ['configEcho.pr_comment_cap.source is invalid for interactive'] },
   { name: 'interactive delivery_tier source', mode: 'interactive', key: 'delivery_tier',
     entry: { value: 'all', source: 'fixed' }, expected: ['configEcho.delivery_tier.source is invalid for interactive'] },
-  { name: 'interactive review_md source', mode: 'interactive', key: 'review_md',
-    entry: { value: 'absent', source: 'fixed' }, expected: ['configEcho.review_md.source is invalid for interactive'] },
   { name: 'entry shape', mode: 'interactive', key: 'model_tier', entry: [],
     expected: ['configEcho.model_tier must be { value, source }'] },
   { name: 'null entry', mode: 'interactive', key: 'model_tier', entry: null,
@@ -115,8 +113,7 @@ const RECEIPT_SHAPE_ROWS = [
   { name: 'missing and extra', input: {
     model_tier: { value: 'optimized', source: 'fixed' }, pr_comment_cap: { value: 'null', source: 'default' },
     delivery_tier: { value: 'all', source: 'default' }, unexpected: { value: 'x', source: 'default' },
-  }, expected: ['configEcho has unexpected key(s): unexpected', 'configEcho is missing key(s): review_md',
-    'configEcho.review_md must be { value, source }'] },
+  }, expected: ['configEcho has unexpected key(s): unexpected'] },
 ];
 for (const { name, input, expected } of RECEIPT_SHAPE_ROWS) {
   test(`receipt shape: ${name}`, () => {
@@ -179,91 +176,22 @@ for (const { name, input, expected } of DERIVE_ROWS) {
   });
 }
 
-const DESCRIPTOR_ROWS = [
-  { name: 'model_tier', expected: [
-    ['headless', 'interactive'], { headless: ['env', 'default'], interactive: ['fixed'] },
-    { kind: 'enum', values: ['optimized'] }, 'CODE_GAUNTLET_MODEL_TIER', null,
-    { headless: ['optimized', 'default'], interactive: ['optimized', 'fixed'] }, 'string', null, null, null, null, [], true,
-  ] },
-  { name: 'delivery', expected: [
-    ['headless'], { headless: ['env', 'review_md', 'default'] }, { kind: 'csv_subset', values: ['chat', 'pr_comments', 'markdown'] },
-    'CODE_GAUNTLET_DELIVERY', 'default_delivery', { headless: ['markdown', 'default'] },
-    'csv_list', null, null, null, null, [], true,
-  ] },
-  { name: 'post_mode', expected: [
-    ['headless'], { headless: ['env', 'default'] }, { kind: 'enum', values: ['dry-run', 'live'] },
-    'CODE_GAUNTLET_POST_MODE', null, { headless: ['dry-run', 'default'] }, 'string', null, null, null, null, [], true,
-  ] },
-  { name: 'pr_comment_cap', expected: [
-    ['headless', 'interactive'], { headless: ['env', 'default'], interactive: ['env', 'default'] },
-    { headless: { kind: 'positive_digits' }, interactive: { kind: 'digits_or_null' } }, 'CODE_GAUNTLET_PR_COMMENT_CAP', null,
-    { headless: ['6', 'default'], interactive: ['null', 'default'] }, 'int_or_null', 'limits.deliveryCap', null, null, null,
-    ['interactive'], false,
-  ] },
-  { name: 'delivery_tier', expected: [
-    ['headless', 'interactive'], { headless: ['env', 'default'], interactive: ['env', 'default'] },
-    { kind: 'enum', values: ['all', 'main_only'] }, 'CODE_GAUNTLET_DELIVERY_TIER', null,
-    { headless: ['all', 'default'], interactive: ['all', 'default'] }, 'string', 'delivery.tier', null, null, null, [], false,
-  ] },
-  { name: 'draft_policy', expected: [
-    ['headless'], { headless: ['env', 'default'] }, { kind: 'enum', values: ['review', 'skip'] },
-    'CODE_GAUNTLET_DRAFT_POLICY', null, { headless: ['review', 'default'] }, 'string', null, null, null, null, [], true,
-  ] },
-  { name: 'reviewed_policy', expected: [
-    ['headless'], { headless: ['env', 'default'] }, { kind: 'enum', values: ['incremental', 'full', 'skip'] },
-    'CODE_GAUNTLET_REVIEWED_POLICY', null, { headless: ['full', 'default'] },
-    'string', 'reviewScope.requested', { skip: 'full' }, null, 'priorReviewDetector', [], true,
-  ] },
-  { name: 'pr_not_found_policy', expected: [
-    ['headless'], { headless: ['env', 'default'] }, { kind: 'enum', values: ['local', 'error'] },
-    'CODE_GAUNTLET_PR_NOT_FOUND_POLICY', null, { headless: ['error', 'default'] }, 'string', null, null, null, null, [], true,
-  ] },
-  { name: 'trivial_scope', expected: [
-    ['headless'], { headless: ['env', 'default'] }, { kind: 'enum', values: ['light', 'full'] },
-    'CODE_GAUNTLET_TRIVIAL_SCOPE', null, { headless: ['full', 'default'] },
-    'string', 'scopeAnswer', null, null, 'lightEligible', [], false,
-  ] },
-  { name: 'review_md', expected: [
-    ['interactive'], { interactive: ['discovery'] }, { kind: 'enum', values: ['present', 'absent'] },
-    null, null, { interactive: ['absent', 'discovery'] }, 'string', null, null, 'reviewMd', null, [], false,
-  ] },
-];
-for (const { name, expected } of DESCRIPTOR_ROWS) {
-  test(`descriptor: ${name}`, () => {
-    const row = KNOB_REGISTRY.find((d) => d.key === name);
-    assert.deepEqual([row.modes, row.allowedSources, row.rule, row.env, row.reviewMdKey, row.defaults,
-      row.type, row.waistPath, row.waistMap, row.derivedFrom, row.deriveWhen, row.nullReceipt, row.resolvedKey], expected);
-    assert.deepEqual(Object.keys(row), [
-      'key', 'modes', 'allowedSources', 'rule', 'env', 'reviewMdKey', 'defaults', 'type', 'waistPath', 'waistMap',
-      'derivedFrom', 'deriveWhen', 'nullReceipt', 'resolvedKey',
-    ]);
-    assert.ok(Object.isFrozen(row));
-    assert.ok(Object.isFrozen(row.rule));
-    assert.ok(Object.isFrozen(row.defaults));
-  });
-}
-
 const KNOB_DATA_ROWS = [
   { name: 'complete order', input: KNOB_REGISTRY.map((row) => row.key), expected: [
     'model_tier', 'delivery', 'post_mode', 'pr_comment_cap', 'delivery_tier', 'draft_policy',
-    'reviewed_policy', 'pr_not_found_policy', 'trivial_scope', 'review_md',
+    'reviewed_policy', 'pr_not_found_policy', 'trivial_scope',
   ] },
   { name: 'headless order', input: KNOB_REGISTRY.filter((d) => d.modes.includes('headless')).map((d) => d.key), expected: [
     'model_tier', 'delivery', 'post_mode', 'pr_comment_cap', 'delivery_tier', 'draft_policy',
     'reviewed_policy', 'pr_not_found_policy', 'trivial_scope',
   ] },
   { name: 'interactive order', input: KNOB_REGISTRY.filter((d) => d.modes.includes('interactive')).map((d) => d.key),
-    expected: ['model_tier', 'pr_comment_cap', 'delivery_tier', 'review_md'] },
+    expected: ['model_tier', 'pr_comment_cap', 'delivery_tier'] },
   { name: 'gate descriptions', input: Object.entries(DERIVE_WHEN).map(([name, row]) => [name, typeof row.holds, row.describe]),
     expected: [
       ['lightEligible', 'function', 'every changed file is low risk and fewer than 50 lines changed'],
       ['priorReviewDetector', 'function', '`reviewScope.detector` is an object'],
     ] },
-  { name: 'source descriptions', input: Object.entries(DERIVED_FROM).map(([name, row]) =>
-    [name, typeof row.fill, row.source, row.describe]), expected: [
-    ['reviewMd', 'function', 'discovery', '`present` when the `reviewMd` array is nonempty, else `absent`; without `reviewMd`, ' +
-      '`present` when `reviewConfigPath` is set, else `absent`'],
-  ] },
 ];
 for (const { name, input, expected } of KNOB_DATA_ROWS) {
   test(`knob data: ${name}`, () => assert.deepEqual(input, expected));

@@ -134,7 +134,8 @@ def test_workflow_trace_crosses_python_boundary_without_checkpoint_members(
     changed = [
         v
         for v in trace.versions
-        if v.trace_id == first.trace_id and v.projection()["confidence"] == 45
+        if v.trace_id == first.trace_id
+        and v.projection().get("verdict_route") == "report-only"
     ]
     assert changed
     report = next(v for v in trace.versions if v.finding.get("id") == "REPORT")
@@ -294,6 +295,7 @@ def test_score_to_dimension_credit_and_loss_funnel(
         tid = next(
             v.trace_id for v in trace.versions if v.finding.get("id") == "FILTER"
         )
+        version_traces = {v["version_id"]: v["trace_id"] for v in raw["versions"]}
         decision = stages.StageDecision(
             tid, "held_back", "validation_skipped", None, ()
         )
@@ -304,6 +306,11 @@ def test_score_to_dimension_credit_and_loss_funnel(
                 ]
                 snapshot["decisions"] = []
             if snapshot["stage"] == "dispose":
+                snapshot["finding_version_ids"] = [
+                    v
+                    for v in snapshot["finding_version_ids"]
+                    if version_traces[v] != tid
+                ]
                 snapshot["stage"] = "holdback"
                 snapshot["decisions"] = [asdict(decision)]
         path.write_text(json.dumps(raw), encoding="utf-8")
@@ -415,7 +422,7 @@ def test_score_to_dimension_credit_and_loss_funnel(
                 if trace_status == "holdback"
                 else "verify"
                 if trace_status == "audit_overlap"
-                else "filter"
+                else "delivery"
             ]
             == 1
         )
