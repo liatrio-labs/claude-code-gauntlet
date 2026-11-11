@@ -43,6 +43,14 @@ const validWebOrigin = (value) => {
   return match[1].startsWith('[') || match[1].length <= 253;
 };
 
+// The sandbox has no URL global; validate the authority before dropping URL suffixes.
+export function normalizeWebOrigin(value) {
+  if (typeof value !== 'string' || CONTROL_RE.test(value)) return null;
+  const match = /^(https?:\/\/[^/?#]+)(?:[/?#].*)?$/i.exec(value);
+  const origin = match?.[1].toLowerCase();
+  return validWebOrigin(origin) ? origin : null;
+}
+
 export const PR_IDENTITY_FIELDS = deepFreeze([
   { name: 'owner', required: true, check: (value) => typeof value === 'string' && value.length > 0, describe: 'a non-empty string' },
   { name: 'repo', required: true, check: (value) => typeof value === 'string' && value.length > 0, describe: 'a non-empty string',
@@ -51,7 +59,7 @@ export const PR_IDENTITY_FIELDS = deepFreeze([
   { name: 'sha_full', required: true, check: (value) => typeof value === 'string' && SHA_FULL_RE.test(value),
     describe: 'a 40-character lowercase hex commit id' },
   { name: 'platform', required: true, check: (value) => Object.hasOwn(PERMALINK_TEMPLATES, value), describe: 'one of github, gitlab' },
-  { name: 'web_origin', required: true, check: validWebOrigin, describe: 'an http(s) origin: scheme, host and optional port only' },
+  { name: 'web_origin', required: true, check: validWebOrigin, normalize: normalizeWebOrigin, describe: 'an http(s) URL without userinfo (normalized to its origin)' },
   { name: 'title', required: false, check: (value) => typeof value === 'string' && value.trim().length > 0,
     describe: 'a non-empty string when present' },
 ]);

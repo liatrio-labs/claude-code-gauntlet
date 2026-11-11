@@ -1631,3 +1631,15 @@ test('receipt conflicts survive both successful reviews and invalid-args exits a
     assert.ok(out.gaps.some((gap) => gap === 'contextReceipt.contextLines conflicts with top-level contextLines; preparation receipt value used'));
   }
 });
+for (const url of ['https://github.com/grafana/grafana', 'https://github.com/o/r/pull/9?files=1#diff']) {
+  test(`identity URL reaches report and post-review wrapper as an origin: ${url}`, async () => {
+    const identity = { ...prIdentity(), web_origin: url };
+    const args = validArgs({ delivery: { prIdentity: identity } });
+    const { out, payload } = await runAndCapture(args);
+    assert.equal(out.ok, true, JSON.stringify(out));
+    assert.equal(payload.postReview.web_origin, 'https://github.com');
+    assert.ok(payload.report.includes(`https://github.com/${identity.owner}/${identity.repo}/blob/`));
+    assert.equal(payload.report.includes(url + '/'), false);
+    assert.equal(args.delivery.prIdentity.web_origin, url);
+  });
+}

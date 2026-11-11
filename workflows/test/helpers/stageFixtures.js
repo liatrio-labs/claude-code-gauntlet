@@ -1,3 +1,4 @@
+import { hostResult } from './hostBoundary.js';
 import { assertPrompt, assertValidSchema, assertObjectRootSchema } from './pipelineMock.js';
 
 // Keep failures positional, as the platform does, so attribution cannot be hidden by the fixture.
@@ -18,11 +19,11 @@ export function stageCtx({ reply = { findings: [], complete: true, total_seen: 0
       calls.push({ prompt, ...opts });
       if (nulls.includes(opts.label)) throw new Error(`injected failure for ${opts.label}`);
       const value = Object.hasOwn(replies, opts.label) ? replies[opts.label] : reply;
-      return typeof value === 'function' ? value(prompt, opts) : value;
+      return hostResult(typeof value === 'function' ? value(prompt, opts) : value);
     },
     parallel: async (thunks) => Promise.all(thunks.map(async (thunk) => {
       if (typeof thunk !== 'function') throw new Error('parallel() members must be zero-arg functions');
-      try { return await thunk(); } catch { return null; }
+      try { return await hostResult(thunk()); } catch { return null; }
     })),
   };
 }

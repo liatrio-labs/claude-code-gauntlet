@@ -219,6 +219,12 @@ const validWebOrigin = (value) => {
   if (!match) return false;
   return match[1].startsWith('[') || match[1].length <= 253;
 };
+function normalizeWebOrigin(value) {
+  if (typeof value !== 'string' || CONTROL_RE.test(value)) return null;
+  const match = /^(https?:\/\/[^/?#]+)(?:[/?#].*)?$/i.exec(value);
+  const origin = match?.[1].toLowerCase();
+  return validWebOrigin(origin) ? origin : null;
+}
 const PR_IDENTITY_FIELDS = deepFreeze([
   { name: 'owner', required: true, check: (value) => typeof value === 'string' && value.length > 0, describe: 'a non-empty string' },
   { name: 'repo', required: true, check: (value) => typeof value === 'string' && value.length > 0, describe: 'a non-empty string',
@@ -227,7 +233,7 @@ const PR_IDENTITY_FIELDS = deepFreeze([
   { name: 'sha_full', required: true, check: (value) => typeof value === 'string' && SHA_FULL_RE.test(value),
     describe: 'a 40-character lowercase hex commit id' },
   { name: 'platform', required: true, check: (value) => Object.hasOwn(PERMALINK_TEMPLATES, value), describe: 'one of github, gitlab' },
-  { name: 'web_origin', required: true, check: validWebOrigin, describe: 'an http(s) origin: scheme, host and optional port only' },
+  { name: 'web_origin', required: true, check: validWebOrigin, normalize: normalizeWebOrigin, describe: 'an http(s) URL without userinfo (normalized to its origin)' },
   { name: 'title', required: false, check: (value) => typeof value === 'string' && value.trim().length > 0,
     describe: 'a non-empty string when present' },
 ]);
@@ -5833,7 +5839,7 @@ async function verifySliceWithRetry(c, inp, i, slice, record) {
     const retryRecord = { ...prepareVerifySlice(unresolved, record.baseBranch), model: record.model };
     const batch = await dispatchVerifySlice(c, inp, i, unresolved, retryRecord, `${inp.nonce}.${i}.r1`, `verify-slice-${i}-retry`, 'r1');
     collect(batch);
-    const eligible = new Set(unresolved.length > 1 ? batch.retryIds : []);
+    const eligible = new Set(unresolved.length > 1 ? (batch.retryIds || unresolved.map((f) => f.id)) : []);
     const pending = slice.map((finding, index) => ({ finding, index }))
       .filter(({ finding }) => !accepted.has(finding.id));
     const singletonBudget = verifySingletonRetryBudget(slice.length);
@@ -5974,6 +5980,7 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBran
   if (proof !== recomputed) {
     return { ok: false, reason: `delta content proof mismatch (receipt ${proof}, recomputed ${recomputed}) — the echoed values are not the ones the script wrote` };
   }
+  const wholeSlice = [...expectedProofs.values()].some((proof) => proof === null);
   let diagnostic = r.n_in === n ? null : {
     reason: `receipt n_in mismatch (got ${r.n_in == null ? 'missing' : r.n_in}, expected ${n})`, inputFault: 'mismatch',
   };
@@ -5981,12 +5988,11 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBran
     ['inline_checksum', expectedInlineChecksum, 'inline token proof missing from receipt', 'token', 'token'],
     ['input_checksum', expectedInputChecksum, 'input content proof missing from receipt', 'content', 'document'],
   ]) {
-    if (expected == null) continue;
+    if (expected == null || (field === 'inline_checksum' && !wholeSlice)) continue;
     const got = typeof r[field] === 'string' ? r[field].trim() : '';
     if (!got) diagnostic ??= { reason: missingReason, inputFault: 'missing' };
     else if (got !== expected) diagnostic ??= { reason: `slice-input ${name} proof mismatch (receipt ${got}, dispatched ${expected}) — the ${noun} the script decoded is not the ${noun} this stage dispatched`, inputFault: 'mismatch' };
   }
-  const wholeSlice = [...expectedProofs.values()].some((proof) => proof === null);
   const matchesRecordProof = (id) => expectedProofs.get(id) !== null && proofs.get(id) === expectedProofs.get(id);
   if (wholeSlice && diagnostic) return { ok: false, ...diagnostic };
   const deltas = ids.filter((id) => !malformedLocations.has(id) && byId.has(id) && (wholeSlice || matchesRecordProof(id)))
@@ -5995,7 +6001,7 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedProofs, baseBran
   return {
     ok: true, deltas,
     retryIds: wholeSlice ? [] : ids.filter((id) => !byId.has(id) || !matchesRecordProof(id)),
-    matchedProofIds: new Set(deltas.filter((d) => matchesRecordProof(d.id)).map((d) => d.id)),
+    matchedProofIds: deltas.filter((d) => matchesRecordProof(d.id)).map((d) => d.id),
     proven: !diagnostic && deltas.length === ids.length,
     reason: diagnostic?.reason || `record proof missing or mismatched for ${ids.length - deltas.length} of ${n} finding(s)`,
     inputFault: deltas.length !== ids.length
@@ -6111,7 +6117,8 @@ function validatePrIdentity(id, errors) {
     return;
   }
   for (const field of PR_IDENTITY_FIELDS) {
-    const value = id[field.name];
+    const raw = id[field.name];
+    const value = field.normalize && raw !== undefined ? field.normalize(raw) : raw;
     const valid = value !== undefined && field.check(value);
     if ((value === undefined && field.required) || (value !== undefined && !valid)) {
       errors.push(`delivery.prIdentity.${field.name} must be ${field.describe}`);
@@ -6179,6 +6186,15 @@ function stripNullOptionalsReport(args, descriptors = KNOB_REGISTRY) {
       dropped.push('delivery.prIdentity.title');
     }
     if (delivery.tier === null) { delete delivery.tier; dropped.push('delivery.tier'); }
+    if (isPlainObject(delivery.prIdentity)) {
+      const id = { ...delivery.prIdentity };
+      for (const field of PR_IDENTITY_FIELDS) {
+        if (field.normalize && id[field.name] !== undefined) {
+          id[field.name] = field.normalize(id[field.name]) ?? id[field.name];
+        }
+      }
+      delivery.prIdentity = id;
+    }
     out.delivery = delivery;
   }
   if (isPlainObject(out.limits)) {

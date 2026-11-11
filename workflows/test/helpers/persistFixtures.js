@@ -1,3 +1,4 @@
+import { hostResult } from './hostBoundary.js';
 import { parseWriterPayload } from '../../src/persist.js';
 import assert from 'node:assert/strict';
 import { fnv1a32 } from '../../src/wire.js';
@@ -91,7 +92,7 @@ export function persistCtx({ writer, receipt } = {}) {
   let attempt = 0;
   return {
     calls,
-    agent: async (prompt, dispatch = {}) => {
+    agent: (prompt, dispatch = {}) => hostResult((async () => {
       calls.push({ prompt, ...dispatch });
       if (dispatch.label === 'artifact-writer') {
         attempt += 1;
@@ -103,8 +104,8 @@ export function persistCtx({ writer, receipt } = {}) {
       }
       if (dispatch.label === 'assemble-artifacts') return receipt ? receipt(receiptFor(plan), attempt) : receiptFor(plan);
       return null;
-    },
-    parallel: async (thunks) => Promise.all(thunks.map((thunk) => thunk())),
+    })()),
+    parallel: async (thunks) => Promise.all(thunks.map((thunk) => hostResult(thunk()))),
   };
 }
 
