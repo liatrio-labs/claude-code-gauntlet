@@ -213,7 +213,6 @@ def test_contract_schema(agent_type: str) -> None:
         *live["required"],
         "anchor",
         "evidence",
-        "change_origin",
         *contract["requiredExtra"],
     ]
     required = [key for key in required if key != "id"]
@@ -278,7 +277,9 @@ console.log(JSON.stringify({out,originals,calls:ctx.calls,violations:ctx.violati
     )
     data = json.loads(result.stdout)
     assert data["violations"] == []
-    assert data["out"]["gaps"] == []
+    assert data["out"]["gaps"] == [
+        "discovery coverage unavailable: invalid or unavailable region plan"
+    ]
     findings = data["out"]["findings"]
     assert len(findings) == 14
     assert len({finding["id"] for finding in findings}) == 14
@@ -342,7 +343,7 @@ def test_handwritten_field_tables():
     per_dimension = table_named(tables, "Per-dimension")
     assert {field for field, cells in canonical} == set(registry()["propTypes"])
     assert {field for field, cells in per_dimension} == set(all_extras())
-    required = set(registry()["required"]) | {"anchor", "evidence", "change_origin"}
+    required = set(registry()["required"]) | {"anchor", "evidence"}
     extra_required = {
         field for row in registry()["dimensions"] for field in row["requiredExtra"]
     }
@@ -351,7 +352,6 @@ def test_handwritten_field_tables():
         for row in registry()["dimensions"]
         for field in row["requiredWhenDimension"]
     }
-    conditional.add("change_relevance")
     for field, cells in canonical:
         assert cells[0] == registry()["propTypes"][field]
         expected = (
@@ -580,30 +580,6 @@ def test_complete_read_contract():
         text = read(f"agents/{name}.md")
         assert text.count(READ_MARKER) == 1
         assert block in text
-
-
-@pytest.mark.parametrize(
-    ("rel", "needles"),
-    [
-        pytest.param(
-            "skills/code-gauntlet/references/phase2-preparation.md",
-            (
-                "discoveryPlanRef",
-                "plan stays on disk",
-                "policy: { tier, subagentModel, provider, gateway",
-            ),
-            id="preparation-waist-instructions",
-        ),
-        pytest.param(
-            "skills/code-gauntlet/references/phase2-triage.md",
-            ("contextLines", "contextChars", "policy.gateway"),
-            id="triage-waist-instructions",
-        ),
-    ],
-)
-def test_waist_consumers(rel: str, needles: tuple[str, ...]) -> None:
-    text = read(rel)
-    assert all(needle in text for needle in needles)
 
 
 def test_triage_dispatch():

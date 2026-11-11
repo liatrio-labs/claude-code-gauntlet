@@ -15,7 +15,7 @@ const callPlanner = defineAgentCall('discover:plan', () => ({type:'object',prope
   status:string, nonce_checksum:string, part:integer,parts:integer,input_checksum:string,request_checksum:string,receipt_checksum:string,reason:string,
   result:{type:'object',properties:{stored:{type:'boolean'},available:{type:'boolean'},reason:string,
     ledger_checksum:string,state_checksum:string,assigned_count:integer,assignment_checksum:{type:['string','null']},assignment_lines:integer,assignment_prompt:string,
-    summary:{type:'object',properties:{version:integer,status:string,region_count:integer,uncovered_count:integer,omitted_count:integer,hunter_count:integer,
+    summary:{type:'object',properties:{version:integer,status:string,region_count:integer,uncovered_count:integer,remaining_uncovered_count:integer,omitted_count:integer,hunter_count:integer,
       hunters:{type:'array',items:{type:'object',properties:{}}},omitted:{type:'array',items:{type:'object',properties:{}}},budget_bytes:integer,assigned_bytes:integer,omitted_fact_packets:integer},additionalProperties:false},
   },additionalProperties:false},
 },required:['status'],additionalProperties:false}));
@@ -129,7 +129,7 @@ export async function planOnDisk(ctx, input, phase, request) {
   const summary = result.summary;
   if (!HASH.test(result.ledger_checksum || '') || !HASH.test(result.state_checksum || '')
     || !summary || summary.version !== 2 || summary.status !== 'trimmed'
-    || !['region_count','uncovered_count','omitted_count','hunter_count','assigned_bytes','omitted_fact_packets'].every((key) => Number.isSafeInteger(summary[key]) && summary[key] >= 0)
+    || !['region_count','uncovered_count','remaining_uncovered_count','omitted_count','hunter_count','assigned_bytes','omitted_fact_packets'].every((key) => Number.isSafeInteger(summary[key]) && summary[key] >= 0)
     || summary.budget_bytes !== READ_PLAN_MAX_BYTES || summary.assigned_bytes > READ_PLAN_MAX_BYTES
     || !Array.isArray(summary.hunters) || summary.hunters.length || !Array.isArray(summary.omitted) || summary.omitted.length
     || !Number.isSafeInteger(result.assigned_count) || result.assigned_count < 0

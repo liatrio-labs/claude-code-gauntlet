@@ -160,13 +160,9 @@ def _require(condition, reason):
 
 
 def _coverage_artifact_name(name: str) -> bool:
-    import re
+    from gauntlet.discovery_disk import valid_artifact_name
 
-    return bool(
-        re.fullmatch(
-            r"code-gauntlet-coverage-ledger-[0-9a-f]{8}-[0-9a-f]{7,40}\.json", name
-        )
-    )
+    return valid_artifact_name(name, "coverage-ledger")
 
 
 def load_trace(trace_path: Path, *, expected_sha256: str) -> MeasurementTrace:

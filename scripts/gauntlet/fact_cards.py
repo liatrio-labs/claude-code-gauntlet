@@ -31,8 +31,8 @@ _CALL = re.compile(r"\b([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*\(")
 class CalleeCandidate:
     file: str
     line: int
-    lines: tuple[str, ...]
     prefix: str
+    name: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,6 +192,9 @@ def build_fact_cards(
             {f.rpartition("/")[0] for f in changed if "/" in f}
         ),
     )
+    inventory = source.unignored_files(
+        inventory, deadline=deadline, max_listing_bytes=MAX_LISTING_BYTES
+    )
     scan["available"] = inventory.available
     scan["listing_truncated"] = inventory.truncated
     scan["excluded"] = inventory.excluded
@@ -230,7 +233,7 @@ def build_fact_cards(
     def card(
         kind: Literal["neighbor", "callee_candidate", "sibling_contrast"],
         file: str,
-        lines: tuple[str, ...],
+        name: str,
         start: int,
         end: int,
         related: list[str],
@@ -241,51 +244,10 @@ def build_fact_cards(
             "file": file,
             "line_start": start,
             "line_end": end,
-            "text": "\n".join(lines[start - 1 : end]),
+            "text": name + "(…)",
             "related_files": related,
             "detail": detail,
         }
-
-    for file in sorted(changed, key=lambda p: (is_test_path(p), p)):
-        if not source_path(file):
-            continue
-        if time.monotonic() >= deadline:
-            scan["deadline_reached"] = True
-            break
-        lines = loaded.get(file)
-        if lines is None:
-            continue
-        shown = {
-            entry["line"]
-            for entry in annotated.entries.values()
-            if entry["file"] == file and entry["side"] == "head"
-        }
-        wanted = sorted(
-            {
-                n
-                for start, end in annotated.hunks.get(file, ())
-                for n in range(max(1, start - 20), min(len(lines), end + 20) + 1)
-                if n not in shown
-            }
-        )
-        spans: list[tuple[int, int]] = []
-        for n in wanted:
-            if spans and n == spans[-1][1] + 1 and n - spans[-1][0] < 20:
-                spans[-1] = (spans[-1][0], n)
-            else:
-                spans.append((n, n))
-        for lo, hi in spans:
-            neighbors.append(
-                card(
-                    "neighbor",
-                    file,
-                    lines,
-                    lo,
-                    hi,
-                    [file],
-                    "Head neighborhood outside diff; unchanged code.",
-                )
-            )
 
     shown_head = {
         (e["file"], e["line"])
@@ -296,6 +258,7 @@ def build_fact_cards(
     occurrences: Counter[str] = Counter()
     prefix_uses: Counter[str] = Counter()
     prefix_names: dict[str, set[str]] = {}
+    declarations: dict[str, list[CalleeCandidate]] = {}
     for file, lines in loaded.items() if names else ():
         if time.monotonic() >= deadline:
             scan["deadline_reached"] = True
@@ -316,8 +279,8 @@ def build_fact_cards(
                 name = token.rsplit(".", 1)[-1]
                 words = line[: match.start()].split()
                 prefix = " ".join(words)
-                introducing = bool(re.search(r"[A-Za-z_]", prefix)) and not any(
-                    c in prefix for c in "=();{}"
+                introducing = bool(words) and all(
+                    re.fullmatch(r"[A-Za-z_]\w*", word) for word in words
                 )
                 if len(words) > 2:
                     prefix = " ".join(
@@ -326,6 +289,14 @@ def build_fact_cards(
                 if introducing:
                     prefix_uses[prefix] += 1
                     prefix_names.setdefault(prefix, set()).add(name)
+                if (
+                    introducing
+                    and "." not in token
+                    and _body_after_parameters(lines, n, match.end() - 1)
+                ):
+                    declarations.setdefault(file, []).append(
+                        CalleeCandidate(file, n + 1, prefix, name)
+                    )
                 if name not in names:
                     continue
                 occurrences[name] += 1
@@ -336,8 +307,16 @@ def build_fact_cards(
                     if (file, n + 1) in shown_head:
                         continue
                     candidates.setdefault(name, []).append(
-                        CalleeCandidate(file, n + 1, lines, prefix)
+                        CalleeCandidate(file, n + 1, prefix, name)
                     )
+
+    def introduced(candidate: CalleeCandidate) -> bool:
+        return prefix_uses[candidate.prefix] <= 2 * len(prefix_names[candidate.prefix])
+
+    declarations = {
+        file: [d for d in items if introduced(d)]
+        for file, items in declarations.items()
+    }
 
     def distance(file: str, related: set[str]) -> int:
         parts = file.split("/")[:-1]
@@ -358,11 +337,7 @@ def build_fact_cards(
         all_matches = candidates.get(name, [])
         # Introduction-shaped prefixes normally bind distinct names. Repeated uses
         # of the same names reveal invocation syntax without language keyword lists.
-        matches = [
-            m
-            for m in all_matches
-            if prefix_uses[m.prefix] <= 2 * len(prefix_names[m.prefix])
-        ]
+        matches = [m for m in all_matches if introduced(m)]
         result["omitted"] += len(all_matches) - len(matches)
         if occurrences[name] > MAX_CALL_OCCURRENCES:
             result["omitted"] += len(matches)
@@ -400,11 +375,11 @@ def build_fact_cards(
                 card(
                     "callee_candidate",
                     definition.file,
-                    definition.lines,
+                    definition.name,
                     definition.line,
-                    min(len(definition.lines), definition.line + 9),
+                    definition.line,
                     sorted(call_files[ranked_call.call]),
-                    f"Lexical candidate for {ranked_call.call}; bounded excerpt, resolution unproven.",
+                    f"Lexical candidate for {ranked_call.call}; declaration outline only; parameters and body omitted, resolution unproven.",
                 )
             )
 
@@ -412,13 +387,26 @@ def build_fact_cards(
         if time.monotonic() >= deadline:
             scan["deadline_reached"] = True
             break
-        lines = loaded.get(file)
-        if lines is None:
-            continue
+        for declaration in declarations.get(file, []):
+            if (file, declaration.line) not in shown_head and any(
+                max(1, a - 20) <= declaration.line <= b + 20
+                for a, b in annotated.hunks.get(file, ())
+            ):
+                neighbors.append(
+                    card(
+                        "neighbor",
+                        file,
+                        declaration.name,
+                        declaration.line,
+                        declaration.line,
+                        [file],
+                        "Unchanged nearby declaration; parameters and body omitted.",
+                    )
+                )
         directory = file.rpartition("/")[0]
         peers = [
-            (p, text)
-            for p, text in loaded.items()
+            p
+            for p in loaded
             if p not in changed
             and p.rpartition("/")[0] == directory
             and is_test_path(p) == is_test_path(file)
@@ -426,42 +414,33 @@ def build_fact_cards(
         if len(peers) < 3:
             continue
         counts: Counter[str] = Counter()
-        for _, peer_text in peers:
-            if time.monotonic() >= deadline:
-                scan["deadline_reached"] = True
-                break
-            counts.update(
-                {
-                    line.strip()
-                    for line in peer_text
-                    if line[:1].isspace() and len(re.findall(r"\w+", line)) >= 3
-                }
-            )
-        present = {line.strip() for line in lines}
+        for peer in peers:
+            counts.update({d.name for d in declarations.get(peer, [])})
+        present = {d.name for d in declarations.get(file, [])}
         signals = sorted(
             (
-                line
-                for line, count in counts.items()
-                if count >= math.ceil(len(peers) * 0.6) and line not in present
+                name
+                for name, count in counts.items()
+                if count >= math.ceil(len(peers) * 0.6) and name not in present
             ),
-            key=lambda line: (-counts[line], line),
+            key=lambda name: (-counts[name], name),
         )[:6]
-        for signal in signals:
-            peer, peer_lines = next(
-                (p, t) for p, t in peers if signal in {s.strip() for s in t}
-            )
-            signal_line = next(
-                i + 1 for i, s in enumerate(peer_lines) if s.strip() == signal
+        for name in signals:
+            declaration = next(
+                d
+                for peer in peers
+                for d in declarations.get(peer, [])
+                if d.name == name
             )
             siblings.append(
                 card(
                     "sibling_contrast",
-                    peer,
-                    peer_lines,
-                    max(1, signal_line - 1),
-                    min(len(peer_lines), signal_line + 2),
+                    declaration.file,
+                    name,
+                    declaration.line,
+                    declaration.line,
                     [file],
-                    f"Exact line absent from changed file; present in {counts[signal]}/{len(peers)} unchanged peers. No correctness claim.",
+                    f"Declaration absent from changed file; present in {counts[name]}/{len(peers)} unchanged peers. Parameters and bodies omitted; no correctness claim.",
                 )
             )
 

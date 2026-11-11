@@ -403,3 +403,50 @@ def test_window_attempt_requires_terminal_measurement_status(
     missing = not measurement
     assert attempt.validity.state == ("invalid" if missing else "valid")
     assert ("measurement_trace_missing" in attempt.validity.reasons) is missing
+
+
+@pytest.mark.parametrize(
+    "reply", [None, {}, {"findings": [], "complete": False, "total_seen": 0}]
+)
+def test_optional_hunter_failures_remain_disclosures_not_primary_execution_failures(
+    tmp_path, reply
+):
+    result = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            """
+import {readFileSync} from 'node:fs';
+import {discover} from './workflows/src/discover.js';
+import {withPreparedPlan} from './workflows/test/helpers/diskDiscovery.js';
+const reply=JSON.parse(readFileSync(0,'utf8'));
+const input={contextLines:10,removedTests:{status:'available',items:[],omitted:0},discoveryPlan:{version:2,status:'available',fact_packets:[],regions:[{id:'r',file:'source',line_start:1,line_end:2,reads:[{offset:3,limit:2,bytes:100}]}]}};
+const ctx={agent:async(_p,o)=>o.agentType==='code-gauntlet:gap-hunter'?reply:{findings:[],complete:true,total_seen:0,removed_test_audit:[]},parallel:async ts=>Promise.all(ts.map(t=>t()))};
+const out=await withPreparedPlan(ctx,input,discover,{materialize:false});
+console.log(JSON.stringify(out.gaps));
+""",
+        ],
+        cwd=ROOT,
+        input=json.dumps(reply),
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=True,
+    )
+    gaps = json.loads(result.stdout)
+    assert any("gap-hunter" in gap for gap in gaps)
+    record = tmp_path / "workflows/wf_hunter.json"
+    record.parent.mkdir()
+    record.write_text(
+        json.dumps(
+            {
+                "workflowName": invoke.PIPELINE_META_NAME,
+                "result": {"ok": True, "gaps": gaps},
+            }
+        ),
+        encoding="utf-8",
+    )
+    failures, disclosures = check.workflow_stage_outcomes(tmp_path)
+    assert failures == ()
+    assert any("gap-hunter" in item for item in disclosures)

@@ -60,8 +60,7 @@ class Risk(TypedDict):
 class SelectionRequest(RequestContext):
     refs: list[list[Any]]
     risks: list[Risk]
-    enabled: bool
-    disabled_reason: Literal["scope", "primary_failure"]
+    mode: Literal["full", "scope", "primary_failure"]
 
 
 class HunterObservation(TypedDict):
@@ -114,9 +113,24 @@ def json_text(value: object) -> str:
 
 
 def artifact_name(kind: str, sha: str, nonce: str = "") -> str:
-    middle = f"-{fnv1a32(nonce)[-8:]}" if nonce else ""
+    middle = f"-{artifact_nonce(nonce)}" if nonce else ""
     suffix = "md" if kind == "gap-assignment" else "json"
     return f"code-gauntlet-{kind}{middle}-{sha}.{suffix}"
+
+
+def artifact_nonce(nonce: str) -> str:
+    return fnv1a32(nonce)[-8:]
+
+
+def valid_artifact_name(name: str, kind: str) -> bool:
+    prefix, suffix = artifact_name(kind, "SHA", "nonce").split("SHA")
+    marker = artifact_nonce("nonce")
+    pattern = (
+        re.escape(prefix).replace(marker, f"[0-9a-f]{{{len(marker)}}}")
+        + r"[0-9a-f]{7,40}"
+        + re.escape(suffix)
+    )
+    return re.fullmatch(pattern, name) is not None
 
 
 def save(path: Path, value: object) -> str:
@@ -162,6 +176,8 @@ def valid_plan(plan: object, lines: int) -> bool:
     if not natural(lines) or lines < 1:
         return False
     regions, facts = plan.get("regions"), plan.get("fact_packets")
+    if plan["status"] == "unavailable" and (regions or facts):
+        return False
     if (
         not isinstance(regions, list)
         or not isinstance(facts, list)
@@ -268,6 +284,7 @@ def summary(ledger: CoverageLedger) -> TrimmedCoverageLedger:
         "status": "trimmed",
         "region_count": len(ledger["regions"]),
         "uncovered_count": len(ledger["uncovered"]),
+        "remaining_uncovered_count": len(ledger["remaining_uncovered"]),
         "omitted_count": len(ledger["omitted"]),
         "hunter_count": len(ledger["hunters"]),
         "hunters": [],
@@ -354,11 +371,14 @@ def choose(
     nonce: str,
 ) -> tuple[list[Region], str]:
     uncovered = [r for r in plan["regions"] if r["id"] in ledger["uncovered"]]
-    enabled = request["enabled"]
+    enabled = request["mode"] == "full"
+    disabled_reason: Literal["scope", "primary_failure"] = (
+        "primary_failure" if request["mode"] == "primary_failure" else "scope"
+    )
     ledger["omitted"] = [
         {
             "id": r["id"],
-            "reason": request["disabled_reason"] if not enabled else "no_head_anchor",
+            "reason": disabled_reason if not enabled else "no_head_anchor",
         }
         for r in uncovered
         if not enabled or r["line_start"] == 0
@@ -598,10 +618,7 @@ def expand_requests(
             **context,
             "refs": refs,
             "risks": priorities,
-            "enabled": mode == "full",
-            "disabled_reason": "primary_failure"
-            if mode == "primary_failure"
-            else "scope",
+            "mode": mode,
         }
     hunters = first.get("hunters")
     if not isinstance(hunters, list) or not re.fullmatch(
@@ -626,7 +643,7 @@ def expand_requests(
         previous_point = (-1, 0)
         for anchor_row in anchors.get(agent, []):
             if not isinstance(anchor_row, list) or len(anchor_row) != 3:
-                raise ValueError("invalid anchor")
+                continue
             id, index, line = anchor_row
             if (
                 not isinstance(id, str)
@@ -638,7 +655,7 @@ def expand_requests(
                 or line == 0
                 or (index, line) < previous_point
             ):
-                raise ValueError("unordered or invalid anchor")
+                continue
             ids.add(id)
             previous_point = (index, line)
             points.append([id, files[index] if index >= 0 else None, line])

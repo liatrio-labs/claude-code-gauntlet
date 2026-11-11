@@ -396,6 +396,7 @@ def test_detector_real_child_degradation(tmp_path, invoke, monkeypatch):
 PATCH = "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n"
 # argv strings split on spaces before placeholders expand, so paths may hold spaces.
 MAIN_FAILURE = {
+    "plan_discovery": "--output-dir {dir} --sha abc1234 --nonce cli --phase select --plan-checksum 0000 --input-checksum fnv1a32:0x00000000 --part 0 --parts 5 --request {{}}",
     "check_refutations": "--request invalid --repo-root {dir} --head-sha abcd --target-kind local --diff-file {missing}",
     "capture_policy_env": "",
     "check_eligibility": "--platform github --pr 7",
@@ -426,6 +427,7 @@ MAIN_FAILURE = {
 # diff_numstat, emit_style_context and ensure_output_dir have no malformed-input
 # branch beyond the failure row.
 BAD_INPUT = {
+    "plan_discovery": "--output-dir {dir} --sha abc1234 --nonce cli --phase select --plan-checksum 0000 --input-checksum bad --part 0 --parts 1 --request {{}}",
     "check_eligibility": "--platform github --pr 7",
     "list_pr_files": "--platform github --pr 0",
     "pr_status": "--platform github --pr 0",
@@ -451,6 +453,10 @@ BAD_INPUT = {
 POST = {"platform": "github", "owner": "o", "repo": "r", "pr_number": 5, "sha": FULL}
 # Each success row is (files written under the case directory, argv).
 SUCCESS = {
+    "plan_discovery": (
+        {},
+        "--output-dir {dir} --sha abc1234 --nonce cli --phase select --plan-checksum 0000 --input-checksum fnv1a32:0x00000000 --part 0 --parts 1 --request {{}}",
+    ),
     "check_refutations": (
         {"diff.patch": "diff\n"},
         '--request {{"citations":[]}} --repo-root {dir} --head-sha abcd --target-kind local --diff-file {dir}/diff.patch',
@@ -817,6 +823,7 @@ def rows():
     yield from (
         (name, "help")
         for name in (
+            "plan_discovery",
             "diff_numstat",
             "incremental_diff",
             "stale_truncate",
@@ -933,11 +940,7 @@ def test_recorded_cli(name, case, tmp_path, invoke, monkeypatch, forge_factory):
 
 
 def test_recording_covers_all_entry_files():
-    # Content-bound planner envelopes are exercised from foreign cwd by
-    # test_discovery_disk instead of duplicating content-bound byte snapshots here.
-    assert set(MAIN_FAILURE) | {"plan_discovery"} == {
-        path.stem for path in (ROOT / "scripts").glob("*.py")
-    }
+    assert set(MAIN_FAILURE) == {path.stem for path in (ROOT / "scripts").glob("*.py")}
     assert set(BAD_INPUT) | set(SUCCESS) <= set(MAIN_FAILURE)
     assert sorted(f"{name}/{case}" for name, case in rows()) == sorted(RECORDED)
 

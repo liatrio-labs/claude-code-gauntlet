@@ -155,7 +155,7 @@ class CoverageLedger(TypedDict):
     omitted_fact_packets: int
 
 
-class TrimmedCoverageLedger(TypedDict):
+class _TrimmedCoverageLedger(TypedDict):
     version: Literal[2]
     status: Literal["trimmed"]
     region_count: int
@@ -167,3 +167,8 @@ class TrimmedCoverageLedger(TypedDict):
     budget_bytes: int
     assigned_bytes: int
     omitted_fact_packets: int
+
+
+class TrimmedCoverageLedger(_TrimmedCoverageLedger, total=False):
+    # Older trimmed traces do not have a post-hunter count.
+    remaining_uncovered_count: int

@@ -104,7 +104,7 @@ def test_repeated_invocation_shapes_do_not_introduce_a_callee(scan_snapshot, pre
     facts = scan_snapshot(library)
     callees = [c for c in facts["cards"] if c["kind"] == "callee_candidate"]
     assert len(callees) == 1
-    assert callees[0]["text"].startswith("def target(value):")
+    assert callees[0]["text"] == "target(…)"
     assert callees[0]["line_start"] == 13
 
 
@@ -118,4 +118,4 @@ def test_invocation_shapes_share_variable_slots_without_language_keywords(
     facts = scan_snapshot(library + "def target(value):\n  return value\n")
     callees = [c for c in facts["cards"] if c["kind"] == "callee_candidate"]
     assert len(callees) == 1
-    assert callees[0]["text"].startswith("def target(value):")
+    assert callees[0]["text"] == "target(…)"

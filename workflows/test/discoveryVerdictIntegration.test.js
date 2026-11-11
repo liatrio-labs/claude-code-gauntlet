@@ -8,10 +8,9 @@ import { validArgs } from './helpers/argsFixtures.js';
 import { makeCtx, makeFinding } from './helpers/pipelineMock.js';
 import { decodeMeasurement } from './helpers/decodeMeasurement.js';
 
-for (const gateway of [false, true]) for (const change_origin of ['introduced', 'moved_or_carried', 'pre_existing']) {
+for (const gateway of [false, true]) {
   for (const [consequence, route] of [['present_failure', 'posted'], ['latent', 'posted-latent'], ['artifact_defect', 'posted-artifact']]) {
-    test(`hunter reaches ${route} with ${change_origin}, gateway=${gateway}, and an inconclusive challenger`, async () => {
-      const relevance = change_origin === 'pre_existing' ? 'The changed caller now depends on this code for the new input.' : undefined;
+    test(`hunter reaches ${route} without an extra origin taxonomy, gateway=${gateway}, and an inconclusive challenger`, async () => {
       const args = validArgs({ measurementTrace:true, policy:{gateway}, persist:{returnPrimaries:true},
         contextReceipt:{contextLines:20,contextChars:400,contextMaxLineChars:20,contextReadPlanVersion:1,contextReadChunks:[20],
           discoveryPlan:{version:2,status:'available',fact_packets:[],regions:[
@@ -23,8 +22,7 @@ for (const gateway of [false, true]) for (const change_origin of ['introduced', 
       ctx.agent = async (prompt, options) => {
         let result = await original(prompt, options);
         if (options.agentType === 'code-gauntlet:gap-hunter') {
-          const candidate = makeFinding('candidate', {file:'OUTSIDE.js',evidence:'FOCUS.js:1 supplies the triggering input.',change_origin,
-            ...(relevance ? {change_relevance:relevance} : {})});
+          const candidate = makeFinding('candidate', {file:'OUTSIDE.js',evidence:'FOCUS.js:1 supplies the triggering input.'});
           const props = options.schema.properties.findings.items.properties;
           result = {...result,findings:[Object.fromEntries(Object.entries(candidate).filter(([key]) => Object.hasOwn(props,key)))],total_seen:1};
           assert.ok(schemaAccepts(result,options.schema));
@@ -65,18 +63,16 @@ for (const gateway of [false, true]) for (const change_origin of ['introduced', 
       assert.equal(finding.disposition,'deliver');
       for (const version of trace.versions) {
         assert.equal(version.discovery_dimension,'gap_hunt');
-        assert.equal(version.finding.change_origin,change_origin);
-        assert.equal(version.finding.change_relevance,relevance);
+        for (const key of ['change_origin','change_relevance']) assert.equal(Object.hasOwn(version.finding,key),false);
       }
       const persisted = JSON.parse(out.persistReturn.entries.find((entry) => entry.path.endsWith(`code-gauntlet-findings-${args.headShaShort}.json`)).text);
-      assert.equal(persisted[0].change_origin,change_origin);
-      assert.equal(persisted[0].change_relevance,relevance);
+      for (const key of ['change_origin','change_relevance']) assert.equal(Object.hasOwn(persisted[0],key),false);
       assert.equal(persisted[0].verdict_route,route);
     });
   }
 }
 
-for (const field of ['change_origin','change_relevance']) test(`provenance remains finding data when a reader incorrectly echoes ${field}`, async () => {
+for (const field of ['change_origin','change_relevance']) test(`reader schemas reject retired metadata when a reader incorrectly echoes ${field}`, async () => {
   const finding = makeFinding('gap-hunter-1',{agent:'gap-hunter',change_origin:'pre_existing',change_relevance:'The changed caller now relies on this implementation.'});
   const ctx = {parallel:async (tasks) => Promise.all(tasks.map((task) => task())),
     agent:async () => ({validations:[{finding_id:finding.id,claim:'confirmed',consequence:'present_failure',justification:'Inspected the failing input.',[field]:finding[field]}]})};

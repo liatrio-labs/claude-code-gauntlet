@@ -36,10 +36,12 @@ export function coverageReferences(specs, results, repoRoot) {
 }
 
 export function coverageAnchors(findings, repoRoot) {
+  const seen=new Set();
   return findings.flatMap((finding) => {
     const path = repoRelativeFindingPath(repoRoot || '.', finding?.file);
-    return path.file && Number.isSafeInteger(finding.line_start)
-      ? [[String(finding.id), path.file, finding.line_start]] : [];
+    if(!path.file || !Number.isSafeInteger(finding.line_start) || finding.line_start<1 || typeof finding.id!=='string' || !finding.id.trim() || seen.has(finding.id))return [];
+    seen.add(finding.id);
+    return [[finding.id,path.file,finding.line_start]];
   });
 }
 
@@ -49,6 +51,8 @@ export function boundedCoverageLedger(ledger, budget = COVERAGE_LEDGER_CHAR_BUDG
   if (JSON.stringify(ledger).length <= budget) return ledger;
   const summary = { version: 2, status: 'trimmed', region_count: ledger.region_count ?? ledger.regions.length,
     uncovered_count: ledger.uncovered_count ?? ledger.uncovered.length,
+    ...((ledger.remaining_uncovered_count !== undefined || Array.isArray(ledger.remaining_uncovered))
+      ? {remaining_uncovered_count:ledger.remaining_uncovered_count ?? ledger.remaining_uncovered.length} : {}),
     omitted_count: ledger.omitted_count ?? ledger.omitted.length, hunter_count: ledger.hunter_count ?? ledger.hunters.length,
     hunters: [...ledger.hunters], omitted: [...ledger.omitted], budget_bytes: ledger.budget_bytes,
     assigned_bytes: ledger.assigned_bytes, omitted_fact_packets: ledger.omitted_fact_packets };

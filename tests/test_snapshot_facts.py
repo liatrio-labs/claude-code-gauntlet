@@ -125,7 +125,7 @@ def test_callee_cards_suppress_widespread_tokens_and_prefer_nearby_definitions(
         SourceAdapter.capture(tmp_path, "local", None), annotate_diff(diff), len(diff)
     )
     callees = [c for c in result["cards"] if c["kind"] == "callee_candidate"]
-    assert callees[0]["file"] == "zone/helper" and "NEAR_MARKER" in callees[0]["text"]
+    assert callees[0]["file"] == "zone/helper" and callees[0]["text"] == "z_target(…)"
     assert all("branch" not in c["detail"] for c in callees)
 
 
@@ -141,3 +141,53 @@ def test_argument_object_is_not_a_callee_definition_body(tmp_path, monkeypatch):
         SourceAdapter.capture(tmp_path, "local", None), annotate_diff(diff), len(diff)
     )
     assert not [c for c in facts["cards"] if c["kind"] == "callee_candidate"]
+
+
+@pytest.mark.parametrize("target", ["local", "branch"])
+def test_fact_cards_never_export_values_or_read_ignored_and_untracked_sources(
+    tmp_path, monkeypatch, target
+):
+    init_git_repo(tmp_path, monkeypatch)
+    (tmp_path / "zone").mkdir()
+    sentinel = "sk_test_SYNTHETIC_CREDENTIAL_VALUE"
+    files = {
+        "zone/source": f'public neighbor(value="{sentinel}") {{\n  credential = "{sentinel}"\n}}\nhelper(value)\n',
+        "zone/helper": f'public helper(value="{sentinel}") {{\n  credential = "{sentinel}"\n}}\n',
+        "zone/ignored": f'public helper(value="{sentinel}") {{\n  ignored_sentinel = "{sentinel}"\n}}\n',
+        **{
+            f"zone/peer{n}": f'public guard(value="{sentinel}") {{\n  credential = "{sentinel}"\n}}\n'
+            for n in range(3)
+        },
+        ".gitignore": "zone/ignored\n",
+    }
+    for name, text in files.items():
+        (tmp_path / name).write_text(text, encoding="utf-8")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "add", "-f", "zone/ignored")
+    git(tmp_path, "commit", "-qm", "snapshot")
+    source = SourceAdapter.capture(tmp_path, target, None)
+    (tmp_path / "zone/untracked").write_text(files["zone/ignored"], encoding="utf-8")
+    if target == "branch":
+        # Captured ignore rules must survive a different working-tree version.
+        (tmp_path / ".gitignore").write_text("", encoding="utf-8")
+    original = SourceAdapter.read_snapshot
+
+    def checked_read(adapter, entries, *, deadline):
+        assert not {f.file for f in entries} & {"zone/ignored", "zone/untracked"}
+        return original(adapter, entries, deadline=deadline)
+
+    monkeypatch.setattr(SourceAdapter, "read_snapshot", checked_read)
+    diff = b"diff --git a/zone/source b/zone/source\n--- a/zone/source\n+++ b/zone/source\n@@ -4 +4 @@\n-old(value)\n+helper(value)\n"
+    facts = fact_cards.build_fact_cards(source, annotate_diff(diff), len(diff))
+    assert {c["kind"] for c in facts["cards"]} == {
+        "neighbor",
+        "callee_candidate",
+        "sibling_contrast",
+    }
+    assert {c["text"] for c in facts["cards"]} == {
+        "neighbor(…)",
+        "helper(…)",
+        "guard(…)",
+    }
+    assert all(c["line_start"] == c["line_end"] for c in facts["cards"])
+    assert sentinel not in str(facts)

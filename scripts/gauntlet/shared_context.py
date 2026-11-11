@@ -57,8 +57,9 @@ framed between triage and diff. Branch/local calls require no snapshot.
 Layout lists root names and changed-file directories from --repo-root, using
 local files or the verified --head-sha-full snapshot. Missing source is disclosed.
 Names are untrusted candidate locations, not evidence of a repository precedent.
-Bounded fact cards add unchanged neighborhoods, lexical callee candidates and
-sibling contrasts from that same snapshot. Their byte budget, omitted cards and
+Bounded fact cards add declaration outlines near changes, lexical callee candidates
+and sibling declarations from tracked, unignored files in that snapshot. Parameters,
+initializers and bodies are never copied. Their byte budget, omitted cards and
 search limits are disclosed; no card asserts a defect.
 
 Content bytes are rules (adding LF only if needed), a blank line and
@@ -442,8 +443,8 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
     discovery_plan: DiscoveryPlan = {
         "version": 2,
         "status": plan_status,
-        "regions": regions,
-        "fact_packets": fact_packets,
+        "regions": regions if plan_status == "available" else [],
+        "fact_packets": fact_packets if plan_status == "available" else [],
     }
     return {
         "contextLines": lines,

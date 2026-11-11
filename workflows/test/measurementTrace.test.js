@@ -274,7 +274,7 @@ for (const padding of [0, RETURN_CHAR_BUDGET - 3000]) test(`coverage ledger pres
   assert.ok(JSON.stringify(result).length <= RETURN_CHAR_BUDGET);
 });
 
-test('outside-assignment hunter provenance and coverage survive typed grouping with per-member selection reasons', async () => {
+test('outside-assignment hunter coverage survives typed grouping with per-member selection reasons', async () => {
   const args = validArgs({ measurementTrace: true, limits: { deliveryCap: 1 }, delivery: { tier: 'main_only' },
     contextReceipt: { contextLines: 20, contextChars: 400, contextMaxLineChars: 20, contextReadPlanVersion: 1, contextReadChunks: [20],
       discoveryPlan: { version: 2, status: 'available', fact_packets: [],
@@ -308,7 +308,7 @@ test('outside-assignment hunter provenance and coverage survive typed grouping w
   assert.deepEqual(trace.coverage_ledger.remaining_uncovered, []);
   const hunter = trace.versions.filter((v) => v.finding.id === 'gap-hunter-1');
   assert.ok(hunter.length);
-  assert.ok(hunter.every((v) => v.discovery_dimension === 'gap_hunt' && v.finding.change_origin === 'moved_or_carried'));
+  assert.ok(hunter.every((v) => v.discovery_dimension === 'gap_hunt' && !Object.hasOwn(v.finding, 'change_origin')));
   assert.ok(hunter.some((v) => v.finding.verdict?.claim === 'confirmed' && v.finding.report_tag === 'suggestion'));
 });
 

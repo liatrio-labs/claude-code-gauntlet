@@ -103,7 +103,7 @@ export const DISPOSITION_RIGHTS = deepFreeze({
 });
 export const DISPOSITIONS = deepFreeze(Object.keys(DISPOSITION_RIGHTS));
 export const RIGHT_ELIGIBILITY = deepFreeze({ body: { fixTask: ['current_defect', 'current_reachability', 'confirmed_location'] } });
-export const STAGE_COSTS = deepFreeze({ verify: { attempts: 2, singletonRetries: 3 }, validate: { retryBatchDivisor: 5 }, grouping: { attempts: 1 }, writer: { attempts: 2 } });
+export const STAGE_COSTS = deepFreeze({ verify: { attempts: 2, singletonRetries: 3 }, validate: { retryBatchDivisor: 5 }, grouping: { attempts: 1 }, writer: { attempts: 2 }, discoveryPlan: { attempts: 2 * DISCOVERY_TRANSPORT_LIMITS.maxParts } });
 
 const SOURCE_REFERENCE = {
   type: 'object', $comment: 'source-reference', properties: {
@@ -122,8 +122,6 @@ export const FINDING_PROP_TYPES = deepFreeze({
   id: 'string', file: 'string', line_start: 'number', line_end: 'number',
   title: 'string', description: 'string', severity: 'string', confidence: 'number',
   dimension: 'string', origin: 'string', evidence: 'string',
-  change_origin: { type: 'string', enum: ['introduced', 'moved_or_carried', 'pre_existing'], description: 'Relationship to this PR: introduced defect; defect in relocated, copied or newly relied-on code; or other pre-existing defect. Provenance is data, not a reason to omit a finding.' },
-  change_relevance: { type: 'string', minLength: 1, pattern: '\\S', description: 'How this change reaches or relies on the pre-existing code.' },
   anchor: { type: 'string', description: 'Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters.' },
   // Optional prose fields must be omitted when inapplicable; emitting null would violate their schema types.
   suggestion: 'string', claude_md_rule: 'string',
@@ -260,8 +258,6 @@ export const DIMENSIONS = deepFreeze([
   requiredWhenDimension: [...row.requiredWhenDimension, ...(row.admission ? [row.admission.field] : [])],
 })));
 
-export const DISCOVERY_REQUIRED_FIELDS = deepFreeze(['change_origin']);
-export const DISCOVERY_REQUIREMENTS = deepFreeze([{ when: { change_origin: 'pre_existing' }, required: ['change_relevance'] }]);
 
 export const DISCOVERY_DISPATCHES = deepFreeze(['parallel', 'uncovered']);
 const DISCOVERY_REVIEWER_KEYS = ['agentType', 'dimension', 'dispatch', 'conditionalFlag', 'label', 'objective', 'tools', 'effort', 'color', 'modelOverride'];

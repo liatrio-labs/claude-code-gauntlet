@@ -40,6 +40,10 @@ test('a large disk plan keeps args, receipts, phase output and trace coverage bo
     assert.ok(adapter.executions.every(e=>{const a=shellSplit(e.prompt.split('\n').at(-1));const plain=a[a.indexOf('--request')+1];assert.ok(JSON.parse(plain).files_checksum);assert.equal(a.includes('--chunk'),false);return plain.length<=DISCOVERY_REQUEST_CHARS;}));
     assert.ok(JSON.stringify(out).length<4096);
     assert.ok(JSON.stringify(input.measurementTrace.coverage_ledger).length<4096);
+    assert.equal(out.coverageLedger.uncovered_count,2000);
+    assert.equal(out.coverageLedger.remaining_uncovered_count,1999);
+    assert.equal(input.measurementTrace.coverage_ledger.uncovered_count,2000);
+    assert.equal(input.measurementTrace.coverage_ledger.remaining_uncovered_count,1999);
     assert.equal(out.findings.length,1);
     const ledger=readLedger(input,out.coverageLedgerArtifact);
     assert.equal(ledger.regions.length,2000);
@@ -143,4 +147,21 @@ test('exceeding the plain request cap preserves primary discovery and records un
   const ctx={parallel:async ts=>Promise.all(ts.map(t=>t())),agent:async(_p,o)=>{calls.push(o.agentType);return {findings:o.agentType==='code-gauntlet:bug-detector'?[{file:'src/0',line_start:1,title:'Present defect',description:'A supported input fails.',severity:'high',confidence:90,anchor:'return value',evidence:'src/0:1',change_origin:'introduced',cross_file_refs:Array.from({length:1000},(_,i)=>`src/${i}:1`)}]:[],complete:true,total_seen:1};}};
   const adapter=executorAdapter(ctx,input);
   try{const out=await discover(ctx,input);assert.equal(out.findings.length,1);assert.equal(calls.length,7);assert.equal(adapter.executions.length,0);assert.equal(out.coverageLedger.status,'unavailable');assert.ok(out.gaps.some(g=>g.includes('coverage unavailable')));}finally{adapter.restore();rmSync(root,{recursive:true,force:true});}
+});
+
+test('an omitted plan reference discloses missing full-review coverage without dispatching the planner',async()=>{
+  for(const deep of [true,false]) {
+    const input={agentFlags:{deep},measurementTrace:createMeasurementTrace('absent')};const calls=[];
+    const ctx={parallel:async ts=>Promise.all(ts.map(t=>t())),agent:async(_p,o)=>{calls.push(o.agentType);return {findings:[],complete:true,total_seen:0};}};
+    const out=await discover(ctx,input);
+    assert.equal(out.gaps.some(g=>g.includes('discovery coverage unavailable')),deep);
+    assert.equal(Object.hasOwn(out,'coverageLedger'),deep);
+    if(deep){assert.equal(out.coverageLedger.status,'unavailable');assert.equal(input.measurementTrace.coverage_ledger.status,'unavailable');}
+    assert.equal(calls.includes('code-gauntlet:executor'),false);
+  }
+});
+
+test('a rejected primary record does not degrade clean sibling reviewers or disable the hunter',async()=>{
+  const input={};const root=preparePlan(input,plan());const ctx={parallel:async ts=>Promise.all(ts.map(t=>t())),agent:async(_p,o)=>({findings:o.agentType==='code-gauntlet:bug-detector'?[null]:[],complete:true,total_seen:1})};const adapter=executorAdapter(ctx,input);
+  try{const out=await discover(ctx,input);assert.deepEqual(out.degraded, ['test_coverage']);assert.ok(out.dispatched.includes('code-gauntlet:gap-hunter'));}finally{adapter.restore();rmSync(root,{recursive:true,force:true});}
 });

@@ -7,6 +7,7 @@ import json
 import os
 import re
 import stat
+import tempfile
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -646,6 +647,142 @@ class SourceAdapter:
             return SnapshotInventory(tuple(files), True, limited, excluded, unreadable)
         except (OSError, ValueError, UnicodeError, proc.TimeoutExpired):
             return SnapshotInventory((), False, time.monotonic() >= deadline)
+
+    def unignored_files(
+        self, inventory: SnapshotInventory, *, deadline: float, max_listing_bytes: int
+    ) -> SnapshotInventory:
+        """Intersect snapshot membership with Git's current and captured ignore rules."""
+        if not inventory.available:
+            return SnapshotInventory(
+                (), False, inventory.truncated, inventory.excluded, inventory.unreadable
+            )
+        files = inventory.files
+        if not files:
+            return inventory
+
+        def ignored(worktree: str | None = None) -> set[str]:
+            command = [
+                "git",
+                *(["--work-tree=" + worktree] if worktree else []),
+                "check-ignore",
+                "--no-index",
+                "-z",
+                "--stdin",
+            ]
+            result = proc.run_bounded_bytes(
+                command,
+                cwd=str(self.root),
+                timeout=max(0, deadline - time.monotonic()),
+                max_output=max_listing_bytes,
+                input=b"\0".join(
+                    f.file.encode("utf-8", "surrogateescape") for f in files
+                )
+                + b"\0",
+            )
+            if result.returncode not in (0, 1) or result.truncated:
+                raise ValueError("ignore check unavailable")
+            return {
+                p.decode("utf-8", "surrogateescape")
+                for p in result.stdout.split(b"\0")
+                if p
+            }
+
+        try:
+            excluded = ignored()
+            if self.target_kind != "local":
+                rules = [f for f in files if f.file.rsplit("/", 1)[-1] == ".gitignore"]
+                if inventory.truncated:
+                    ancestors = {".gitignore"}
+                    for item in files:
+                        parts = item.file.split("/")[:-1]
+                        ancestors.update(
+                            "/".join([*parts[:n], ".gitignore"])
+                            for n in range(1, len(parts) + 1)
+                        )
+                    records = []
+                    remaining = max_listing_bytes
+                    pending: list[str] = []
+                    cost = 0
+                    queries: list[list[str]] = []
+                    for name in sorted(ancestors):
+                        pathspec = ":(literal)" + name
+                        size = len(pathspec.encode("utf-8", "surrogateescape")) + 1
+                        if pending and cost + size > 8192:
+                            queries.append(pending)
+                            pending, cost = [], 0
+                        pending.append(pathspec)
+                        cost += size
+                    if pending:
+                        queries.append(pending)
+                    for query in queries:
+                        result = proc.run_bounded_bytes(
+                            [
+                                "git",
+                                "ls-tree",
+                                "-l",
+                                "-z",
+                                "--full-tree",
+                                cast(str, self.captured_head),
+                                "--",
+                                *query,
+                            ],
+                            cwd=str(self.root),
+                            timeout=max(0, deadline - time.monotonic()),
+                            max_output=remaining,
+                        )
+                        remaining -= len(result.stdout)
+                        if result.returncode or result.truncated:
+                            raise ValueError("ignore listing unavailable")
+                        records.extend(result.stdout.split(b"\0")[:-1])
+                    rules = []
+                    for record in records:
+                        metadata, raw_path = record.split(b"\t", 1)
+                        mode, kind, oid, raw_size = metadata.split()
+                        if mode in (b"100644", b"100755") and kind == b"blob":
+                            rules.append(
+                                SnapshotFile(
+                                    raw_path.decode("utf-8", "surrogateescape"),
+                                    oid.decode("ascii"),
+                                    int(raw_size),
+                                )
+                            )
+
+                if sum(f.size for f in rules) > 256 * 1024:
+                    raise ValueError("ignore rules exceed budget")
+                read = self.read_snapshot(rules, deadline=deadline)
+                if (
+                    read.unreadable
+                    or read.deadline_reached
+                    or len(read.files) != len(rules)
+                ):
+                    raise ValueError("ignore snapshot unavailable")
+                with tempfile.TemporaryDirectory(
+                    prefix="gauntlet-ignore-"
+                ) as directory:
+                    for file, lines in read.files.items():
+                        if any("\ufffd" in line for line in lines):
+                            raise ValueError("unrepresentable ignore rule")
+                        path = Path(directory).joinpath(*file.split("/"))
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_text(
+                            "\n".join(lines) + "\n", encoding="utf-8", newline=""
+                        )
+                    excluded |= ignored(directory)
+            return SnapshotInventory(
+                tuple(f for f in files if f.file not in excluded),
+                True,
+                inventory.truncated,
+                inventory.excluded + len(excluded),
+                inventory.unreadable,
+            )
+        except (OSError, ValueError, proc.TimeoutExpired):
+            return SnapshotInventory(
+                (),
+                False,
+                time.monotonic() >= deadline,
+                inventory.excluded,
+                inventory.unreadable,
+            )
 
     def read_snapshot(
         self, files: Sequence[SnapshotFile], *, deadline: float

@@ -162,7 +162,7 @@ export function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'mai
   const validateCalls = validationCost(L, findings);
   const challengeCalls = Math.min(findings, effectiveChallengeCap(L, findings));
   const groupingCalls = findings > 1 ? STAGE_COSTS.grouping.attempts : 0;
-  return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + groupingCalls + STAGE_COSTS.writer.attempts;
+  return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + groupingCalls + STAGE_COSTS.writer.attempts + STAGE_COSTS.discoveryPlan.attempts;
 }
 
 // Removing terms that cannot shrink guarantees termination when the inline budget binds.

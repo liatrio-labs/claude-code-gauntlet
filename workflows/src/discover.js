@@ -1,6 +1,6 @@
 import { defineAgentCall } from './agentCalls.js';
 // Summary and discovery stages, finding schemas, and scope flags.
-import { AGENT_TYPE_TEST_ANALYZER, DIMENSIONS, DISCOVERY_REQUIRED_FIELDS, DISCOVERY_REQUIREMENTS, DISCOVERY_REVIEWERS, discoveryReviewer, DISPATCH_RESULTS, modelFor, DISCOVERY_FINDING_PROP_TYPES, FINDING_REQUIRED, conditionalSchemaActive } from './registry.js';
+import { AGENT_TYPE_TEST_ANALYZER, DIMENSIONS, DISCOVERY_REVIEWERS, discoveryReviewer, DISPATCH_RESULTS, modelFor, DISCOVERY_FINDING_PROP_TYPES, FINDING_REQUIRED, conditionalSchemaActive } from './registry.js';
 import { computeLightEligible } from './knobs.js';
 import { LIMIT_DEFAULTS } from './registry.js';
 import { effectiveBucketSize } from './capacity.js';
@@ -164,13 +164,10 @@ function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired, sche
   }
   // Only discovery dispatch requires a quote; pipeline-authored and replayed findings can remain unconfirmed.
   props.anchor.minLength = 1;
-  const required = [...FINDING_REQUIRED, 'anchor', 'evidence', ...DISCOVERY_REQUIRED_FIELDS, ...(requiredExtra || [])];
+  const required = [...FINDING_REQUIRED, 'anchor', 'evidence', ...(requiredExtra || [])];
   const itemSchema = { type: 'object', properties: props, required, additionalProperties: false };
-  if (schemaActive) itemSchema.allOf = DISCOVERY_REQUIREMENTS.map((rule) => ({
-    if: { properties: Object.fromEntries(Object.entries(rule.when).map(([key, value]) => [key, { const: value }])), required: Object.keys(rule.when) },
-    then: { required: [...rule.required] },
-  }));
-  if (conditionalRequired && conditionalRequired.length) {
+  if (schemaActive && conditionalRequired && conditionalRequired.length) {
+    itemSchema.allOf = [];
     // The platform accepts conditional requirements nested in finding items rather than top-level schema composition.
     // A dimension enum would reject tolerated aliases and degrade every sibling dimension in the shared dispatch.
     itemSchema.allOf.push(...conditionalRequired.map(({ dimension, required: dimRequired }) => ({
@@ -182,7 +179,7 @@ function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired, sche
 }
 
 // The platform requires full JSON Schema and rejects shorthand schemas.
-// Provider capability gates dimension rules; intake requirements always stay nested in finding items.
+// Supported providers receive conditional rules nested in finding items.
 export function findingSchema(spec, policy) {
   const conditionalRequired = conditionalSchemaActive(policy) ? (spec.conditionalRequired || []) : [];
   const resultFields = DISPATCH_RESULTS[spec.agentType] || {};
@@ -238,20 +235,10 @@ function discoveryCandidate(raw, spec, occurrence) {
     const name = spec.agentType.split(':').pop();
     if (candidate.id === undefined) candidate.id = `${name}-${occurrence + 1}`;
     if (spec.dimensions.length === 1 && candidate.dimension === undefined) candidate.dimension = spec.dimensions[0];
-    for (const key of ['removed_test', 'location_status', 'claimed_line_start', 'claimed_line_end', 'line', 'end_line', 'reference_diagnostics']) delete candidate[key];
+    for (const key of ['removed_test', 'location_status', 'claimed_line_start', 'claimed_line_end', 'line', 'end_line', 'reference_diagnostics', 'change_origin', 'change_relevance']) delete candidate[key];
     candidate.agent = name;
   }
   return candidate;
-}
-
-function missingDiscoveryFields(finding) {
-  const required = [...DISCOVERY_REQUIRED_FIELDS, ...DISCOVERY_REQUIREMENTS.flatMap((rule) =>
-    Object.entries(rule.when).every(([key, value]) => finding[key] === value) ? rule.required : [])];
-  return required.filter((key) => {
-    const value = finding[key], schema = DISCOVERY_FINDING_PROP_TYPES[key];
-    return typeof value !== schema.type || (typeof value === 'string' && !value.trim())
-      || (schema.enum && !schema.enum.includes(value));
-  });
 }
 
 // The roster distinguishes agents returning no findings from agents never dispatched.
@@ -291,8 +278,9 @@ export async function discover(ctx, input) {
   const primaryUsable = results.some((res, i) => Array.isArray(res?.findings) && (res.findings.length === 0
     || res.findings.some((raw, n) => {
       const candidate = discoveryCandidate(raw, specs[i], n);
-      return validateFindings([candidate]).valid.length > 0 && missingDiscoveryFields(candidate).length === 0;
+      return validateFindings([candidate]).valid.length > 0;
     })));
+  const coverageExpected = hasPlan || hunters.length > 0;
   const planRequest = {refs:coverageReferences(specs,results,inp.repoRoot),
     risks:inp.riskTable || [],enabled:hunters.length > 0 && primaryUsable,disabled_reason:primaryUsable ? 'scope' : 'primary_failure'};
   let planned = hasPlan ? await planOnDisk(ctx,inp,'select',planRequest) : null;
@@ -311,7 +299,7 @@ export async function discover(ctx, input) {
 
   const finalResults = results.map((result, i) => specs[i].dispatch === 'uncovered' ? { findings: [] } : result);
   const ledgerGaps = [];
-  if (hasPlan && !planned) ledgerGaps.push('discovery coverage unavailable: invalid or unavailable region plan');
+  if (coverageExpected && !planned) ledgerGaps.push('discovery coverage unavailable: invalid or unavailable region plan');
   const gaps = [];
   const hunterGaps = [];
   const findings = [];
@@ -349,7 +337,7 @@ export async function discover(ctx, input) {
     const list = Array.isArray(res.findings) ? res.findings : null;
     if (list === null) {
       // A malformed result provides no usable coverage and must degrade like a null result.
-      channelGaps.push(`${spec.agentType}: malformed result (no findings array)`);
+      channelGaps.push(spec.dispatch === 'uncovered' ? `${spec.agentType}: assigned gap investigation failed (malformed result)` : `${spec.agentType}: malformed result (no findings array)`);
       if (spec.dispatch === 'parallel') degradedDims.push(...spec.dimensions);
       return;
     }
@@ -358,13 +346,6 @@ export async function discover(ctx, input) {
       const f = trace ? stampDiscovery(trace, candidate, spec, i, occurrence) : candidate;
       if (trace) intake.push(f);
       const checked = validateFindings([f], decisions);
-      const missing = checked.valid.length ? missingDiscoveryFields(f) : [];
-      if (missing.length) {
-        checked.valid.length = 0;
-        checked.rejected.push(f);
-        checked.warnings.push(`Invalid required discovery field(s): ${missing.join(', ')} — finding rejected`);
-        if (trace) decisions.push(traceDecision(f, 'invalid_shape', checked.warnings.at(-1)));
-      }
       if (checked.rejected.length) channelGaps.push(...checked.warnings.map((warning) => `${spec.agentType}: ${warning}`));
       rejected.push(...checked.rejected);
       if (!checked.valid.length) continue;
@@ -391,7 +372,7 @@ export async function discover(ctx, input) {
     if (!planned) ledgerGaps.push('discovery coverage unavailable: final ledger receipt missing or invalid');
   }
   if (!primaryUsable) degradedDims.push(...specs.filter((s) => s.dispatch === 'parallel').flatMap((s) => s.dimensions));
-  if (trace && hasPlan) {
+  if (trace && coverageExpected) {
     trace.coverage_ledger = ledger;
     delete trace.coverage_ledger_artifact;
     if (planned) trace.coverage_ledger_artifact = planned.artifact;
@@ -445,7 +426,7 @@ export async function discover(ctx, input) {
     degraded: [...new Set(degradedDims)],
     dispatched: specs.map((spec) => spec.agentType),
     removedTestAudit,
-    ...(hasPlan ? {coverageLedger:ledger,...(planned ? {coverageLedgerArtifact:planned.artifact} : {})} : {}),
+    ...(coverageExpected ? {coverageLedger:ledger,...(planned ? {coverageLedgerArtifact:planned.artifact} : {})} : {}),
   }, decisions);
 }
 

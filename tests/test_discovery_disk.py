@@ -388,3 +388,144 @@ def test_preparation_indexes_the_snapshot_manifest_including_files_without_regio
     assert document["files"] == ["source", "unvisited_binary"]
     assert {r["file"] for r in document["plan"]["regions"]} == {"source"}
     assert "unvisited_binary" not in result.stdout.decode()
+
+
+@pytest.mark.parametrize(
+    "part,parts,payload,checksum,exit_code",
+    [
+        (-1, 1, "{}", "fnv1a32:0x00000000", 2),
+        (1, 1, "{}", "fnv1a32:0x00000000", 2),
+        (0, 0, "{}", "fnv1a32:0x00000000", 2),
+        (0, 4, "{}", "fnv1a32:0x00000000", 0),
+        (0, 5, "{}", "fnv1a32:0x00000000", 2),
+        (0, 1, " " * 998 + "{}", "fnv1a32:0x00000000", 0),
+        (0, 1, " " * 999 + "{}", "fnv1a32:0x00000000", 2),
+        (0, 1, "{}", "bad", 2),
+    ],
+)
+def test_planner_cli_enforces_usage_bounds_before_optional_plan_fallback(
+    tmp_path, part, parts, payload, checksum, exit_code
+):
+    args = [
+        "--output-dir",
+        str(tmp_path),
+        "--sha",
+        SHA,
+        "--nonce",
+        "test",
+        "--phase",
+        "select",
+        "--plan-checksum",
+        "0" * 64,
+        "--input-checksum",
+        checksum,
+        "--part",
+        str(part),
+        "--parts",
+        str(parts),
+        "--request",
+        payload,
+    ]
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).resolve().parents[1] / "scripts/plan_discovery.py"),
+            *args,
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == exit_code
+    if exit_code:
+        assert result.stdout == b""
+        assert result.stderr.startswith(b"plan_discovery:")
+    else:
+        assert json.loads(result.stdout)["status"] == "ok"
+
+
+def test_planner_cli_rejects_a_receipt_that_exceeds_the_copy_budget(tmp_path, planner):
+    prepare, _ = planner
+    ref = prepare(plan_with())
+    output = tmp_path
+    for _ in range(3):
+        output /= "é" * 80
+    output.mkdir(parents=True)
+    for name in (ref["path"], f"code-gauntlet-context-{SHA}.md"):
+        (output / name).write_bytes((tmp_path / name).read_bytes())
+    files = json.loads((output / ref["path"]).read_bytes())["files"]
+    parts = plain_requests(selection(tmp_path), files, "select")
+    body = json.dumps(parts[0], ensure_ascii=False, separators=(",", ":"))
+    checksum = fnv1a32(json.dumps(parts, ensure_ascii=False, separators=(",", ":")))
+    args = [
+        "--output-dir",
+        str(output),
+        "--sha",
+        SHA,
+        "--nonce",
+        "test",
+        "--phase",
+        "select",
+        "--plan-checksum",
+        ref["sha256"],
+        "--input-checksum",
+        checksum,
+        "--part",
+        "0",
+        "--parts",
+        "1",
+        "--request",
+        body,
+    ]
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).resolve().parents[1] / "scripts/plan_discovery.py"),
+            *args,
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        check=False,
+    )
+    assert (output / artifact_name("coverage-ledger", SHA, "test")).exists()
+    assert result.returncode == 2
+    assert result.stdout == b""
+    assert b"receipt exceeds" in result.stderr
+
+
+def test_a_bad_model_anchor_costs_only_that_record_not_the_final_ledger(
+    tmp_path, planner
+):
+    prepare, call = planner
+    ref = prepare(plan_with())
+    selected, _ = call(ref, selection(tmp_path))
+    files = json.loads((tmp_path / ref["path"]).read_bytes())["files"]
+    part = {
+        "files_checksum": fnv1a32(
+            json.dumps(
+                {"files": files, "reviewers": DISCOVERY_AGENT_TYPES},
+                separators=(",", ":"),
+            )
+        ),
+        "state_checksum": selected["state_checksum"],
+        "hunters": [{"agent": "7", "status": "complete"}],
+        "citations": {"7": "1:1"},
+        "anchors": {
+            "7": [
+                None,
+                ["outside", -1, 10],
+                ["zero", 0, 0],
+                ["duplicate", 0, 1],
+                ["duplicate", 1, 1],
+                ["valid", 1, 1],
+            ]
+        },
+    }
+    final, _ = call(ref, {}, phase="finalize", wire_parts=[part])
+    assert final["available"]
+    ledger = json.loads(
+        (tmp_path / artifact_name("coverage-ledger", SHA, "test")).read_bytes()
+    )
+    assert ledger["remaining_uncovered"] == ["r0"]
+    assert ledger["hunters"][0]["outside_assignment"] == ["outside"]
+    assert final["summary"]["remaining_uncovered_count"] == 1
