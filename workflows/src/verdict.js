@@ -1,4 +1,4 @@
-import { VERDICT_ROUTES, VERDICT_PROPERTIES, VERDICT_CASES } from './registry.js';
+import { VERDICT_ROUTES, VERDICT_PROPERTIES, VERDICT_CASES, CONSEQUENCE_ORDER } from './registry.js';
 import { deepClone } from './wire.js';
 
 export function verdictRejections(value) {
@@ -28,6 +28,13 @@ export function buildVerdict(value) {
     .filter((key) => value[key] !== undefined).map((key) => [key, deepClone(value[key])]));
 }
 
+// A confirming reader cannot discard the other reader's established consequence.
+export function resolveVerdict(validator, challenger) {
+  if (!verdictRejections(validator).length && validator.claim === 'confirmed' && challenger.claim === 'confirmed'
+    && CONSEQUENCE_ORDER.indexOf(validator.consequence) < CONSEQUENCE_ORDER.indexOf(challenger.consequence)) return validator;
+  return challenger;
+}
+
 export function verdictRule(finding) {
   const value = finding.verdict;
   if (verdictRejections(value).length) return VERDICT_ROUTES.not_established;
@@ -52,8 +59,7 @@ export function routeVerdict(finding) {
   }
   delete finding.route_reason;
   finding.verdict_route = rule.route;
-  finding.reachability = finding.verdict?.claim === 'confirmed'
-    ? finding.verdict.consequence === 'latent' ? 'future_change_only' : 'current' : 'uncertain';
+  delete finding.reachability;
   finding.report_destination = finding.report_tag = rule.tier;
   if (rule.severity) {
     finding.original_severity ??= finding.severity;

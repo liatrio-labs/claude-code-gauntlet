@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { validateStage, filterStage, challengeStage, selectDelivery } from '../src/reviewStages.js';
+import { VERDICT_ROUTES, VERDICT_PROPERTIES } from '../src/registry.js';
+import { disposeFindings } from '../src/dispose.js';
 import { evaluateAdmission } from '../src/admission.js';
 import { makeFinding, makeCtx } from './helpers/pipelineMock.js';
 import { validArgs } from './helpers/argsFixtures.js';
@@ -102,7 +104,8 @@ test('fresh typed verdicts and local-only outcomes survive persistence and resum
   ctx.agent = async (prompt, opts) => opts.label.startsWith('validate-')
     ? { validations: ['F1', 'F2'].map((finding_id) => ({ ...truth, finding_id,
       consequence: finding_id === 'F1' ? 'present_failure' : 'no_practical_effect' })) }
-    : agent(prompt, opts);
+    : opts.label.startsWith('challenge-') && prompt.includes('finding F2')
+      ? { verdict: { ...truth, consequence: 'no_practical_effect' } } : agent(prompt, opts);
   const result = await runWith(ctx, args);
   assert.equal(result.ok, true);
   assert.deepEqual(payload.postReview.map((f) => f.id), ['F1']);
@@ -153,7 +156,7 @@ test('typed survival feeds indivisible delivery groups and summaries keyed by th
       }),
     })) };
     if (opts.label.startsWith('challenge-')) return { verdict: { ...truth,
-      consequence: prompt.includes('finding ART') ? 'artifact_defect' : prompt.includes('finding LAT') ? 'latent' : 'present_failure',
+      consequence: prompt.includes('finding PREF') ? 'no_practical_effect' : prompt.includes('finding ART') ? 'artifact_defect' : prompt.includes('finding LAT') ? 'latent' : 'present_failure',
       latent_condition: 'Add another caller',
     } };
     if (opts.label === 'group-findings') {
@@ -165,7 +168,7 @@ test('typed survival feeds indivisible delivery groups and summaries keyed by th
   };
   const out = await runWith(ctx, args);
   assert.equal(out.ok, true, JSON.stringify(out));
-  assert.deepEqual(payload.postReview.findings.map((f) => f.id), ['MAIN', 'ART', 'LAT'], JSON.stringify({gaps:out.gaps,findings:payload.findings.map(f=>({id:f.id,route:f.verdict_route,challenge:f.challenge,disposition:f.disposition,severity:f.severity}))}));
+  assert.deepEqual(payload.postReview.findings.map((f) => f.id), ['MAIN', 'LAT', 'ART'], JSON.stringify({gaps:out.gaps,findings:payload.findings.map(f=>({id:f.id,route:f.verdict_route,challenge:f.challenge,disposition:f.disposition,severity:f.severity}))}));
   assert.deepEqual(payload.postReview.findings.map((f) => f.severity), ['high', 'low', 'low']);
   assert.deepEqual(payload.postReview.review_summary.index.map((entry) => entry.lead_id), ['MAIN']);
   assert.equal(payload.findings.find((f) => f.id === 'PREF').disposition, 'report_only');
@@ -256,4 +259,63 @@ test('resume without a verify handoff can validate and challenge its saved findi
   const args = validArgs({ verify: undefined, checkpoints: { verify: { findings: [makeFinding('SAVED')], verified: true } } });
   const out = await runWith(makeCtx(args), args);
   assert.equal(out.ok, true, JSON.stringify(out));
+});
+
+
+const confirmedAnswer = (consequence) => ({ ...truth, consequence,
+  ...(consequence === 'latent' ? { latent_condition: 'A caller enables the unused mode' } : {}) });
+async function twoReaders(validator, challenger, fields = {}) {
+  let calls = 0;
+  const ctx = { parallel, agent: async (_prompt, options) => {
+    if (options.agentType === 'code-gauntlet:validator') return { validations: [{ ...validator, finding_id: 'f' }] };
+    assert.equal(options.agentType, 'code-gauntlet:challenger');
+    calls++;
+    return { verdict: challenger };
+  } };
+  const validated = await validateStage(ctx, { findings: [makeFinding('f', fields)] });
+  const filtered = filterStage({ findings: validated.findings.map(evaluateAdmission) });
+  const challenged = await challengeStage(ctx, { findings: filtered.filtered.map(evaluateAdmission) });
+  return { ...disposeFindings(challenged), calls };
+}
+
+const seriousness = ['present_failure', 'latent', 'artifact_defect', 'no_practical_effect'];
+test('schema consequences have the declared seriousness order and a routing row', () => {
+  assert.deepEqual(VERDICT_PROPERTIES.consequence.enum, seriousness);
+  for (const consequence of VERDICT_PROPERTIES.consequence.enum) {
+    const rule = VERDICT_ROUTES.confirmed[consequence];
+    assert.ok(rule);
+    if (rule.status !== 'admitted') assert.equal(rule.challenge, true);
+  }
+});
+for (const validator of seriousness) for (const challenger of seriousness) {
+  test(`two confirming readers resolve ${validator} and ${challenger} without withholding the stronger answer`, async () => {
+    const out = await twoReaders(confirmedAnswer(validator), confirmedAnswer(challenger));
+    assert.equal(out.calls, 1);
+    const f = out.findings[0];
+    const expected = seriousness[Math.min(seriousness.indexOf(validator), seriousness.indexOf(challenger))];
+    assert.equal(f.verdict.consequence, expected);
+    assert.equal(f.validator_verdict.consequence, validator);
+    assert.equal(f.challenge_verdict.consequence, challenger);
+    assert.equal(f.verdict_route, VERDICT_ROUTES.confirmed[expected].route);
+    assert.equal(f.disposition, expected === 'no_practical_effect' ? 'report_only' : 'deliver');
+    assert.equal(f.severity, expected === 'present_failure' || expected === 'no_practical_effect' ? 'high' : 'low');
+    assert.equal(f.reachability, undefined);
+  });
+}
+for (const [consequence, rule] of Object.entries(VERDICT_ROUTES.confirmed).filter(([, rule]) => rule.route.startsWith('posted'))) {
+  for (const placement of ['on-diff', 'off-diff', 'unconfirmed']) {
+    test(`posting table row ${consequence} uses only source placement for ${placement}`, async () => {
+      const fields = placement === 'off-diff' ? { diff_validation: { in_diff: false } }
+        : placement === 'unconfirmed' ? { location_status: 'unconfirmed' } : {};
+      const out = await twoReaders(confirmedAnswer(consequence), confirmedAnswer(consequence), fields);
+      assert.equal(out.findings[0].verdict_route, rule.route);
+      assert.equal(out.findings[0].disposition, placement === 'on-diff' ? 'deliver' : 'body');
+    });
+  }
+}
+
+test('a low present failure ranks ahead of an inline latent security finding', () => {
+  const present = evaluateAdmission(makeFinding('present', { severity: 'low', verdict: confirmedAnswer('present_failure'), verdict_route: 'posted', report_tag: 'main', disposition: 'deliver' }));
+  const latent = evaluateAdmission(makeFinding('latent', { severity: 'low', dimension: 'security', verdict: confirmedAnswer('latent'), verdict_route: 'posted-latent', report_tag: 'suggestion', disposition: 'deliver' }));
+  assert.deepEqual(selectDelivery([latent, present], 1).map((f) => f.id), ['present']);
 });

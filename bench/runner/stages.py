@@ -716,7 +716,11 @@ def _collect_trace(pr_dir: Path) -> CollectedTraceWire | None:
         raise ValueError(
             measurement.get("reason") or "Workflow measurement unavailable"
         )
-    data = decode(str, measurement["text"]).encode("utf-8")
+    from gauntlet.measurement import measurement_text
+
+    data = measurement_text(
+        decode(str, measurement["text"]), measurement.get("encoding")
+    ).encode("utf-8")
     actual = hashlib.sha256(data).hexdigest()
     name = "code-gauntlet-measurement-trace.json"
     path = pr_dir / name

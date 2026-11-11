@@ -162,6 +162,7 @@ def policy_routes(sample, bounded):
             f
             for f in sample.findings
             if routes[f["id"]].startswith("posted")
+            and f.get("posts_inline", True)
             and (f.get("severity") == "low" or routes[f["id"]] == "posted-latent")
         ),
         key=lambda f: (
@@ -233,11 +234,27 @@ def sample_tables(sample, reader, bounded, proximity):
                 independent["worth"],
             )
         ] += 1
+    inline_rows = [
+        f
+        for f in sample.findings
+        if f.get("posts_inline") is True and routes[f["id"]].startswith("posted")
+    ]
+    inline_places = {places[f["id"]] for f in inline_rows}
+    inline_posting = dict(
+        findings=len(inline_rows),
+        known_bugs=len(
+            {bug for f in inline_rows for bug in f.get("matched_bug_ids", [])}
+        ),
+        matching_places=len(inline_places & known_places),
+        unmatched_places=len(inline_places - known_places),
+        unmeasured_findings=sum("posts_inline" not in f for f in sample.findings),
+    )
     return dict(
         pr=sample.pr,
         cap=cap,
         changed_lines=sample.changed_lines,
         routes=counts,
+        inline_posting=inline_posting,
         claim_confusion=dict_table(claim),
         worth_confusion=dict_table(worth),
         reader_matches=matched,
@@ -270,6 +287,10 @@ def total_tables(rows):
         tables[name] = dict_table(counter)
     return dict(
         routes=routes,
+        inline_posting={
+            key: sum(row["inline_posting"][key] for row in rows)
+            for key in rows[0]["inline_posting"]
+        },
         **tables,
         reader_matches=sum(row["reader_matches"] for row in rows),
         known_bug_denominator=sum(row["known_bug_denominator"] for row in rows),
@@ -286,6 +307,10 @@ def average_tables(totals):
             }
             for route in ROUTES
         }
+    }
+    result["inline_posting"] = {
+        key: mean(t["inline_posting"][key] for t in totals)
+        for key in totals[0]["inline_posting"]
     }
     for name in ("claim_confusion", "worth_confusion"):
         pairs = {
@@ -314,6 +339,7 @@ def analyze(samples, reader_rows, expected_bugs=61, proximity=5):
             "bounded_cap": "2 + ceil(sqrt(changed_lines / 100)); shared budget for low severity and latent findings per PR",
             "places": f"canonical or claimed start in same file, consecutive starts at most {proximity} lines apart; clusters fixed before routing; a place matches if any member matches",
             "confusion_axes": "rows=validator; columns=independent reader; worth yes=present_failure, latent or artifact_defect",
+            "inline_posting": "product disposition projected after validation assuming blind challenge agrees; excludes body placements and diagnostic-policy holds; older observations without placement are unmeasured",
             "baseline": "stored passes_floor routes, not a reconstruction of full production delivery; no typed answers inferred from scores",
         },
     }

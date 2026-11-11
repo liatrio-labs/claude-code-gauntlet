@@ -6,7 +6,7 @@
         "core": false,
         "inline_eligible": true,
         "input_fields": [],
-        "input_proof": "fnv1a32:0xdb48324c",
+        "input_proof": "fnv1a32:0x6399e99a",
         "kind": "ordinary",
         "reasons": [
           {
@@ -36,7 +36,6 @@
       "file": "src",
       "id": "f",
       "line_start": 10,
-      "reachability": "uncertain",
       "refutation_check": {
         "verified": false
       },

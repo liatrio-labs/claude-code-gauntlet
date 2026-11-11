@@ -131,6 +131,7 @@ return { kind: 'bench-validate-replay', dispatches: replayCalls.map((call, index
 export async function apply(tree, payload, dispatches) {
   const { validateStage, filterStage } = await moduleAt(tree, 'src/reviewStages.js');
   const { evaluateAdmission } = await moduleAt(tree, 'src/admission.js');
+  const { findingDisposition } = await moduleAt(tree, 'src/dispose.js');
   const { rankFindings } = await moduleAt(tree, 'src/groupRanking.js');
   const byLabel = new Map(dispatches.map((row) => [row.options.label, row]));
   if (byLabel.size !== dispatches.length) throw new Error('duplicate validator dispatch label');
@@ -157,10 +158,15 @@ export async function apply(tree, payload, dispatches) {
     if (!outcome) throw new Error(`missing filter outcome ${finding.id}`);
     const rawRoute = !outcome.passes_filter ? 'eliminated' : outcome.filtered.verdict_route ?? 'not-established';
     const route = rawRoute.startsWith('posted') && outcome.filtered.admission?.status !== 'admitted' ? 'report-only' : rawRoute;
+    // Validation-only replay projects placement assuming the independent check agrees.
+    const disposition = outcome.passes_filter
+      ? findingDisposition({ ...outcome.filtered, challenge: 'survived' }).disposition : 'eliminate';
+    const posts_inline = disposition === 'deliver';
     return { ...finding, ...outcome, verdict: finding.validator_verdict ?? null,
+      disposition, posts_inline,
       route,
       rank_index: rank.get(finding.id) ?? null,
-      passes_filter: outcome.passes_filter && route.startsWith('posted') };
+      passes_filter: posts_inline };
   });
   return { findings, changed_lines: payload.args.changedLines, stats: { validate: stage.stats, filter: filtered.stats }, gaps: stage.gaps };
 }

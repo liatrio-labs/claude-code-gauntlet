@@ -522,3 +522,72 @@ def test_structured_summary_survives_provenance_mapping(
     assert mapped
     assert "Exact producer counts." in run.payload["payload"]["body"]
     assert "Deliberately stale" not in run.payload["payload"]["body"]
+
+
+def test_delivery_binds_grouped_and_body_sources_when_primary_return_crowds_trace(
+    tmp_path,
+):
+    import subprocess
+
+    path, review, diff = surface_review(tmp_path)
+    raw = read_json(path)
+    evidence = "Inspected caller proves the defect. é 🐈 " * 600
+    for version in raw["versions"]:
+        version["finding"]["evidence"] = evidence
+    for finding in review["findings"]:
+        finding["evidence"] = evidence
+    envelope = {"ok": True, "phaseReached": "report", "primary_recovery": "x" * 800_000}
+    script = """
+import {readFileSync} from 'node:fs';
+import {appendMeasurement} from './workflows/src/measurementTrace.js';
+const {envelope,trace}=JSON.parse(readFileSync(0,'utf8'));
+process.stdout.write(JSON.stringify(appendMeasurement(envelope,trace)));
+"""
+    result = json.loads(
+        subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            cwd=Path(__file__).resolve().parents[2],
+            input=json.dumps(dict(envelope=envelope, trace=raw)),
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=True,
+        ).stdout
+    )
+    assert result["primary_recovery"] == envelope["primary_recovery"]
+    assert len(json.dumps(result)) < 1_000_000
+    directory = tmp_path / "capture"
+    (directory / "workflows").mkdir(parents=True)
+    (directory / "workflows/wf_current.json").write_text(
+        json.dumps(dict(result=result)), encoding="utf-8"
+    )
+    collection = stages.collect_trace(directory)
+    assert collection.status == "available", collection.reason
+    binding = read_json(directory / "measurement-artifact.json")
+    trace = stages.load_trace(
+        directory / binding["path"], expected_sha256=binding["sha256"]
+    )
+    payload = payload_for(
+        review["findings"],
+        diff,
+        "github",
+        review_body=review["review_body"],
+        sha=review["sha"],
+    )
+    bound, mapped = provenance.trace_delivery(
+        trace, review, payload, diff, include_body=True
+    )
+    assert mapped is not None
+    assert trace.dropped_stages == ()
+    assert {m.surface for m in mapped} == {"inline", "body"}
+    assert {tid for m in mapped for tid in m.source_trace_ids} == {
+        f["trace_id"] for f in review["findings"]
+    }
+    candidates = observations.candidate_records(
+        {"url": {score.TOOL: [asdict(m) for m in mapped]}}, {"url": "attempt"}
+    )
+    assert all(
+        c.provenance_status == "complete"
+        for c in provenance.bind_candidates(candidates, mapped)
+    )
+    assert bound.snapshots[-1].stage == "deliver"

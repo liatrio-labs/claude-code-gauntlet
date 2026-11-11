@@ -69,8 +69,10 @@ This treatment records `verdict` (the validator's closed answers), `route`, `ref
 round through the existing executor; the child therefore permits Bash for that pinned command.
 Validators retain their read-only tools. Replay does not run blind challenge: `not-established`
 means sent to the existing next check, not eliminated or posted. `posted`, `posted-latent`, and `posted-artifact`
-measure eligibility after validation and filtering, not actual delivery. `passes_filter` is true
-only on those posting routes. Report-only and unresolved findings remain in the full results.
+measure eligibility after validation and filtering, not actual delivery. Each outcome also has
+`disposition` and `posts_inline`, projected through the live disposition function assuming the
+blind challenger agrees. `passes_filter` equals `posts_inline`: body placements do not count as
+inline posts. The projection does not predict a future challenger answer, grouping or delivery caps. Report-only and unresolved findings remain in the full results.
 
 The analysis writes JSON tables per pass, per PR, in total, and averaged across passes. A known
 bug can occur on several routes, so route counts are not a partition of the 61 bugs. Places are
@@ -123,3 +125,14 @@ unreachable code from preferences. Its `posted-artifact` route is low severity a
 finding-kind admission gates. Outcomes whose kind admission does not allow posting count as
 `report-only`. Per-route reader match counts, claim agreements, and worth yes/no counts accompany
 the known-bug and place counts in every pass and average.
+
+The analysis reports `inline_posting` bugs and places separately from route counts for each PR,
+pass, average and volume policy. Older observations without `posts_inline` are explicitly
+unmeasured; a posting route alone never supplies an inline count. The bounded policy remains a
+diagnostic, rather than the live delivery policy.
+
+Workflow measurement transport may use `encoding: "json-pool-lzw16-base64-v1"` to preserve full history
+within the shared return budget. Collection and delivery replay expand it to ordinary trace
+JSON before hashing and binding. Uncompressed captures remain supported. If selection evidence
+is unavailable, `stage_trace_bindings.json` records `delivery_unavailable_reason` alongside the
+empty delivery binding.

@@ -23,7 +23,7 @@ export function findingDisposition(finding, heldBack = false) {
   } else if (!DELIVERABLE_CHALLENGES.includes(finding.challenge)) {
     disposition = 'held_back';
     reasons.push('challenge_failed');
-  } else if (finding.admission.inline_eligible && finding.reachability !== 'future_change_only'
+  } else if (finding.admission.inline_eligible
     && finding.diff_validation?.in_diff === true && locationAllows(finding, 'inline')) {
     disposition = 'deliver';
   } else reasons.push('body_routed');

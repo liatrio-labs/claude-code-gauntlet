@@ -1,7 +1,7 @@
 import { rankFindings } from './groupRanking.js';
 import { deepClone } from './wire.js';
 import { evaluateAdmission } from './admission.js';
-import { verdictRejections, routeVerdict, buildVerdict } from './verdict.js';
+import { verdictRejections, routeVerdict, buildVerdict, resolveVerdict } from './verdict.js';
 
 export function applyChallenges(findings, challenges) {
   const byId = new Map(challenges.filter((entry) => verdictRejections(entry).length === 0).map((entry) => [entry.id, entry]));
@@ -13,7 +13,8 @@ export function applyChallenges(findings, challenges) {
     const finding = deepClone(original);
     const { refutation_check } = entry;
     const verdict = buildVerdict(entry);
-    finding.verdict = finding.challenge_verdict = verdict;
+    finding.challenge_verdict = verdict;
+    finding.verdict = resolveVerdict(finding.validator_verdict ?? finding.verdict, verdict);
     delete finding.refutation_check;
     if (refutation_check) finding.refutation_check = refutation_check;
     finding.validation = 'validated';

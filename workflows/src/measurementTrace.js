@@ -1,3 +1,4 @@
+import { compressMeasurement } from './measurementCompression.js';
 import { deepClone, RETURN_CHAR_BUDGET } from './wire.js';
 
 export const TRACE_STAGES = ['discover', 'merge', 'verify', 'validate', 'filter', 'admission', 'challenge', 'cite', 'dispose', 'holdback', 'select', 'deliver'];
@@ -86,8 +87,14 @@ export function recordStage(trace, stage, output, details = {}) {
 export function appendMeasurement(envelope, trace) {
   if (!trace) return envelope;
   const candidate = deepClone(trace);
-  const available = () => ({ ...envelope, measurement: { status: 'available', text: JSON.stringify(candidate) } });
-  let result = available();
+  const available = (compress = false) => {
+    const text = JSON.stringify(candidate);
+    const plain = { ...envelope, measurement: { status: 'available', text } };
+    if (!compress || JSON.stringify(plain).length <= RETURN_CHAR_BUDGET) return plain;
+    // Rich finding history shares the return budget with persisted primaries; compress before discarding stages.
+    return { ...envelope, measurement: { status: 'available', encoding: 'json-pool-lzw16-base64-v1', text: compressMeasurement(text) } };
+  };
+  let result = available(true);
   // Keep the discovery prefix longest, and never turn a cut stage into an observed empty set.
   for (const snapshot of [...candidate.snapshots].reverse()) {
     if (JSON.stringify(result).length <= RETURN_CHAR_BUDGET) return result;

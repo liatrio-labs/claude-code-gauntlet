@@ -49,8 +49,8 @@ test('recorded validator returns reproduce every stored filter outcome and reaso
   const returned = new Map(fixture.dispatches[0].result.validations.map((row) => [row.finding_id, row]));
   for (const finding of result.findings) {
     assert.equal(finding.verdict.claim, returned.get(finding.id).claim);
-    assert.equal(finding.reachability, returned.get(finding.id).claim === 'confirmed'
-      ? returned.get(finding.id).consequence === 'latent' ? 'future_change_only' : 'current' : 'uncertain');
+    assert.equal(finding.reachability, undefined);
+    assert.equal(finding.passes_filter, finding.posts_inline);
     assert.equal(finding.validation_justification, returned.get(finding.id).justification);
   }
 });
@@ -109,4 +109,34 @@ test('replay artifact admission agrees with live eligibility and injection has t
   assert.equal(f.route, 'posted-artifact');
   assert.equal(f.filtered.admission.status, 'admitted');
   assert.equal(f.passes_filter, true);
+});
+
+
+test('replay inline projection follows product disposition including off-diff and unconfirmed sites', async () => {
+  const payload = clone(fixture.payload);
+  const template = payload.findings[0];
+  payload.findings = [
+    { ...template, id: 'inline', dimension: 'bug', location_status: 'confirmed', diff_validation: { in_diff: true } },
+    { ...template, id: 'off', dimension: 'bug', location_status: 'confirmed', diff_validation: { in_diff: false } },
+    { ...template, id: 'unknown', dimension: 'bug', location_status: 'unconfirmed', diff_validation: { in_diff: true } },
+  ];
+  payload.findings = payload.findings.map((f) => ({ ...f, file: `${f.id}.source` }));
+  const plan = await prepare(tree, payload);
+  payload.input = plan.input;
+  const dispatches = plan.calls.map((call) => ({ ...call, result: { validations: payload.findings.map((f) => ({
+    finding_id: f.id, claim: 'confirmed', consequence: 'latent', latent_condition: 'Enable another caller', justification: 'Independent code inspection',
+  })) } }));
+  const result = await apply(tree, payload, dispatches);
+  assert.deepEqual(result.findings.map(({ id, route, disposition, posts_inline, passes_filter }) => ({ id, route, disposition, posts_inline, passes_filter })), [
+    { id: 'inline', route: 'posted-latent', disposition: 'deliver', posts_inline: true, passes_filter: true },
+    { id: 'off', route: 'posted-latent', disposition: 'body', posts_inline: false, passes_filter: false },
+    { id: 'unknown', route: 'posted-latent', disposition: 'body', posts_inline: false, passes_filter: false },
+  ]);
+  const treatment = mkdtempSync(join(tmpdir(), 'placement-treatment-'));
+  cpSync(join(tree, 'workflows'), join(treatment, 'workflows'), { recursive: true });
+  const path = join(treatment, 'workflows/src/dispose.js');
+  writeFileSync(path, readFileSync(path, 'utf8').replace('export function findingDisposition(finding, heldBack = false) {',
+    "export function findingDisposition(finding, heldBack = false) { return { disposition: 'body', reasons: [] };"));
+  const changed = await apply(treatment, payload, dispatches);
+  assert.ok(changed.findings.every((f) => f.disposition === 'body' && !f.posts_inline && !f.passes_filter));
 });

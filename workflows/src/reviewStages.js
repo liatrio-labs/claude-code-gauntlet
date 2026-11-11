@@ -11,7 +11,7 @@ import { applyChallenges } from './applyChallenges.js';
 import { coerceReportFindings } from './renderReport.js';
 import { groupDelivery, rankFindings } from './groupRanking.js';
 import { deliveryGroups } from './dispose.js';
-import { hasAdmission } from './admission.js';
+import { challengeEligible } from './admission.js';
 
 // Both independent readers answer the same closed questions.
 const VALIDATE_SCHEMA = { type: 'object', properties: { validations: { type: 'array',
@@ -190,11 +190,8 @@ export async function challengeStage(ctx, input) {
 
   const model = modelFor('code-gauntlet:challenger', policy);
 
-  // Reserve scarce challenge capacity for findings that can still be delivered.
-  const actionable = (f) => (f.verdict_route === 'not-established' || (hasAdmission(f) && f.admission.status === 'admitted'))
-    && f.origin !== 'unknown';
-  const terminal = findings.filter((f) => !actionable(f)).map((f) => ({ ...f, challenge: 'admission_terminal' }));
-  const ranked = rankFindings(findings.filter(actionable));
+  const terminal = findings.filter((f) => !challengeEligible(f)).map((f) => ({ ...f, challenge: 'admission_terminal' }));
+  const ranked = rankFindings(findings.filter(challengeEligible));
   const candidates = ranked.slice(0, cap);
   const overflow = ranked.slice(cap);
 

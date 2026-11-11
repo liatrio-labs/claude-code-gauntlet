@@ -200,3 +200,53 @@ def test_nonconfirmed_claims_have_no_invented_worth_answer():
     result = analyze([observations], reader, expected_bugs=0)
     table = result["policies"]["all"]["treatment"]["average"]["worth_confusion"]
     assert table == {"not_applicable": {"no": 1, "yes": 1}}
+
+
+def test_inline_tables_use_projected_disposition_and_do_not_infer_old_observations():
+    rows = [
+        dict(
+            id="body",
+            file="body",
+            line_start=1,
+            route="posted-latent",
+            severity="low",
+            rank_index=0,
+            posts_inline=False,
+            matched_bug_ids=["bug"],
+        ),
+        *(
+            dict(
+                id=f"inline-{i}",
+                file=f"inline-{i}",
+                line_start=1,
+                route="posted-latent",
+                severity="low",
+                rank_index=i + 1,
+                posts_inline=True,
+            )
+            for i in range(3)
+        ),
+        dict(
+            id="old",
+            file="old",
+            line_start=1,
+            route="posted",
+            rank_index=10,
+            matched_bug_ids=["bug"],
+        ),
+    ]
+    sample = Sample("treatment", "p1", "pr", tuple(rows), frozenset(["bug"]), 0)
+    result = analyze([sample], [], expected_bugs=1)
+    for policy, count in [("all", 3), ("bounded", 2)]:
+        tables = result["policies"][policy]["treatment"]
+        expected = dict(
+            findings=count,
+            known_bugs=0,
+            matching_places=0,
+            unmatched_places=count,
+            unmeasured_findings=1,
+        )
+        assert tables["passes"][0]["per_pr"][0]["inline_posting"] == expected
+        assert tables["passes"][0]["total"]["inline_posting"] == expected
+        assert tables["average"]["inline_posting"] == expected
+        assert tables["average"]["routes"]["posted-latent"]["known_bugs"] == 1

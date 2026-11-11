@@ -6,7 +6,7 @@
         "core": false,
         "inline_eligible": true,
         "input_fields": [],
-        "input_proof": "fnv1a32:0xc7066614",
+        "input_proof": "fnv1a32:0x9d8b46d2",
         "kind": "ordinary",
         "reasons": [
           {
@@ -30,7 +30,6 @@
       "file": "src",
       "id": "f",
       "line_start": 10,
-      "reachability": "uncertain",
       "report_destination": "main",
       "report_tag": "main",
       "severity": "high",

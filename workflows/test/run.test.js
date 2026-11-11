@@ -408,7 +408,7 @@ test('final disposition survives replay and persistence', async () => {
   assert.equal(JSON.stringify(raw), before);
   assert.deepEqual(disposeFindings(disposed), disposed);
   assert.deepEqual(disposed.unverified.map((f) => f.disposition_reasons), [['challenge_failed'], ['challenge_cap']]);
-  const expected = { SECURITY: 'body', BODY: 'body', UNKNOWN: 'body', FAILED: 'held_back', CAPPED: 'held_back', NUMERIC: 'eliminate' };
+  const expected = { SECURITY: 'deliver', BODY: 'body', UNKNOWN: 'body', FAILED: 'held_back', CAPPED: 'held_back', NUMERIC: 'eliminate' };
   for (const writerFails of [false, true]) {
     const result = await runAndCapture(validArgs({ limits: { deliveryCap: 1 }, checkpoints: { challenge: raw } }),
       writerFails ? { agentThrowLabel: 'artifact-writer' } : {});

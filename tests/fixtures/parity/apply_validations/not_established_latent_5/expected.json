@@ -6,7 +6,6 @@
       "file": "src",
       "id": "f",
       "line_start": 10,
-      "reachability": "uncertain",
       "report_destination": "main",
       "report_tag": "main",
       "severity": "high",

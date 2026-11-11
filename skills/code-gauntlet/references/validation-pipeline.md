@@ -89,6 +89,11 @@ A latent consequence names its future change or unusual precondition in `latent_
 `refutation_kind` and a source reference (`file`, `line_start`, `line_end`, exact `anchor`).
 The schema and route registry live in `workflows/src/registry.js`.
 
+Both readers inspect confirmed findings, including a validator's non-posting consequence. When
+both confirm, the first consequence in the route registry's seriousness order wins. Raw reader
+answers remain separate from the resolved verdict. Latent findings post inline at low severity
+when their locations allow it; consequence never forces body placement.
+
 The executor runs `check_refutations.py` for refutations. Code checks the exact quote at the
 captured head (the working tree for local reviews), the line range, and the saved diff.
 Comment-only quotes and any span containing added lines fail closed. Requiring every cited line
@@ -140,9 +145,10 @@ The existing blind challenger checks admitted findings and unresolved validation
 diff for deleted tests), withholding upstream verdicts and reasoning. It returns the same typed
 schema and uses the same code citation check and routing table. A successful independent check
 can establish an unresolved finding; unresolved results and failed or capped calls stay local as
-held back. Report-only findings skip challenge.
+held back. Consequence-based report-only findings also receive blind challenge. Finding-kind
+admission failures remain local.
 
-One ranking orders severity, security, proven origin, main versus suggestion tier, inline
+One ranking orders severity, consequence seriousness, security, proven origin, main versus suggestion tier, inline
 eligibility, file, line and ID. It governs challenge capacity, delivery selection, group leads
 and report order. Confidence and prose length do not participate. Group severity is the maximum
 of the routed member severities; its tier is main when any admitted member is main. The grouper

@@ -6,7 +6,6 @@
       "file": "src",
       "id": "f",
       "line_start": 10,
-      "reachability": "current",
       "report_destination": "suggestion",
       "report_tag": "suggestion",
       "severity": "high",

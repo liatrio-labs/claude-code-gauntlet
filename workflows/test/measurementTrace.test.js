@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { decodeMeasurement } from './helpers/decodeMeasurement.js';
 import { runWith } from '../src/run.js';
 import { measurementScenario, persistedScenario } from './helpers/measurementScenario.js';
 import { createMeasurementTrace, stampDiscovery, recordStage, appendMeasurement, traceDecision, TRACE_REASONS } from '../src/measurementTrace.js';
@@ -65,10 +66,9 @@ for (const field of ['description', 'evidence']) test(`large optional ${field} p
   const out = appendMeasurement(envelope, trace);
   assert.deepEqual(out.checkpoints, envelope.checkpoints);
   assert.equal(out.measurement.status, 'available');
-  const cut = JSON.parse(out.measurement.text);
-  assert.deepEqual(cut.dropped_stages, ['discover']);
-  assert.equal(cut.snapshots[0].coverage, 'unavailable');
-  assert.deepEqual(cut.versions, []);
+  const cut = decodeMeasurement(out.measurement);
+  assert.equal(out.measurement.encoding, 'json-pool-lzw16-base64-v1');
+  assert.deepEqual(cut, trace);
   assert.equal(Object.hasOwn(out, 'persistReturn'), false);
   const small = createMeasurementTrace('n');
   recordStage(small, 'discover', [stampDiscovery(small, { description: '\u00e9' }, { agentType: 'a', dimensions: [] }, 0, 0)]);
@@ -94,7 +94,7 @@ test('400 long claims retain discovery within the return budget and reuse versio
   assert.equal(JSON.stringify(trace.versions[0].finding), recorded);
 });
 
-test('budget cuts later stages with their unused versions while preserving discovery and decision references', () => {
+test('compression preserves history and budget fallback preserves discovery and decision references', () => {
   const trace = createMeasurementTrace('cut');
   const f = stampDiscovery(trace, { description: 'discovered defect' }, { agentType: 'a', dimensions: [] }, 0, 0);
   const invalid = stampDiscovery(trace, { description: 'invalid claim' }, { agentType: 'a', dimensions: [] }, 0, 1);
@@ -104,18 +104,16 @@ test('budget cuts later stages with their unused versions while preserving disco
   const original = JSON.stringify(trace);
   const out = appendMeasurement({ ok: true }, trace);
   assert.ok(JSON.stringify(out).length <= RETURN_CHAR_BUDGET);
-  const saved = JSON.parse(out.measurement.text);
-  assert.deepEqual(saved.dropped_stages, ['verify']);
-  assert.equal(saved.snapshots[0].coverage, 'complete');
-  assert.equal(saved.snapshots[1].coverage, 'complete');
-  assert.equal(saved.snapshots[2].coverage, 'unavailable');
-  assert.deepEqual(saved.snapshots[2].finding_version_ids, []);
-  assert.equal(saved.versions.length, 3);
-  assert.ok(saved.versions.some((v) => v.trace_id === invalid.trace_id));
-  assert.equal(JSON.stringify(trace), original);
-  const tighter = JSON.parse(appendMeasurement({ review: 'x'.repeat(500000) }, saved).measurement.text);
+  const saved = decodeMeasurement(out.measurement);
+  assert.deepEqual(saved, trace);
+  const tighter = decodeMeasurement(appendMeasurement({ review: 'x'.repeat(RETURN_CHAR_BUDGET - 3000) }, saved).measurement);
   assert.deepEqual(tighter.dropped_stages, ['merge', 'verify']);
   assert.equal(tighter.snapshots[0].coverage, 'complete');
+  assert.equal(tighter.snapshots[1].coverage, 'unavailable');
+  assert.equal(tighter.snapshots[2].coverage, 'unavailable');
+  assert.equal(tighter.versions.length, 2);
+  assert.ok(tighter.versions.some((v) => v.trace_id === invalid.trace_id));
+  assert.equal(JSON.stringify(trace), original);
   const noRoom = { review: 'x'.repeat(RETURN_CHAR_BUDGET) };
   assert.deepEqual(appendMeasurement(noRoom, trace), noRoom);
 });

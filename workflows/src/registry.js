@@ -296,26 +296,28 @@ const ASSESSMENT = { type: 'object', properties: {
   status: { type: 'string', enum: ['confirmed', 'rejected', 'unresolved'] },
   references: { type: 'array', items: { type: 'string' } },
 }, required: ['predicate', 'status', 'references'], additionalProperties: false };
-// Truth and consequence are independent axes; only code-checked counter-evidence refutes.
+// Confirmed rows run from most to least serious so disagreement has one declared order.
+// Only code-checked counter-evidence refutes.
 export const VERDICT_ROUTES = deepFreeze({
   confirmed: {
     present_failure: { route: 'posted', status: 'admitted', tier: 'main' },
     latent: { route: 'posted-latent', status: 'admitted', tier: 'suggestion', severity: 'low' },
     artifact_defect: { route: 'posted-artifact', status: 'admitted', tier: 'suggestion', severity: 'low', admission: 'kind', demotion: 'consequence' },
-    no_practical_effect: { route: 'report-only', status: 'report_only', tier: 'suggestion' },
+    no_practical_effect: { route: 'report-only', status: 'report_only', tier: 'suggestion', challenge: true },
   },
   overrides: [
-    { when: { dimension: 'security', phase: 'validation', claim: 'refuted' }, route: 'not-established', status: 'held_back', tier: 'main' },
+    { when: { dimension: 'security', phase: 'validation', claim: 'refuted' }, route: 'not-established', status: 'held_back', tier: 'main', challenge: true },
     { when: { dimension: 'security', phase: 'challenge', claim: 'refuted', verified: true, validatorRefuted: true, validatorVerified: true }, route: 'eliminated', status: 'report_only', tier: 'suggestion' },
     { when: { dimension: 'security', phase: 'challenge', anyRefutation: true }, route: 'report-only', status: 'report_only', tier: 'main' },
   ],
   refuted: { verified: { route: 'eliminated', status: 'report_only', tier: 'suggestion' },
-    unverified: { route: 'not-established', status: 'held_back', tier: 'main' } },
-  not_established: { route: 'not-established', status: 'held_back', tier: 'main' },
+    unverified: { route: 'not-established', status: 'held_back', tier: 'main', challenge: true } },
+  not_established: { route: 'not-established', status: 'held_back', tier: 'main', challenge: true },
 });
+export const CONSEQUENCE_ORDER = deepFreeze(Object.keys(VERDICT_ROUTES.confirmed));
 export const VERDICT_PROPERTIES = deepFreeze({
   claim: { type: 'string', enum: ['confirmed', 'refuted', 'not_established'] },
-  consequence: { type: 'string', enum: Object.keys(VERDICT_ROUTES.confirmed) },
+  consequence: { type: 'string', enum: CONSEQUENCE_ORDER },
   justification: { type: 'string', minLength: 1 },
   refutation_kind: { type: 'string', enum: ['premise_false', 'guard_exists', 'no_reachable_caller'] },
   refutation: { ...SOURCE_REFERENCE, description: `Executable counter-evidence: at most ${ANCHOR_LIMITS.lines} inclusive source lines.`,

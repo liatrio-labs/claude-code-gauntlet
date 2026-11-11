@@ -1,6 +1,6 @@
 import { asText } from './wire.js';
 import { deliveryAllows } from './location.js';
-import { SEVERITY_ORDER } from './registry.js';
+import { CONSEQUENCE_ORDER, SEVERITY_ORDER } from './registry.js';
 
 function groupTier(finding) {
   return (finding.report_tag ?? finding.report_destination ?? finding.admission?.tier ?? 'main') === 'main' ? 1 : 0;
@@ -12,7 +12,8 @@ function groupSeverityRank(finding) {
 }
 
 export function rankKey(finding) {
-  return [-groupSeverityRank(finding), (finding.dimension ?? '').toLowerCase() === 'security' ? 0 : 1,
+  const consequence = CONSEQUENCE_ORDER.indexOf(finding.verdict?.consequence);
+  return [-groupSeverityRank(finding), Math.max(0, consequence), (finding.dimension ?? '').toLowerCase() === 'security' ? 0 : 1,
     finding.origin === 'unknown' ? 1 : 0, -groupTier(finding), deliveryAllows(finding, 'inline') ? 0 : 1,
     asText(finding.file), Number(finding.line_start) || 0, asText(finding.id)];
 }

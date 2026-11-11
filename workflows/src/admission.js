@@ -76,6 +76,12 @@ export function hasAdmission(finding) {
     && stamp.input_proof === admissionProof(finding, stamp.input_fields);
 }
 
+// The route table names findings needing another reader even while locally withheld.
+export function challengeEligible(finding) {
+  return finding.origin !== 'unknown' && (((finding.verdict || finding.verdict_route) && verdictRule(finding).challenge === true)
+    || (hasAdmission(finding) && finding.admission.status === 'admitted'));
+}
+
 function factAssessment(finding, predicate) {
   const ref = finding.resolved_references;
   const facts = {

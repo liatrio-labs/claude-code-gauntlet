@@ -429,20 +429,21 @@ const VERDICT_ROUTES = deepFreeze({
     present_failure: { route: 'posted', status: 'admitted', tier: 'main' },
     latent: { route: 'posted-latent', status: 'admitted', tier: 'suggestion', severity: 'low' },
     artifact_defect: { route: 'posted-artifact', status: 'admitted', tier: 'suggestion', severity: 'low', admission: 'kind', demotion: 'consequence' },
-    no_practical_effect: { route: 'report-only', status: 'report_only', tier: 'suggestion' },
+    no_practical_effect: { route: 'report-only', status: 'report_only', tier: 'suggestion', challenge: true },
   },
   overrides: [
-    { when: { dimension: 'security', phase: 'validation', claim: 'refuted' }, route: 'not-established', status: 'held_back', tier: 'main' },
+    { when: { dimension: 'security', phase: 'validation', claim: 'refuted' }, route: 'not-established', status: 'held_back', tier: 'main', challenge: true },
     { when: { dimension: 'security', phase: 'challenge', claim: 'refuted', verified: true, validatorRefuted: true, validatorVerified: true }, route: 'eliminated', status: 'report_only', tier: 'suggestion' },
     { when: { dimension: 'security', phase: 'challenge', anyRefutation: true }, route: 'report-only', status: 'report_only', tier: 'main' },
   ],
   refuted: { verified: { route: 'eliminated', status: 'report_only', tier: 'suggestion' },
-    unverified: { route: 'not-established', status: 'held_back', tier: 'main' } },
-  not_established: { route: 'not-established', status: 'held_back', tier: 'main' },
+    unverified: { route: 'not-established', status: 'held_back', tier: 'main', challenge: true } },
+  not_established: { route: 'not-established', status: 'held_back', tier: 'main', challenge: true },
 });
+const CONSEQUENCE_ORDER = deepFreeze(Object.keys(VERDICT_ROUTES.confirmed));
 const VERDICT_PROPERTIES = deepFreeze({
   claim: { type: 'string', enum: ['confirmed', 'refuted', 'not_established'] },
-  consequence: { type: 'string', enum: Object.keys(VERDICT_ROUTES.confirmed) },
+  consequence: { type: 'string', enum: CONSEQUENCE_ORDER },
   justification: { type: 'string', minLength: 1 },
   refutation_kind: { type: 'string', enum: ['premise_false', 'guard_exists', 'no_reachable_caller'] },
   refutation: { ...SOURCE_REFERENCE, description: `Executable counter-evidence: at most ${ANCHOR_LIMITS.lines} inclusive source lines.`,
@@ -1824,6 +1825,46 @@ function validateConfigEcho(args, errors, table = KNOB_REGISTRY) {
     }
   }
 }
+// --- measurementCompression.js ---
+const BASE64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+function compressMeasurement(text) {
+  const strings = [], indices = new Map();
+  const pack = (value) => {
+    if (typeof value === 'string') {
+      if (!indices.has(value)) { indices.set(value, strings.length); strings.push(value); }
+      return [0, indices.get(value)];
+    }
+    if (Array.isArray(value)) return [1, value.map(pack)];
+    if (value !== null && typeof value === 'object') return [2, Object.entries(value).map(([key, item]) => [key, pack(item)])];
+    return value;
+  };
+  const root = pack(JSON.parse(text));
+  const input = JSON.stringify({ strings, root }).replace(/[\u007f-\uffff]/g,
+    (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  const dictionary = new Map();
+  let nextCode = 256;
+  const bytes = [];
+  const emit = (code) => bytes.push(code >>> 8, code & 255);
+  let word = input.charCodeAt(0);
+  for (let i = 1; i < input.length; i++) {
+    const char = input.charCodeAt(i), pair = word * 256 + char;
+    const code = dictionary.get(pair);
+    if (code !== undefined) word = code;
+    else {
+      emit(word);
+      if (nextCode < 65536) dictionary.set(pair, nextCode++);
+      word = char;
+    }
+  }
+  if (input.length) emit(word);
+  const encoded = [];
+  for (let i = 0; i < bytes.length; i += 3) {
+    const a = bytes[i], b = bytes[i + 1], c = bytes[i + 2];
+    encoded.push(BASE64[a >>> 2], BASE64[((a & 3) << 4) | ((b ?? 0) >>> 4)],
+      b === undefined ? '=' : BASE64[((b & 15) << 2) | ((c ?? 0) >>> 6)], c === undefined ? '=' : BASE64[c & 63]);
+  }
+  return encoded.join('');
+}
 // --- measurementTrace.js ---
 const TRACE_STAGES = ['discover', 'merge', 'verify', 'validate', 'filter', 'admission', 'challenge', 'cite', 'dispose', 'holdback', 'select', 'deliver'];
 const TRACE_FINDING_FIELDS = ['trace_id', 'discovery_agent', 'discovery_dimension', 'id', 'file',
@@ -1906,8 +1947,13 @@ function recordStage(trace, stage, output, details = {}) {
 function appendMeasurement(envelope, trace) {
   if (!trace) return envelope;
   const candidate = deepClone(trace);
-  const available = () => ({ ...envelope, measurement: { status: 'available', text: JSON.stringify(candidate) } });
-  let result = available();
+  const available = (compress = false) => {
+    const text = JSON.stringify(candidate);
+    const plain = { ...envelope, measurement: { status: 'available', text } };
+    if (!compress || JSON.stringify(plain).length <= RETURN_CHAR_BUDGET) return plain;
+    return { ...envelope, measurement: { status: 'available', encoding: 'json-pool-lzw16-base64-v1', text: compressMeasurement(text) } };
+  };
+  let result = available(true);
   for (const snapshot of [...candidate.snapshots].reverse()) {
     if (JSON.stringify(result).length <= RETURN_CHAR_BUDGET) return result;
     if (candidate.dropped_stages.includes(snapshot.stage)) continue;
@@ -2546,6 +2592,11 @@ function buildVerdict(value) {
   return Object.fromEntries(['claim', 'justification', ...VERDICT_CASES[value.claim]]
     .filter((key) => value[key] !== undefined).map((key) => [key, deepClone(value[key])]));
 }
+function resolveVerdict(validator, challenger) {
+  if (!verdictRejections(validator).length && validator.claim === 'confirmed' && challenger.claim === 'confirmed'
+    && CONSEQUENCE_ORDER.indexOf(validator.consequence) < CONSEQUENCE_ORDER.indexOf(challenger.consequence)) return validator;
+  return challenger;
+}
 function verdictRule(finding) {
   const value = finding.verdict;
   if (verdictRejections(value).length) return VERDICT_ROUTES.not_established;
@@ -2569,8 +2620,7 @@ function routeVerdict(finding) {
   }
   delete finding.route_reason;
   finding.verdict_route = rule.route;
-  finding.reachability = finding.verdict?.claim === 'confirmed'
-    ? finding.verdict.consequence === 'latent' ? 'future_change_only' : 'current' : 'uncertain';
+  delete finding.reachability;
   finding.report_destination = finding.report_tag = rule.tier;
   if (rule.severity) {
     finding.original_severity ??= finding.severity;
@@ -2618,7 +2668,8 @@ function groupSeverityRank(finding) {
   return index < 0 ? 0 : SEVERITY_ORDER.length - index;
 }
 function rankKey(finding) {
-  return [-groupSeverityRank(finding), (finding.dimension ?? '').toLowerCase() === 'security' ? 0 : 1,
+  const consequence = CONSEQUENCE_ORDER.indexOf(finding.verdict?.consequence);
+  return [-groupSeverityRank(finding), Math.max(0, consequence), (finding.dimension ?? '').toLowerCase() === 'security' ? 0 : 1,
     finding.origin === 'unknown' ? 1 : 0, -groupTier(finding), deliveryAllows(finding, 'inline') ? 0 : 1,
     asText(finding.file), Number(finding.line_start) || 0, asText(finding.id)];
 }
@@ -3208,6 +3259,10 @@ function hasAdmission(finding) {
     && Array.isArray(stamp.reasons) && Array.isArray(stamp.input_fields)
     && stamp.input_proof === admissionProof(finding, stamp.input_fields);
 }
+function challengeEligible(finding) {
+  return finding.origin !== 'unknown' && (((finding.verdict || finding.verdict_route) && verdictRule(finding).challenge === true)
+    || (hasAdmission(finding) && finding.admission.status === 'admitted'));
+}
 function factAssessment(finding, predicate) {
   const ref = finding.resolved_references;
   const facts = {
@@ -3337,7 +3392,8 @@ function applyChallenges(findings, challenges) {
     const finding = deepClone(original);
     const { refutation_check } = entry;
     const verdict = buildVerdict(entry);
-    finding.verdict = finding.challenge_verdict = verdict;
+    finding.challenge_verdict = verdict;
+    finding.verdict = resolveVerdict(finding.validator_verdict ?? finding.verdict, verdict);
     delete finding.refutation_check;
     if (refutation_check) finding.refutation_check = refutation_check;
     finding.validation = 'validated';
@@ -3387,7 +3443,7 @@ function findingDisposition(finding, heldBack = false) {
   } else if (!DELIVERABLE_CHALLENGES.includes(finding.challenge)) {
     disposition = 'held_back';
     reasons.push('challenge_failed');
-  } else if (finding.admission.inline_eligible && finding.reachability !== 'future_change_only'
+  } else if (finding.admission.inline_eligible
     && finding.diff_validation?.in_diff === true && locationAllows(finding, 'inline')) {
     disposition = 'deliver';
   } else reasons.push('body_routed');
@@ -5101,10 +5157,8 @@ async function challengeStage(ctx, input) {
     };
   }
   const model = modelFor('code-gauntlet:challenger', policy);
-  const actionable = (f) => (f.verdict_route === 'not-established' || (hasAdmission(f) && f.admission.status === 'admitted'))
-    && f.origin !== 'unknown';
-  const terminal = findings.filter((f) => !actionable(f)).map((f) => ({ ...f, challenge: 'admission_terminal' }));
-  const ranked = rankFindings(findings.filter(actionable));
+  const terminal = findings.filter((f) => !challengeEligible(f)).map((f) => ({ ...f, challenge: 'admission_terminal' }));
+  const ranked = rankFindings(findings.filter(challengeEligible));
   const candidates = ranked.slice(0, cap);
   const overflow = ranked.slice(cap);
   const thunks = candidates.map((finding, idx) => () => callChallenger(ctx, challengePrompt(finding, inp.diffPath), {

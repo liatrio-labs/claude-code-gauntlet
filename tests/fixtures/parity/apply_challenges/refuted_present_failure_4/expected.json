@@ -20,7 +20,6 @@
       "file": "src",
       "id": "f",
       "line_start": 10,
-      "reachability": "uncertain",
       "refutation_check": {
         "verified": true
       },

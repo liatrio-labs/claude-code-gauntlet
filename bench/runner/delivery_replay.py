@@ -16,6 +16,7 @@ from typing import Any, Literal, TypedDict
 
 from gauntlet.artifacts import assemble, plan_checksum
 from gauntlet.jsjson import js_stringify_pretty
+from gauntlet.measurement import measurement_text
 from gauntlet.registry import TRACE_FINDING_FIELDS, Admission, Disposition
 
 from bench.runner.decode import decode
@@ -690,7 +691,10 @@ def replay_delivery(inputs, *, candidate=False):
         raise ValueError("rendered checkpoint differs from source evidence")
     artifacts["envelope.json"] = js_stringify_pretty(envelope)
     if envelope.get("measurement", {}).get("status") == "available":
-        artifacts["measurement-trace.json"] = envelope["measurement"]["text"]
+        measurement = envelope["measurement"]
+        artifacts["measurement-trace.json"] = measurement_text(
+            measurement["text"], measurement.get("encoding")
+        )
     if candidate:
         _candidate_artifacts(inputs, artifacts, paths, baseline, expected_checkpoint)
     result = tuple(
