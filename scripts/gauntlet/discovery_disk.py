@@ -20,25 +20,26 @@ from gauntlet.discovery_plan import (
     TrimmedCoverageLedger,
 )
 from gauntlet.fs import write_atomic
-from gauntlet.jsjson import fnv1a32
-from gauntlet.measurement import ENCODING, measurement_text
+from gauntlet.jsjson import dumps, escape_lone_surrogates, fnv1a32, utf16_len
 from gauntlet.registry import (
-    DISCOVERY_CHUNK_CHARS,
-    DISCOVERY_MAX_CHUNKS,
+    DISCOVERY_AGENT_TYPES,
+    DISCOVERY_MAX_PARTS,
     DISCOVERY_RECEIPT_CHARS,
+    DISCOVERY_REQUEST_CHARS,
     READ_PLAN_LINE_PREFIX_BYTES,
     READ_PLAN_MAX_BYTES,
     READ_PLAN_MAX_CHUNKS,
     READ_PLAN_MAX_LINES,
 )
 
-CHUNK_CHARS = DISCOVERY_CHUNK_CHARS
+REQUEST_CHARS = DISCOVERY_REQUEST_CHARS
 RECEIPT_CHARS = DISCOVERY_RECEIPT_CHARS
 MAX_FILE_BYTES = 32 * 1024 * 1024
 
 
 class PlanDocument(TypedDict):
-    version: int
+    version: Literal[2]
+    files: list[str]
     sha: str
     context_sha256: str
     diff_sha256: str
@@ -100,9 +101,8 @@ class PlannerReceipt(TypedDict):
     part: int
     parts: int
     input_checksum: str
-    chunk_checksum: str
-    token: str
-    token_checksum: str
+    request_checksum: str
+    result: PlannerResult
     receipt_checksum: str
 
 
@@ -288,7 +288,7 @@ def assignment_reads(regions: list[Region], facts: list[FactPacket]) -> list[Rea
 
 
 def assignment_frame(body: str, kind: str) -> str:
-    # Transport-only chunks and finalization do not render reviewed content.
+    # Stored request parts and finalization do not render reviewed content.
     from gauntlet.framing import frame
 
     return frame("untrusted-code-content", body, {"kind": kind})
@@ -459,6 +459,206 @@ def choose(
     ) if selected else ""
 
 
+class PlainHunter(TypedDict):
+    agent: str
+    status: Literal["complete", "incomplete", "failed"]
+
+
+class PlainRequest(TypedDict, total=False):
+    files_checksum: str
+    mode: Literal["full", "scope", "primary_failure"]
+    high: str
+    low: str
+    citations: dict[str, str]
+    state_checksum: str
+    hunters: list[PlainHunter]
+    anchors: dict[str, list[list[Any]]]
+
+
+def canonical_files(files: list[str]) -> list[str]:
+    return sorted(
+        set(files), key=lambda name: name.encode("utf-16-be", "surrogatepass")
+    )
+
+
+def request_ranges(
+    text: object, maximum: int, *, minimum: int = 0
+) -> list[tuple[int, int]]:
+    if not isinstance(text, str):
+        raise ValueError("ranges must be text")
+    out: list[tuple[int, int]] = []
+    for token in text.split(",") if text else []:
+        if not re.fullmatch(r"(?:0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*))?", token):
+            raise ValueError("invalid range")
+        ends = [int(x) for x in token.split("-")]
+        start, end = ends[0], ends[-1]
+        if not minimum <= start <= end < maximum or (out and start <= out[-1][1]):
+            raise ValueError("unordered or out-of-bounds range")
+        out.append((start, end))
+    return out
+
+
+def expand_requests(
+    parts: list[PlainRequest],
+    document: PlanDocument,
+    phase: str,
+    output: Path,
+    sha: str,
+) -> SelectionRequest | FinalizeRequest:
+    files = document["files"]
+    allowed = {str(index): agent for index, agent in enumerate(DISCOVERY_AGENT_TYPES)}
+    checksum = fnv1a32(
+        dumps(
+            {"files": files, "reviewers": DISCOVERY_AGENT_TYPES},
+            ascii=False,
+            compact=True,
+        )
+    )
+    citations: dict[str, dict[int, list[str]]] = {}
+    anchors: dict[str, list[list[Any]]] = {}
+    high: list[tuple[int, int]] = []
+    low: list[tuple[int, int]] = []
+    first = parts[0]
+    common = (
+        ("files_checksum", "mode")
+        if phase == "select"
+        else ("files_checksum", "state_checksum", "hunters")
+    )
+    keys = {
+        *common,
+        "citations",
+        *(("high", "low") if phase == "select" else ("anchors",)),
+    }
+    for part in parts:
+        if (
+            not isinstance(part, dict)
+            or set(part) - keys
+            or any(part.get(k) != first.get(k) for k in common)
+        ):
+            raise ValueError("inconsistent request parts")
+        if part.get("files_checksum") != checksum:
+            raise ValueError("snapshot file indexes differ")
+        for risk, target in (("high", high), ("low", low)):
+            target.extend(request_ranges(part.get(risk, ""), len(files)))
+        raw = part.get("citations", {})
+        if not isinstance(raw, dict) or list(raw) != sorted(raw, key=int):
+            raise ValueError("unordered reviewer citations")
+        for agent, rows in raw.items():
+            if agent not in allowed or not isinstance(rows, str):
+                raise ValueError("unknown citation reviewer")
+            group = citations.setdefault(agent, {})
+            previous = -1
+            for row in rows.split(";") if rows else []:
+                fields = row.split(":")
+                if len(fields) != 2 or not re.fullmatch(r"0|[1-9][0-9]*", fields[0]):
+                    raise ValueError("invalid file index")
+                index, text = int(fields[0]), fields[1]
+                if not previous < index < len(files):
+                    raise ValueError("unordered file indexes")
+                if group and index < next(reversed(group)):
+                    raise ValueError("unordered files across parts")
+                request_ranges(text, 9007199254740992, minimum=1)
+                group.setdefault(index, []).append(text)
+                previous = index
+        raw_anchors = part.get("anchors", {})
+        if not isinstance(raw_anchors, dict):
+            raise ValueError("invalid anchors")
+        for agent, anchor_rows in raw_anchors.items():
+            if agent not in allowed or not isinstance(anchor_rows, list):
+                raise ValueError("unknown anchor reviewer")
+            anchors.setdefault(agent, []).extend(anchor_rows)
+    refs = [
+        [allowed[agent], files[index], start, end]
+        for agent, groups in citations.items()
+        for index, texts in groups.items()
+        for start, end in request_ranges(",".join(texts), 9007199254740992, minimum=1)
+    ]
+    context: RequestContext = {
+        "context": str(output / f"code-gauntlet-context-{sha}.md"),
+        "context_lines": document["context_lines"],
+    }
+    if phase == "select":
+        mode = first.get("mode")
+        if mode not in ("full", "scope", "primary_failure"):
+            raise ValueError("invalid selection mode")
+        priorities: list[Risk] = []
+        seen: set[int] = set()
+        for ranges, risk in ((high, "high"), (low, "low")):
+            previous = -1
+            for start, end in ranges:
+                if start <= previous:
+                    raise ValueError("unordered priorities across parts")
+                for index in range(start, end + 1):
+                    if index in seen:
+                        raise ValueError("conflicting priorities")
+                    seen.add(index)
+                    priorities.append({"path": files[index], "risk": risk})
+                previous = end
+        return {
+            **context,
+            "refs": refs,
+            "risks": priorities,
+            "enabled": mode == "full",
+            "disabled_reason": "primary_failure"
+            if mode == "primary_failure"
+            else "scope",
+        }
+    hunters = first.get("hunters")
+    if not isinstance(hunters, list) or not re.fullmatch(
+        r"[0-9a-f]{64}", first.get("state_checksum", "")
+    ):
+        raise ValueError("invalid finalization")
+    observations: list[HunterObservation] = []
+    named: set[str] = set()
+    for hunter in hunters:
+        if (
+            not isinstance(hunter, dict)
+            or set(hunter) != {"agent", "status"}
+            or hunter["agent"] not in allowed
+            or hunter["agent"] in named
+            or hunter["status"] not in ("complete", "incomplete", "failed")
+        ):
+            raise ValueError("invalid hunter")
+        agent = hunter["agent"]
+        named.add(agent)
+        points: list[list[Any]] = []
+        ids: set[str] = set()
+        previous_point = (-1, 0)
+        for anchor_row in anchors.get(agent, []):
+            if not isinstance(anchor_row, list) or len(anchor_row) != 3:
+                raise ValueError("invalid anchor")
+            id, index, line = anchor_row
+            if (
+                not isinstance(id, str)
+                or not id
+                or id in ids
+                or type(index) is not int
+                or not -1 <= index < len(files)
+                or not natural(line)
+                or line == 0
+                or (index, line) < previous_point
+            ):
+                raise ValueError("unordered or invalid anchor")
+            ids.add(id)
+            previous_point = (index, line)
+            points.append([id, files[index] if index >= 0 else None, line])
+        observations.append(
+            {
+                "agent": allowed[agent],
+                "status": hunter["status"],
+                "anchors": points,
+                "refs": [ref for ref in refs if ref[0] == allowed[agent]],
+            }
+        )
+    if (set(citations) | set(anchors)) - named:
+        raise ValueError("undeclared hunter")
+    return {
+        **context,
+        "state_checksum": first["state_checksum"],
+        "hunters": observations,
+    }
+
+
 def _execute(args: argparse.Namespace) -> tuple[PlannerReceipt, int]:
     require_head_sha(args.sha)
     output = Path(args.output_dir).resolve()
@@ -466,47 +666,55 @@ def _execute(args: argparse.Namespace) -> tuple[PlannerReceipt, int]:
         args.part < 0
         or args.parts < 1
         or args.part >= args.parts
-        or args.parts > DISCOVERY_MAX_CHUNKS
-        or len(args.chunk) > CHUNK_CHARS
-        or not re.fullmatch(r"[A-Za-z0-9+/=]*", args.chunk)
+        or args.parts > DISCOVERY_MAX_PARTS
+        or utf16_len(args.request) > REQUEST_CHARS
     ):
-        raise UsageError("invalid discovery transport chunk", 2)
+        raise UsageError("invalid discovery request part", 2)
     if not re.fullmatch(r"fnv1a32:0x[0-9a-f]{8}", args.input_checksum):
         raise UsageError("invalid discovery request checksum", 2)
-    stem = f"code-gauntlet-discovery-{fnv1a32(args.nonce)[-8:]}-{args.phase}-{args.input_checksum[-8:]}"
-    chunk_path = output / f"{stem}-{args.part}-{args.sha}.chunk"
-    write_atomic(chunk_path, args.chunk)
     value: PlannerResult = {"stored": True}
-    if args.part == args.parts - 1:
-        chunks = [
-            checked_bytes(output / f"{stem}-{i}-{args.sha}.chunk").decode("ascii")
-            for i in range(args.parts)
-        ]
-        token = "".join(chunks)
-        if fnv1a32(token) != args.input_checksum:
-            raise UsageError("discovery input checksum mismatch", 2)
-        context = cast(RequestContext, json.loads(measurement_text(token, ENCODING)))
-        try:
-            plan_path = output / artifact_name("discovery-plan", args.sha)
-            document = cast(
-                PlanDocument, json.loads(checked_bytes(plan_path, args.plan_checksum))
-            )
-            if (
-                document["sha"] != args.sha
-                or document["version"] != 1
-                or not valid_plan(document["plan"], context["context_lines"])
-            ):
-                raise ValueError("invalid plan")
-            check_context(
-                Path(context["context"]),
-                output / f"code-gauntlet-context-{args.sha}.md",
-                document["context_sha256"],
-            )
-            if (
-                document["context_lines"] != context["context_lines"]
-                or document["plan"]["status"] != "available"
-            ):
-                raise ValueError("unavailable plan")
+    try:
+        document = cast(
+            PlanDocument,
+            json.loads(
+                checked_bytes(
+                    output / artifact_name("discovery-plan", args.sha),
+                    args.plan_checksum,
+                )
+            ),
+        )
+        files = document["files"]
+        if (
+            document["version"] != 2
+            or document["sha"] != args.sha
+            or not isinstance(files, list)
+            or not all(isinstance(f, str) for f in files)
+            or canonical_files(files) != files
+            or not valid_plan(document["plan"], document["context_lines"])
+            or any(r["file"] not in files for r in document["plan"]["regions"])
+            or document["plan"]["status"] != "available"
+        ):
+            raise ValueError("invalid plan")
+        check_context(
+            output / f"code-gauntlet-context-{args.sha}.md",
+            output / f"code-gauntlet-context-{args.sha}.md",
+            document["context_sha256"],
+        )
+        plain = cast(PlainRequest, json.loads(args.request))
+        expand_requests([plain], document, args.phase, output, args.sha)
+        stem = f"code-gauntlet-discovery-{fnv1a32(args.nonce)[-8:]}-{args.phase}-{args.input_checksum[-8:]}"
+        write_atomic(output / f"{stem}-{args.part}-{args.sha}.json", json_text(plain))
+        if args.part == args.parts - 1:
+            parts = [
+                cast(
+                    PlainRequest,
+                    json.loads(checked_bytes(output / f"{stem}-{i}-{args.sha}.json")),
+                )
+                for i in range(args.parts)
+            ]
+            if fnv1a32(dumps(parts, ascii=False, compact=True)) != args.input_checksum:
+                raise ValueError("discovery input checksum mismatch")
+            context = expand_requests(parts, document, args.phase, output, args.sha)
             plan: DiscoveryPlan = document["plan"]
             if args.phase == "select":
                 request = cast(SelectionRequest, context)
@@ -597,32 +805,46 @@ def _execute(args: argparse.Namespace) -> tuple[PlannerReceipt, int]:
                 if text
                 else "",
             }
-        except (OSError, ValueError, KeyError, TypeError):
-            value = {
-                "available": False,
-                "reason": "missing, invalid or unbound discovery plan/state",
-            }
-    result = json_text(value).rstrip("\n")
+    except (OSError, ValueError, KeyError, TypeError, OverflowError):
+        value = {
+            "available": False,
+            "reason": "missing, invalid or unbound discovery request/plan/state",
+        }
+    result_text = escape_lone_surrogates(
+        json.dumps(
+            value,
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+    )
     receipt: PlannerReceipt = {
         "status": "ok",
         "nonce_checksum": fnv1a32(args.nonce),
         "part": args.part,
         "parts": args.parts,
         "input_checksum": args.input_checksum,
-        "chunk_checksum": fnv1a32(args.chunk),
-        "token": result,
-        "token_checksum": fnv1a32(result),
+        "request_checksum": fnv1a32(args.request),
+        "result": value,
         "receipt_checksum": fnv1a32(
-            f"{args.phase}|{args.part}|{args.parts}|{fnv1a32(args.nonce)}|{args.input_checksum}|{fnv1a32(args.chunk)}|{result}"
+            f"{args.phase}|{args.part}|{args.parts}|{fnv1a32(args.nonce)}|{args.input_checksum}|{fnv1a32(args.request)}|{result_text}"
         ),
     }
-    if len(json_text(receipt)) > RECEIPT_CHARS:
+    if utf16_len(dumps(receipt, ascii=False, compact=True)) > RECEIPT_CHARS:
         raise UsageError("discovery receipt exceeds transport budget", 2)
     return receipt, 0
 
 
 parser = Parser(prog="plan_discovery", description=__doc__)
-for flag in ("output-dir", "sha", "nonce", "plan-checksum", "input-checksum", "chunk"):
+for flag in (
+    "output-dir",
+    "sha",
+    "nonce",
+    "plan-checksum",
+    "input-checksum",
+    "request",
+):
     parser.add_argument("--" + flag, required=True)
 parser.add_argument("--phase", choices=("select", "finalize"), required=True)
 parser.add_argument("--part", type=int, required=True)

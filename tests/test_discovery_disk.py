@@ -7,18 +7,21 @@ import sys
 from pathlib import Path
 
 import pytest
-from gauntlet.discovery_disk import CHUNK_CHARS, RECEIPT_CHARS, artifact_name, save
+from gauntlet.discovery_disk import RECEIPT_CHARS, artifact_name, canonical_files, save
 from gauntlet.jsjson import fnv1a32
+from gauntlet.registry import DISCOVERY_AGENT_TYPES
 
 from tests.support.phase2 import SHA, discovery_plan_payload, write_context_inputs
 from tests.support.pipeline import run_node
 
 
-def encoded(request):
-    return run_node(
-        "import {compressMeasurement} from './workflows/src/measurementCompression.js'; let s='';for await(const c of process.stdin)s+=c;console.log(compressMeasurement(s));",
-        request,
-    ).stdout.strip()
+def plain_requests(request, files, phase):
+    return json.loads(
+        run_node(
+            "import {discoveryRequests} from './workflows/src/discoveryDisk.js';let s='';for await(const c of process.stdin)s+=c;const v=JSON.parse(s);console.log(JSON.stringify(discoveryRequests({changedFiles:v.files},v.phase,v.request)));",
+            {"request": request, "files": files, "phase": phase},
+        ).stdout
+    )
 
 
 @pytest.fixture
@@ -31,7 +34,8 @@ def planner(tmp_path):
         digest = save(
             tmp_path / artifact_name("discovery-plan", SHA),
             {
-                "version": 1,
+                "version": 2,
+                "files": canonical_files([r["file"] for r in plan["regions"]]),
                 "sha": SHA,
                 "context_lines": context_lines,
                 "context_sha256": hashlib.sha256(context.encode()).hexdigest(),
@@ -41,11 +45,19 @@ def planner(tmp_path):
         )
         return {"path": artifact_name("discovery-plan", SHA), "sha256": digest}
 
-    def call(ref, request, *, phase="select", nonce="test", mutate=None):
-        token = encoded(request)
-        chunks = [token[i : i + CHUNK_CHARS] for i in range(0, len(token), CHUNK_CHARS)]
+    def call(
+        ref, request, *, phase="select", nonce="test", mutate=None, wire_parts=None
+    ):
+        files = json.loads((tmp_path / ref["path"]).read_bytes())["files"]
+        parts = (
+            wire_parts
+            if wire_parts is not None
+            else plain_requests(request, files, phase)
+        )
+        token = json.dumps(parts, ensure_ascii=False, separators=(",", ":"))
         envelopes = []
-        for part, chunk in enumerate(chunks):
+        for part, value in enumerate(parts):
+            plain = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
             args = [
                 "--output-dir",
                 str(tmp_path),
@@ -62,9 +74,9 @@ def planner(tmp_path):
                 "--part",
                 str(part),
                 "--parts",
-                str(len(chunks)),
-                "--chunk",
-                chunk,
+                str(len(parts)),
+                "--request",
+                plain,
             ]
             if mutate:
                 mutate(args, part)
@@ -84,11 +96,10 @@ def planner(tmp_path):
             assert result.returncode == 0, result.stdout
             assert len(result.stdout) <= RECEIPT_CHARS
             env = json.loads(result.stdout)
-            assert env["chunk_checksum"] == fnv1a32(chunk)
+            assert env["request_checksum"] == fnv1a32(plain)
             assert env["input_checksum"] == fnv1a32(token)
-            assert env["token_checksum"] == fnv1a32(env["token"])
             envelopes.append(env)
-        return json.loads(envelopes[-1]["token"]), envelopes
+        return envelopes[-1]["result"], envelopes
 
     return prepare, call
 
@@ -220,7 +231,9 @@ def test_assignment_metadata_shares_the_hunters_750_line_budget(
 def test_final_ledger_records_outside_anchors_and_citation_coverage(tmp_path, planner):
     prepare, call = planner
     ref = prepare(plan_with())
-    selected, _ = call(ref, selection(tmp_path, refs=[["primary", "src/0", 1, 1]]))
+    selected, _ = call(
+        ref, selection(tmp_path, refs=[["code-gauntlet:bug-detector", "src/0", 1, 1]])
+    )
     final, _ = call(
         ref,
         selection(
@@ -228,10 +241,10 @@ def test_final_ledger_records_outside_anchors_and_citation_coverage(tmp_path, pl
             state_checksum=selected["state_checksum"],
             hunters=[
                 {
-                    "agent": "hunter",
+                    "agent": "code-gauntlet:gap-hunter",
                     "status": "complete",
                     "anchors": [["outside", "src/0", 1]],
-                    "refs": [["hunter", "src/1", 2, 2]],
+                    "refs": [["code-gauntlet:gap-hunter", "src/1", 2, 2]],
                 }
             ],
         ),
@@ -244,7 +257,7 @@ def test_final_ledger_records_outside_anchors_and_citation_coverage(tmp_path, pl
     assert ledger["uncovered"] == ["r1"] and ledger["remaining_uncovered"] == []
     assert ledger["hunters"] == [
         {
-            "agent": "hunter",
+            "agent": "code-gauntlet:gap-hunter",
             "assigned": ["r1"],
             "outside_assignment": ["outside"],
             "status": "complete",
@@ -272,7 +285,7 @@ def test_mismatched_disk_artifacts_yield_bounded_unavailable_receipts(
     else:
         document = json.loads(path.read_bytes())
         if broken == "plan":
-            document["plan"]["regions"][0]["file"] = "different/source"
+            document["plan"]["regions"][0]["line_end"] = 1
         else:
             document["assigned"] = []
         path.write_text(json.dumps(document), encoding="utf-8")
@@ -284,14 +297,94 @@ def test_mismatched_disk_artifacts_yield_bounded_unavailable_receipts(
     assert value["available"] is False
 
 
-def test_large_citation_inputs_use_bounded_checked_chunks(tmp_path, planner):
+def test_plain_citation_inputs_use_bounded_checked_parts(tmp_path, planner):
     prepare, call = planner
-    ref = prepare(plan_with())
-    refs = [
-        ["reviewer", hashlib.sha256(str(i).encode()).hexdigest(), i + 1, i + 1]
-        for i in range(500)
-    ]
+    ref = prepare(plan_with(300))
+    refs = [["code-gauntlet:bug-detector", f"src/{i}", 1, 1] for i in range(300)]
     value, envs = call(ref, selection(tmp_path, refs=refs))
     assert value["available"]
-    assert len(envs) > 1
+    assert 1 < len(envs) <= 4
     assert all(len(json.dumps(e)) < RECEIPT_CHARS for e in envs)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"citations": {"0": "2:1"}},
+        {"citations": {"0": "1:1;0:1"}},
+        {"citations": {"0": "0:1;0:2"}},
+        {"citations": {"0": "0:2,1"}},
+        {"citations": {"0": "0:1-3,2"}},
+        {"citations": {"0": "0:0"}},
+        {"citations": {"0": "0:1-9007199254740992"}},
+        {"citations": {"unknown": "0:1"}},
+        {"high": "0-2"},
+        {"high": "1,0"},
+        {"high": "0", "low": "0"},
+        {"files_checksum": "fnv1a32:0x00000000"},
+        {"mode": "unknown"},
+    ],
+)
+def test_planner_rejects_invalid_plain_indexes_even_with_correct_transport_proofs(
+    tmp_path, planner, change
+):
+    prepare, call = planner
+    ref = prepare(plan_with())
+    files = json.loads((tmp_path / ref["path"]).read_bytes())["files"]
+    part = {
+        "files_checksum": fnv1a32(
+            json.dumps(
+                {"files": files, "reviewers": DISCOVERY_AGENT_TYPES},
+                separators=(",", ":"),
+            )
+        ),
+        "mode": "full",
+        **change,
+    }
+    value, _ = call(ref, selection(tmp_path), wire_parts=[part])
+    assert value["available"] is False
+
+
+@pytest.mark.parametrize("second", ["0:1", "0:1-2", "0:0", "0:1;1:1"])
+def test_plain_order_is_validated_across_part_boundaries(tmp_path, planner, second):
+    prepare, call = planner
+    ref = prepare(plan_with())
+    files = json.loads((tmp_path / ref["path"]).read_bytes())["files"]
+    base = {
+        "files_checksum": fnv1a32(
+            json.dumps(
+                {"files": files, "reviewers": DISCOVERY_AGENT_TYPES},
+                separators=(",", ":"),
+            )
+        ),
+        "mode": "full",
+    }
+    parts = [{**base, "citations": {"0": "0:2"}}, {**base, "citations": {"0": second}}]
+    value, _ = call(ref, selection(tmp_path), wire_parts=parts)
+    assert value["available"] is False
+
+
+def test_preparation_indexes_the_snapshot_manifest_including_files_without_regions(
+    tmp_path, invoke
+):
+    out = tmp_path / "out"
+    write_context_inputs(
+        out,
+        b"rules",
+        b"diff --git a/source b/source\n--- a/source\n+++ b/source\n@@ -1 +1 @@\n-old\n+new\n",
+    )
+    (out / f"code-gauntlet-files-{SHA}.json").write_text(
+        json.dumps(["unvisited_binary", "source"]), encoding="utf-8"
+    )
+    result = invoke(
+        "write_shared_context",
+        ["--output-dir", str(out), "--head-sha", SHA],
+        tmp_path,
+        b"triage",
+    )
+    assert result.returncode == 0
+    receipt = json.loads(result.stdout)
+    document = json.loads((out / receipt["discoveryPlanRef"]["path"]).read_bytes())
+    assert document["files"] == ["source", "unvisited_binary"]
+    assert {r["file"] for r in document["plan"]["regions"]} == {"source"}
+    assert "unvisited_binary" not in result.stdout.decode()

@@ -170,6 +170,7 @@ _REGISTRY_FIELDS = (
     "readPlanMaxChunks: m.READ_PLAN_MAX_CHUNKS",
     "contextReceiptFields: m.CONTEXT_RECEIPT_FIELDS",
     "discoveryTransportLimits: m.DISCOVERY_TRANSPORT_LIMITS",
+    "discoveryAgentTypes: m.DISCOVERY_AGENT_TYPES",
     "required: m.FINDING_REQUIRED",
     "waistRequired: m.REQUIRED",
     "canonicalFields: Object.keys(m.FINDING_PROP_TYPES)",
@@ -982,9 +983,11 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
             f"READ_PLAN_LINE_PREFIX_BYTES = {identity['readPlanLinePrefixBytes']}",
             f"READ_PLAN_MAX_LINES = {identity['readPlanMaxLines']}",
             f"READ_PLAN_MAX_CHUNKS = {identity['readPlanMaxChunks']}",
-            f"DISCOVERY_CHUNK_CHARS = {identity['discoveryTransportLimits']['chunkChars']}",
+            f"DISCOVERY_REQUEST_CHARS = {identity['discoveryTransportLimits']['requestChars']}",
             f"DISCOVERY_RECEIPT_CHARS = {identity['discoveryTransportLimits']['receiptChars']}",
-            f"DISCOVERY_MAX_CHUNKS = {identity['discoveryTransportLimits']['maxChunks']}",
+            f"DISCOVERY_MAX_PARTS = {identity['discoveryTransportLimits']['maxParts']}",
+            "DISCOVERY_AGENT_TYPES = "
+            + _python_literal(tuple(identity["discoveryAgentTypes"])),
             "CONTEXT_RECEIPT_FIELDS = "
             + _python_literal(tuple(identity["contextReceiptFields"])),
             "JS_TRIM_CHARS = (\n"

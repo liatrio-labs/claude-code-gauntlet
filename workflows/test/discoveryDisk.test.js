@@ -1,18 +1,25 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, rmSync } from 'node:fs';
+import { readFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { createHash } from 'node:crypto';
 import { discover } from '../src/discover.js';
 import { createMeasurementTrace } from '../src/measurementTrace.js';
 import { normalizeArgsReport } from '../src/args.js';
-import { planOnDisk, DISCOVERY_CHUNK_CHARS, DISCOVERY_RECEIPT_CHARS, discoveryArtifactName } from '../src/discoveryDisk.js';
-import { fnv1a32 } from '../src/wire.js';
+import { planOnDisk, discoveryRequests, plannerReceiptChecksum, DISCOVERY_REQUEST_CHARS, DISCOVERY_RECEIPT_CHARS, discoveryArtifactName } from '../src/discoveryDisk.js';
+import { DISCOVERY_AGENT_TYPES } from '../src/registry.js';
+import { agentSpecs } from '../src/discover.js';
+import { fnv1a32, shellWord } from '../src/wire.js';
 import { preparePlan,executorAdapter,readLedger } from './helpers/diskDiscovery.js';
 import { shellSplit } from './helpers/shellWords.js';
 
 const plan = (count=2) => ({version:2,status:'available',fact_packets:[],regions:Array.from({length:count},(_,i)=>({id:`r${i}`,file:`src/${i}`,line_start:1,line_end:2,reads:[{offset:3,limit:2,bytes:100}]}))});
 const request = (input,extra={}) => ({context:input.contextPath,context_lines:input.contextLines,refs:[],risks:[],enabled:true,disabled_reason:'scope',...extra});
+
+test('the planner boundary carries plain ascending file and source-line ranges',()=>{
+  const parts=discoveryRequests({changedFiles:['z','a','b']},'select',{enabled:true,risks:[{path:'z',risk:'high'},{path:'a',risk:'high'}],refs:[['code-gauntlet:bug-detector','z',8,8],['code-gauntlet:bug-detector','a',15,17],['code-gauntlet:bug-detector','z',1,1],['code-gauntlet:bug-detector','a',12,14]]});
+  assert.deepEqual(DISCOVERY_AGENT_TYPES,agentSpecs().map(spec=>spec.agentType));
+  assert.deepEqual(parts,[{files_checksum:fnv1a32(JSON.stringify({files:['a','b','z'],reviewers:DISCOVERY_AGENT_TYPES})),mode:'full',high:'0,2',citations:{'0':'0:12-17;2:1,8'}}]);
+});
 
 test('a large disk plan keeps args, receipts, phase output and trace coverage bounded', async () => {
   const input={measurementTrace:createMeasurementTrace('disk'),removedTests:{status:'available',items:[],omitted:0}};
@@ -30,7 +37,7 @@ test('a large disk plan keeps args, receipts, phase output and trace coverage bo
     assert.equal(calls.length,8);
     assert.equal(adapter.executions.length,2);
     assert.ok(adapter.executions.every(e=>e.options.model==='claude-sonnet-5-5' && JSON.stringify(e.result).length<=DISCOVERY_RECEIPT_CHARS));
-    assert.ok(adapter.executions.every(e=>{const a=shellSplit(e.prompt.split('\n').at(-1));return a[a.indexOf('--chunk')+1].length<=DISCOVERY_CHUNK_CHARS;}));
+    assert.ok(adapter.executions.every(e=>{const a=shellSplit(e.prompt.split('\n').at(-1));const plain=a[a.indexOf('--request')+1];assert.ok(JSON.parse(plain).files_checksum);assert.equal(a.includes('--chunk'),false);return plain.length<=DISCOVERY_REQUEST_CHARS;}));
     assert.ok(JSON.stringify(out).length<4096);
     assert.ok(JSON.stringify(input.measurementTrace.coverage_ledger).length<4096);
     assert.equal(out.findings.length,1);
@@ -81,18 +88,59 @@ for(const phase of ['select','finalize'])test(`a failed ${phase} transport prese
   }finally{adapter.restore();rmSync(root,{recursive:true,force:true});}
 });
 
-for(const field of ['nonce_checksum','input_checksum','chunk_checksum','token_checksum','receipt_checksum','budget'])test(`planner rejects a mismatched ${field} receipt without a hunter`,async()=>{
+for(const field of ['nonce_checksum','input_checksum','request_checksum','receipt_checksum','budget'])test(`planner rejects a mismatched ${field} receipt without a hunter`,async()=>{
   const input={};const root=preparePlan(input,plan());const ctx={agent:async()=>null};const adapter=executorAdapter(ctx,input);const execute=ctx.agent;
-  ctx.agent=async(p,o)=>{const result=await execute(p,o);if(field==='budget'){const v=JSON.parse(result.token);v.summary.assigned_bytes=24001;result.token=JSON.stringify(v);result.token_checksum=fnv1a32(result.token);result.receipt_checksum=fnv1a32(`select|${result.part}|${result.parts}|${result.nonce_checksum}|${result.input_checksum}|${result.chunk_checksum}|${result.token}`);}else result[field]='wrong';return result;};
+  ctx.agent=async(p,o)=>{const result=await execute(p,o);if(field==='budget'){result.result.summary.assigned_bytes=24001;result.receipt_checksum=plannerReceiptChecksum('select',input.nonce,result);}else result[field]='wrong';return result;};
   try {assert.equal(await planOnDisk(ctx,input,'select',request(input)),null);} finally {adapter.restore();rmSync(root,{recursive:true,force:true});}
 });
 
-test('large citation requests are chunked before any model must copy them',async()=>{
-  const input={};const root=preparePlan(input,plan());const ctx={agent:async()=>null};const adapter=executorAdapter(ctx,input);
-  const refs=Array.from({length:300},(_,i)=>['reviewer',createHash('sha256').update(String(i)).digest('hex'),i+1,i+1]);
+test('plain requests keep sixty findings over a hundred files and two thousand regions in one call per operation',async()=>{
+  const regions=plan(2000);regions.regions.forEach((r,i)=>{r.file=`src/${i%100}`;r.line_start=100+Math.floor(i/100)*3;r.line_end=r.line_start+1;});
+  const input={};const root=preparePlan(input,regions);const ctx={agent:async()=>null};const adapter=executorAdapter(ctx,input);
+  const agents=['bug-detector','security-reviewer','cross-file-impact','test-analyzer','conventions-and-intent','type-design-analyzer','code-simplifier'];
+  const refs=Array.from({length:60},(_,i)=>[`code-gauntlet:${agents[i%agents.length]}`,`src/${i}`,100,101]);
   try {
-    assert.ok(await planOnDisk(ctx,input,'select',request(input,{refs})));
-    assert.ok(adapter.executions.length>1);
-    for(const e of adapter.executions){const a=shellSplit(e.prompt.split('\n').at(-1));assert.ok(a[a.indexOf('--chunk')+1].length<=DISCOVERY_CHUNK_CHARS);assert.ok(JSON.stringify(e.result).length<=DISCOVERY_RECEIPT_CHARS);}
+    const parts=discoveryRequests(input,'select',request(input,{refs}));
+    assert.equal(parts.length,1);assert.ok(JSON.stringify(parts[0]).length<900);
+    const selected=await planOnDisk(ctx,input,'select',request(input,{refs}));
+    assert.ok(selected);assert.equal(adapter.executions.length,1);assert.equal(readLedger(input,selected.artifact).uncovered.length,1940);
+    const final=await planOnDisk(ctx,input,'finalize',{state_checksum:selected.state_checksum,hunters:[{agent:'code-gauntlet:gap-hunter',status:'complete',anchors:[['gap-hunter-1','outside',10]],refs:[['code-gauntlet:gap-hunter','src/80',1,2]]}]});
+    assert.ok(final);assert.equal(adapter.executions.length,2);
+    for(const e of adapter.executions){const a=shellSplit(e.prompt.split('\n').at(-1));const plain=a[a.indexOf('--request')+1];assert.ok(plain.startsWith('{'));assert.ok(JSON.parse(plain).files_checksum);assert.ok(plain.length<900);assert.equal(a.includes('--chunk'),false);assert.ok(JSON.stringify(e.result).length<=2048);assert.equal(typeof e.result.result,'object');}
   }finally{adapter.restore();rmSync(root,{recursive:true,force:true});}
+});
+
+test('plain parts are individually bounded and excessive citation traffic disables coverage before dispatch',async()=>{
+  const input={};const root=preparePlan(input,plan(2000));const ctx={agent:async()=>null};const adapter=executorAdapter(ctx,input);
+  const refs=n=>Array.from({length:n},(_,i)=>['code-gauntlet:bug-detector',`src/${i}`,1,1]);
+  try {
+    assert.ok(await planOnDisk(ctx,input,'select',request(input,{refs:refs(300)})));
+    assert.ok(adapter.executions.length>1 && adapter.executions.length<=4);
+    for(const e of adapter.executions){const a=shellSplit(e.prompt.split('\n').at(-1));assert.ok(a[a.indexOf('--request')+1].length<=1000);JSON.parse(a[a.indexOf('--request')+1]);}
+    const count=adapter.executions.length;
+    assert.equal(await planOnDisk(ctx,input,'select',request(input,{refs:refs(1000)})),null);
+    assert.equal(adapter.executions.length,count);
+  }finally{adapter.restore();rmSync(root,{recursive:true,force:true});}
+});
+
+
+test('a semantically identical short receipt survives host property reordering',async()=>{
+  const input={};const root=preparePlan(input,plan());const ctx={agent:async()=>null};const adapter=executorAdapter(ctx,input);const execute=ctx.agent;
+  ctx.agent=async(p,o)=>{const env=await execute(p,o);env.result=Object.fromEntries(Object.entries(env.result).reverse());if(env.result.summary)env.result.summary=Object.fromEntries(Object.entries(env.result.summary).reverse());return env;};
+  try{assert.ok(await planOnDisk(ctx,input,'select',request(input)));}finally{adapter.restore();rmSync(root,{recursive:true,force:true});}
+});
+
+
+test('a single copied digit drift is rejected on the first stored part',async()=>{
+  const input={};const root=preparePlan(input,plan(2000));const ctx={agent:async()=>null};const adapter=executorAdapter(ctx,input);const execute=ctx.agent;
+  ctx.agent=async(p,o)=>{const a=shellSplit(p.split('\n').at(-1));const at=a.indexOf('--request')+1;const value=JSON.parse(a[at]);const first=Object.keys(value.citations)[0];value.citations[first]=value.citations[first].replace(':1',':3');a[at]=JSON.stringify(value);return execute(`Run exactly once:\n${a.map(shellWord).join(' ')}`,o);};
+  const refs=Array.from({length:300},(_,i)=>['code-gauntlet:bug-detector',`src/${i}`,1,1]);
+  try{assert.equal(await planOnDisk(ctx,input,'select',request(input,{refs})),null);assert.equal(adapter.executions.length,1);assert.equal(adapter.executions[0].result.result.stored,true);assert.equal(existsSync(join(root,discoveryArtifactName('coverage-ledger',input.headShaShort,input.nonce))),false);}finally{adapter.restore();rmSync(root,{recursive:true,force:true});}
+});
+
+test('exceeding the plain request cap preserves primary discovery and records unavailable coverage',async()=>{
+  const input={};const root=preparePlan(input,plan(2000));const calls=[];
+  const ctx={parallel:async ts=>Promise.all(ts.map(t=>t())),agent:async(_p,o)=>{calls.push(o.agentType);return {findings:o.agentType==='code-gauntlet:bug-detector'?[{file:'src/0',line_start:1,title:'Present defect',description:'A supported input fails.',severity:'high',confidence:90,anchor:'return value',evidence:'src/0:1',change_origin:'introduced',cross_file_refs:Array.from({length:1000},(_,i)=>`src/${i}:1`)}]:[],complete:true,total_seen:1};}};
+  const adapter=executorAdapter(ctx,input);
+  try{const out=await discover(ctx,input);assert.equal(out.findings.length,1);assert.equal(calls.length,7);assert.equal(adapter.executions.length,0);assert.equal(out.coverageLedger.status,'unavailable');assert.ok(out.gaps.some(g=>g.includes('coverage unavailable')));}finally{adapter.restore();rmSync(root,{recursive:true,force:true});}
 });

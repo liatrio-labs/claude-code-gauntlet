@@ -187,7 +187,7 @@ function utf8Encode(text) {
 // --- registry.js ---
 const DEEP = 'deep';
 const READ_PLAN_MAX_CHUNKS = 2000;
-const DISCOVERY_TRANSPORT_LIMITS = deepFreeze({chunkChars:3000,receiptChars:4096,maxChunks:12000});
+const DISCOVERY_TRANSPORT_LIMITS = deepFreeze({requestChars:1000,receiptChars:2048,maxParts:4});
 const CONTEXT_RECEIPT_FIELDS = deepFreeze(['contextLines', 'contextChars', 'contextMaxLineChars', 'contextReadPlanVersion', 'contextReadChunks', 'removedTests', 'discoveryPlanRef']);
 const AGENT_TYPE_TEST_ANALYZER = 'code-gauntlet:test-analyzer';
 const SHA_FULL_RE = /^[0-9a-f]{40}$/;
@@ -424,6 +424,7 @@ const DISCOVERY_REVIEWERS = deepFreeze([
     objective: 'Focus on the supplied uncovered regions and fact cards; report any defect you find, including findings anchored outside the assignment.',
     tools: ['Read'], effort: 'high', color: 'cyan', modelOverride: 'sonnet' },
 ].map(discoveryReviewer));
+const DISCOVERY_AGENT_TYPES = deepFreeze([...new Set([...DIMENSIONS, ...DISCOVERY_REVIEWERS].map(row => row.agentType))]);
 const VERIFY_REFERENCE_FIELDS = deepFreeze(Object.keys(SOURCE_REFERENCE.properties));
 const VERIFY_REFERENCE_DESCRIPTORS = deepFreeze(Object.fromEntries(Object.entries(Object.assign({}, ...DIMENSIONS.map((row) => row.schemaExtra)))
   .filter(([, schema]) => schema.$comment === 'source-reference' || schema.items?.$comment === 'source-reference' || schema.$comment === 'search-paths')
@@ -2143,29 +2144,107 @@ function stripTraceFields(value) {
   for (const child of Object.values(value)) stripTraceFields(child);
 }
 // --- discoveryDisk.js ---
-const DISCOVERY_CHUNK_CHARS = DISCOVERY_TRANSPORT_LIMITS.chunkChars;
+const DISCOVERY_REQUEST_CHARS = DISCOVERY_TRANSPORT_LIMITS.requestChars;
 const DISCOVERY_RECEIPT_CHARS = DISCOVERY_TRANSPORT_LIMITS.receiptChars;
 const HASH = /^[0-9a-f]{64}$/;
 const discoveryArtifactName = (kind, sha, nonce = '') => `code-gauntlet-${kind}${nonce ? `-${fnv1a32(nonce).slice(-8)}` : ''}-${sha}.${kind === 'gap-assignment' ? 'md' : 'json'}`;
 const unavailableCoverage = () => ({version:2,status:'unavailable',regions:[],uncovered:[],remaining_uncovered:[],omitted:[],hunters:[],budget_bytes:READ_PLAN_MAX_BYTES,assigned_bytes:0,omitted_fact_packets:0});
+const integer = {type:'integer'};
+const string = {type:'string'};
 const callPlanner = defineAgentCall('discover:plan', () => ({type:'object',properties:{
-  status:{type:'string'}, nonce_checksum:{type:'string'}, part:{type:'integer'},parts:{type:'integer'},input_checksum:{type:'string'},chunk_checksum:{type:'string'},token:{type:'string',maxLength:DISCOVERY_RECEIPT_CHARS},token_checksum:{type:'string'},receipt_checksum:{type:'string'},reason:{type:'string'},
+  status:string, nonce_checksum:string, part:integer,parts:integer,input_checksum:string,request_checksum:string,receipt_checksum:string,reason:string,
+  result:{type:'object',properties:{stored:{type:'boolean'},available:{type:'boolean'},reason:string,
+    ledger_checksum:string,state_checksum:string,assigned_count:integer,assignment_checksum:{type:['string','null']},assignment_lines:integer,assignment_prompt:string,
+    summary:{type:'object',properties:{version:integer,status:string,region_count:integer,uncovered_count:integer,omitted_count:integer,hunter_count:integer,
+      hunters:{type:'array',items:{type:'object',properties:{}}},omitted:{type:'array',items:{type:'object',properties:{}}},budget_bytes:integer,assigned_bytes:integer,omitted_fact_packets:integer},additionalProperties:false},
+  },additionalProperties:false},
 },required:['status'],additionalProperties:false}));
+const spanText = ([a,b]) => a === b ? String(a) : `${a}-${b}`;
+function mergedSpans(spans) {
+  const out=[];
+  for(const [a,b] of spans.sort((x,y)=>x[0]-y[0] || x[1]-y[1])) {
+    if(!Number.isSafeInteger(a) || !Number.isSafeInteger(b) || a<1 || b<a) continue;
+    const last=out.at(-1);
+    if(last && a<=last[1]+1)last[1]=Math.max(last[1],b);else out.push([a,b]);
+  }
+  return out;
+}
+function discoveryRequests(input,phase,request) {
+  const files=[...new Set(input.changedFiles || [])].sort();
+  const indexes=new Map(files.map((f,i)=>[f,i]));
+  const reviewers=new Map(DISCOVERY_AGENT_TYPES.map((agent,i)=>[agent,String(i)]));
+  const base={files_checksum:fnv1a32(JSON.stringify({files,reviewers:DISCOVERY_AGENT_TYPES})),...(phase==='select'
+    ? {mode:request.enabled ? 'full' : request.disabled_reason}
+    : {state_checksum:request.state_checksum,hunters:request.hunters.map(h=>({agent:reviewers.get(h.agent),status:h.status}))})};
+  const records=[];
+  if(phase==='select')for(const risk of ['high','low']) {
+    const wanted=[...new Set((request.risks || []).filter(r=>r.risk===risk && indexes.has(r.path)).map(r=>indexes.get(r.path)))].sort((a,b)=>a-b);
+    for(const i of wanted)records.push({kind:risk,index:i});
+  }
+  const references=phase==='select' ? request.refs : request.hunters.flatMap(h=>h.refs);
+  const grouped=new Map();
+  for(const [agent,file,a,b] of references) {
+    if(!indexes.has(file))continue;
+    const name=reviewers.get(agent);if(name===undefined)return null;
+    const key=`${name}/${indexes.get(file)}`;
+    if(!grouped.has(key))grouped.set(key,{agent:name,index:indexes.get(file),spans:[]});
+    grouped.get(key).spans.push([a,b]);
+  }
+  for(const row of [...grouped.values()].sort((a,b)=>Number(a.agent)-Number(b.agent)||a.index-b.index))
+    for(const span of mergedSpans(row.spans))records.push({kind:'citation',agent:row.agent,index:row.index,text:spanText(span)});
+  if(phase==='finalize')for(const h of request.hunters) {
+    const anchors=h.anchors.map(([id,file,line])=>[String(id),indexes.get(file) ?? -1,line])
+      .sort((a,b)=>a[1]-b[1] || a[2]-b[2] || (a[0]<b[0]?-1:a[0]>b[0]?1:0));
+    for(const anchor of anchors)records.push({kind:'anchor',agent:reviewers.get(h.agent),anchor});
+  }
+  const parts=[];
+  let value={...base};
+  const append=(target,r)=>{
+    if(r.kind==='citation') {
+      target.citations ||= {};
+      const rows=target.citations[r.agent] || '';
+      target.citations[r.agent]=rows && rows.split(';').at(-1).split(':')[0]===String(r.index)
+        ? `${rows},${r.text}` : `${rows}${rows ? ';' : ''}${r.index}:${r.text}`;
+    } else if(r.kind==='anchor') {
+      target.anchors ||= {};
+      (target.anchors[r.agent] ||= []).push(r.anchor);
+    } else {
+      const spans=(target[r.kind] || '').split(',').filter(Boolean);
+      const last=spans.at(-1), end=last ? Number(last.split('-').at(-1)) : -2;
+      if(r.index===end+1)spans[spans.length-1]=`${last.split('-')[0]}-${r.index}`;else spans.push(String(r.index));
+      target[r.kind]=spans.join(',');
+    }
+  };
+  for(const record of records) {
+    const next=JSON.parse(JSON.stringify(value));append(next,record);
+    if(JSON.stringify(next).length<=DISCOVERY_REQUEST_CHARS)value=next;
+    else {
+      parts.push(value);value={...base};append(value,record);
+      if(parts.length>=DISCOVERY_TRANSPORT_LIMITS.maxParts || JSON.stringify(value).length>DISCOVERY_REQUEST_CHARS)return null;
+    }
+  }
+  parts.push(value);
+  return parts.every(p=>JSON.stringify(p).length<=DISCOVERY_REQUEST_CHARS) ? parts : null;
+}
+function plannerReceiptChecksum(phase,nonce,receipt) {
+  const result=JSON.stringify(receipt.result,(_key,value)=>value && typeof value==='object' && !Array.isArray(value)
+    ? Object.fromEntries(Object.entries(value).sort(([a],[b])=>a<b?-1:a>b?1:0)) : value);
+  return fnv1a32(`${phase}|${receipt.part}|${receipt.parts}|${fnv1a32(nonce)}|${receipt.input_checksum}|${receipt.request_checksum}|${result}`);
+}
 async function planOnDisk(ctx, input, phase, request) {
   const ref = input.discoveryPlanRef;
   const expected = discoveryArtifactName('discovery-plan', input.headShaShort);
   if (!ref || typeof ref !== 'object' || ref.path !== expected || !HASH.test(ref.sha256 || '')
     || !input.outputDir || !input.pluginRoot || !input.nonce || !input.contextPath) return null;
-  const token = compressMeasurement(JSON.stringify(request));
-  const inputChecksum = fnv1a32(token);
-  const parts = Math.ceil(token.length / DISCOVERY_CHUNK_CHARS);
-  if (parts > DISCOVERY_TRANSPORT_LIMITS.maxChunks) return null;
-  let result = null;
-  for (let part = 0; part < parts; part++) {
-    const chunk = token.slice(part * DISCOVERY_CHUNK_CHARS, (part + 1) * DISCOVERY_CHUNK_CHARS);
+  const requests=discoveryRequests(input,phase,request);
+  if(!requests)return null;
+  const inputChecksum=fnv1a32(JSON.stringify(requests)),parts=requests.length;
+  let result=null;
+  for(let part=0;part<parts;part++) {
+    const plain=JSON.stringify(requests[part]);
     const command = [...pythonArgv(input.python),trustedScriptPath(input.pluginRoot,TRUSTED_SCRIPT_BASENAMES.discovery),
       '--output-dir',input.outputDir,'--sha',input.headShaShort,'--nonce',input.nonce,'--phase',phase,
-      '--plan-checksum',ref.sha256,'--input-checksum',inputChecksum,'--part',String(part),'--parts',String(parts),'--chunk',chunk].map(shellWord).join(' ');
+      '--plan-checksum',ref.sha256,'--input-checksum',inputChecksum,'--part',String(part),'--parts',String(parts),'--request',plain].map(shellWord).join(' ');
     let env;
     try {
       env = await callPlanner(ctx,`Run exactly once and return the complete JSON stdout unchanged:\n${command}`, {
@@ -2174,11 +2253,10 @@ async function planOnDisk(ctx, input, phase, request) {
     } catch { return null; }
     if (!env || JSON.stringify(env).length > DISCOVERY_RECEIPT_CHARS || env.status !== 'ok'
       || env.nonce_checksum !== fnv1a32(input.nonce) || env.part !== part || env.parts !== parts
-      || env.input_checksum !== inputChecksum || env.chunk_checksum !== fnv1a32(chunk)
-      || typeof env.token !== 'string' || env.token_checksum !== fnv1a32(env.token)
-      || env.receipt_checksum !== fnv1a32(`${phase}|${part}|${parts}|${fnv1a32(input.nonce)}|${inputChecksum}|${fnv1a32(chunk)}|${env.token}`)) return null;
-    try { result = JSON.parse(env.token); } catch { return null; }
-    if (part < parts - 1 && result?.stored !== true) return null;
+      || env.input_checksum !== inputChecksum || env.request_checksum !== fnv1a32(plain)
+      || !env.result || env.receipt_checksum !== plannerReceiptChecksum(phase,input.nonce,env)) return null;
+    result=env.result;
+    if(part<parts-1 && result.stored!==true)return null;
   }
   if (!result?.available) return null;
   const summary = result.summary;
@@ -2668,7 +2746,7 @@ async function discover(ctx, input) {
       const candidate = discoveryCandidate(raw, specs[i], n);
       return validateFindings([candidate]).valid.length > 0 && missingDiscoveryFields(candidate).length === 0;
     })));
-  const planRequest = {context:inp.contextPath,context_lines:inp.contextLines,refs:coverageReferences(specs,results,inp.repoRoot),
+  const planRequest = {refs:coverageReferences(specs,results,inp.repoRoot),
     risks:inp.riskTable || [],enabled:hunters.length > 0 && primaryUsable,disabled_reason:primaryUsable ? 'scope' : 'primary_failure'};
   let planned = hasPlan ? await planOnDisk(ctx,inp,'select',planRequest) : null;
   let ledger = planned?.summary || unavailableCoverage();
@@ -2752,7 +2830,7 @@ async function discover(ctx, input) {
     anchors:coverageAnchors(finalResults[i].findings,inp.repoRoot),
     refs:coverageReferences([spec],[finalResults[i]],inp.repoRoot)}] : []);
   if (planned && completedHunters.length) {
-    planned = await planOnDisk(ctx,inp,'finalize',{context:inp.contextPath,context_lines:inp.contextLines,state_checksum:planned.state_checksum,hunters:completedHunters});
+    planned = await planOnDisk(ctx,inp,'finalize',{state_checksum:planned.state_checksum,hunters:completedHunters});
     ledger = planned?.summary || unavailableCoverage();
     if (!planned) ledgerGaps.push('discovery coverage unavailable: final ledger receipt missing or invalid');
   }
@@ -7750,7 +7828,7 @@ async function runWith(ctx, rawArgs) {
     }));
     const derivedAgentFlags = deriveAgentFlags(A.riskTable, A.changedLines, A.scopeAnswer);
     const discoverSettled = replay('discover') ? null : settle(discover(c, {
-      measurementTrace, agentFlags: derivedAgentFlags, limits, policy, contextLine, contextPath, contextLines: A.contextLines, discoveryPlanRef:A.discoveryPlanRef, outputDir:A.outputDir,headShaShort:A.headShaShort,nonce:A.nonce,pluginRoot:A.pluginRoot,python:A.python, riskTable: A.riskTable, repoRoot: A.repoRoot, removedTests: resolveRemovedTestsArgs(A),
+      measurementTrace, agentFlags: derivedAgentFlags, limits, policy, contextLine, contextPath, contextLines: A.contextLines, discoveryPlanRef:A.discoveryPlanRef, changedFiles:A.changedFiles, outputDir:A.outputDir,headShaShort:A.headShaShort,nonce:A.nonce,pluginRoot:A.pluginRoot,python:A.python, riskTable: A.riskTable, repoRoot: A.repoRoot, removedTests: resolveRemovedTestsArgs(A),
     }));
     const summaryOut = await runPhase('summarize', async () => (await summarizeSettled)());
     gaps.push(...(summaryOut.gaps || []));

@@ -19,7 +19,7 @@ from gauntlet.cli import (
     require_head_sha,
 )
 from gauntlet.diff import ContextMap, ContextMapEntry, DiffStructureError, annotate_diff
-from gauntlet.discovery_disk import artifact_name, save
+from gauntlet.discovery_disk import artifact_name, canonical_files, checked_bytes, save
 from gauntlet.discovery_plan import (
     DiscoveryPlan,
     FactPacket,
@@ -427,6 +427,18 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
     lines = content.count(b"\n")
     decoded = content.decode("utf-8", errors="replace")
     chars = len(decoded)
+    files = list(changed_files)
+    manifest_path = Path(args.output_dir) / f"code-gauntlet-files-{args.head_sha}.json"
+    if manifest_path.exists():
+        try:
+            manifest = json.loads(checked_bytes(manifest_path))
+            if not isinstance(manifest, list) or not all(
+                isinstance(f, str) for f in manifest
+            ):
+                raise ValueError("invalid changed-file manifest")
+            files = manifest
+        except (OSError, ValueError):
+            plan_status = "unavailable"
     discovery_plan: DiscoveryPlan = {
         "version": 2,
         "status": plan_status,
@@ -444,7 +456,8 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
             "sha256": save(
                 Path(args.output_dir) / artifact_name("discovery-plan", args.head_sha),
                 {
-                    "version": 1,
+                    "version": 2,
+                    "files": canonical_files(files),
                     "sha": args.head_sha,
                     "context_sha256": sidecar["context_sha256"],
                     "diff_sha256": sidecar["diff_sha256"],

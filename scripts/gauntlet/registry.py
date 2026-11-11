@@ -1932,9 +1932,19 @@ READ_PLAN_MAX_BYTES = 24000
 READ_PLAN_LINE_PREFIX_BYTES = 12
 READ_PLAN_MAX_LINES = 750
 READ_PLAN_MAX_CHUNKS = 2000
-DISCOVERY_CHUNK_CHARS = 3000
-DISCOVERY_RECEIPT_CHARS = 4096
-DISCOVERY_MAX_CHUNKS = 12000
+DISCOVERY_REQUEST_CHARS = 1000
+DISCOVERY_RECEIPT_CHARS = 2048
+DISCOVERY_MAX_PARTS = 4
+DISCOVERY_AGENT_TYPES = (
+    "code-gauntlet:bug-detector",
+    "code-gauntlet:security-reviewer",
+    "code-gauntlet:cross-file-impact",
+    "code-gauntlet:test-analyzer",
+    "code-gauntlet:conventions-and-intent",
+    "code-gauntlet:type-design-analyzer",
+    "code-gauntlet:code-simplifier",
+    "code-gauntlet:gap-hunter",
+)
 CONTEXT_RECEIPT_FIELDS = (
     "contextLines",
     "contextChars",

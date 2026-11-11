@@ -371,7 +371,7 @@ export async function runWith(ctx, rawArgs) {
     // Derive scope flags from validated inputs so callers cannot stamp a different decision.
     const derivedAgentFlags = deriveAgentFlags(A.riskTable, A.changedLines, A.scopeAnswer);
     const discoverSettled = replay('discover') ? null : settle(discover(c, {
-      measurementTrace, agentFlags: derivedAgentFlags, limits, policy, contextLine, contextPath, contextLines: A.contextLines, discoveryPlanRef:A.discoveryPlanRef, outputDir:A.outputDir,headShaShort:A.headShaShort,nonce:A.nonce,pluginRoot:A.pluginRoot,python:A.python, riskTable: A.riskTable, repoRoot: A.repoRoot, removedTests: resolveRemovedTestsArgs(A),
+      measurementTrace, agentFlags: derivedAgentFlags, limits, policy, contextLine, contextPath, contextLines: A.contextLines, discoveryPlanRef:A.discoveryPlanRef, changedFiles:A.changedFiles, outputDir:A.outputDir,headShaShort:A.headShaShort,nonce:A.nonce,pluginRoot:A.pluginRoot,python:A.python, riskTable: A.riskTable, repoRoot: A.repoRoot, removedTests: resolveRemovedTestsArgs(A),
     }));
 
     const summaryOut = await runPhase('summarize', async () => (await summarizeSettled)());

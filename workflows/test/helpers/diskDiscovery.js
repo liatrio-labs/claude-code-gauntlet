@@ -22,7 +22,9 @@ export function preparePlan(input, plan) {
   const context = 'row\n'.repeat(input.contextLines);
   writeFileSync(input.contextPath,context);
   const name = discoveryArtifactName('discovery-plan',input.headShaShort);
-  const text = JSON.stringify({version:1,sha:input.headShaShort,context_sha256:createHash('sha256').update(context).digest('hex'),diff_sha256:'0'.repeat(64),context_lines:input.contextLines,plan});
+  input.changedFiles = [...new Set([...(input.changedFiles || []),...(plan?.regions || []).map(r=>r.file)])].sort();
+  if(input.riskTable)for(const path of input.changedFiles)if(!input.riskTable.some(r=>r.path===path))input.riskTable.push({path,risk:'medium'});
+  const text = JSON.stringify({version:2,files:input.changedFiles,sha:input.headShaShort,context_sha256:createHash('sha256').update(context).digest('hex'),diff_sha256:'0'.repeat(64),context_lines:input.contextLines,plan});
   writeFileSync(join(root,name),text);
   input.discoveryPlanRef = {path:name,sha256:createHash('sha256').update(text).digest('hex')};
   delete input.discoveryPlan;

@@ -293,7 +293,7 @@ export async function discover(ctx, input) {
       const candidate = discoveryCandidate(raw, specs[i], n);
       return validateFindings([candidate]).valid.length > 0 && missingDiscoveryFields(candidate).length === 0;
     })));
-  const planRequest = {context:inp.contextPath,context_lines:inp.contextLines,refs:coverageReferences(specs,results,inp.repoRoot),
+  const planRequest = {refs:coverageReferences(specs,results,inp.repoRoot),
     risks:inp.riskTable || [],enabled:hunters.length > 0 && primaryUsable,disabled_reason:primaryUsable ? 'scope' : 'primary_failure'};
   let planned = hasPlan ? await planOnDisk(ctx,inp,'select',planRequest) : null;
   let ledger = planned?.summary || unavailableCoverage();
@@ -386,7 +386,7 @@ export async function discover(ctx, input) {
     anchors:coverageAnchors(finalResults[i].findings,inp.repoRoot),
     refs:coverageReferences([spec],[finalResults[i]],inp.repoRoot)}] : []);
   if (planned && completedHunters.length) {
-    planned = await planOnDisk(ctx,inp,'finalize',{context:inp.contextPath,context_lines:inp.contextLines,state_checksum:planned.state_checksum,hunters:completedHunters});
+    planned = await planOnDisk(ctx,inp,'finalize',{state_checksum:planned.state_checksum,hunters:completedHunters});
     ledger = planned?.summary || unavailableCoverage();
     if (!planned) ledgerGaps.push('discovery coverage unavailable: final ledger receipt missing or invalid');
   }

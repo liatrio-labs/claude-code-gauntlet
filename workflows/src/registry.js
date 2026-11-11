@@ -5,7 +5,7 @@ const DEEP = 'deep';
 
 // The writer and workflow must accept the same bounded receipt size.
 export const READ_PLAN_MAX_CHUNKS = 2000;
-export const DISCOVERY_TRANSPORT_LIMITS = deepFreeze({chunkChars:3000,receiptChars:4096,maxChunks:12000});
+export const DISCOVERY_TRANSPORT_LIMITS = deepFreeze({requestChars:1000,receiptChars:2048,maxParts:4});
 export const CONTEXT_RECEIPT_FIELDS = deepFreeze(['contextLines', 'contextChars', 'contextMaxLineChars', 'contextReadPlanVersion', 'contextReadChunks', 'removedTests', 'discoveryPlanRef']);
 
 export const AGENT_TYPE_TEST_ANALYZER = 'code-gauntlet:test-analyzer';
@@ -280,6 +280,7 @@ export const DISCOVERY_REVIEWERS = deepFreeze([
     objective: 'Focus on the supplied uncovered regions and fact cards; report any defect you find, including findings anchored outside the assignment.',
     tools: ['Read'], effort: 'high', color: 'cyan', modelOverride: 'sonnet' },
 ].map(discoveryReviewer));
+export const DISCOVERY_AGENT_TYPES = deepFreeze([...new Set([...DIMENSIONS, ...DISCOVERY_REVIEWERS].map(row => row.agentType))]);
 
 export const VERIFY_REFERENCE_FIELDS = deepFreeze(Object.keys(SOURCE_REFERENCE.properties));
 export const VERIFY_REFERENCE_DESCRIPTORS = deepFreeze(Object.fromEntries(Object.entries(Object.assign({}, ...DIMENSIONS.map((row) => row.schemaExtra)))
