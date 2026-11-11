@@ -105,25 +105,9 @@ def test_inline(case):
     ("token", "message"),
     [
         pytest.param(
-            '{"findings":[{"evidence":"`"}]}',
-            "raw U+0060 at $.findings[0].evidence",
-            id="REJECT-raw-nested",
-        ),
-        pytest.param(
             '{"findings":[{"evidence":"%4"}]}',
             "invalid percent escape at $.findings[0].evidence",
             id="REJECT-truncated",
-        ),
-        pytest.param(
-            '{"findings":[],"s":"\\u0041"}',
-            "JSON escape sequences are not canonical at $ (offending U+005C)",
-            id="REJECT-json-unicode",
-        ),
-        pytest.param(
-            '{"findings":[{"evidence":"%41"}]}',
-            "non-canonical percent escape %41 at $.findings[0].evidence (byte is SAFE "
-            "ASCII)",
-            id="REJECT-encoded-safe-value",
         ),
         pytest.param(
             '{"findings":[{"evidence":"%FF"}]}',
@@ -131,18 +115,6 @@ def test_inline(case):
             "(offending bytes FF, 'utf-8' codec "
             "can't decode byte 0xff in position 0: invalid start byte)",
             id="REJECT-invalid-utf8",
-        ),
-        pytest.param(
-            '{"findings":[{"evidence":"%u0041"}]}',
-            "invalid %u escape U+0041 at $.findings[0].evidence (only surrogates are "
-            "allowed)",
-            id="REJECT-non-surrogate-u",
-        ),
-        pytest.param(
-            '{"findings":[{"evidence":"%uD83D%uDE00"}]}',
-            "non-canonical surrogate pair %uD83D%uDE00 at $.findings[0].evidence (an "
-            "astral character is spelled as its UTF-8 bytes)",
-            id="REJECT-adjacent-pair-at-end",
         ),
         pytest.param(
             '{"findings":[],"findings":[]}',
@@ -889,3 +861,61 @@ def test_real_receipts_bound_local_retry_recovery(invoke, tmp_path, verify_git):
     assert '[ids: "F2"]' in out["gaps"][0]
     assert "record proof missing or mismatched" in out["gaps"][0]
     assert '[ids: "F3"]' in out["gaps"][0]
+
+
+@pytest.mark.parametrize(
+    ("spelling", "decoded"),
+    [
+        ("raw|é", "raw|é"),
+        ("%41%2f%7c", "A/|"),
+        (r"\u0041\t\n\r\b\f\/\\\"", 'A\t\n\r\b\f/\\"'),
+        ("%u0041%uD83D%uDE00", "A😀"),
+        ("%257C", "%7C"),
+        ("%7C", "|"),
+        (r"\u007f\u0085", "\x7f\x85"),
+    ],
+)
+def test_receipt_proves_decoded_content_despite_spelling(
+    spelling, decoded, invoke, tmp_path, verify_git
+):
+    token = (
+        '{"findings":[{"id":"F1","evidence":"' + spelling + '"}],"base_branch":"main"}'
+    )
+    result = receipt(invoke, tmp_path, token)
+    envelope = json.loads(result.stdout)
+    assert envelope["status"] == "ok", envelope
+    content = {"findings": [{"id": "F1", "evidence": decoded}], "base_branch": "main"}
+    assert json.loads((tmp_path / "slice.json").read_text(encoding="utf-8")) == content
+    assert envelope["receipt"]["input_checksum"] == jsjson.checksum_or_none(content)
+    assert envelope["receipt"]["record_proofs"] == [
+        {"id": "F1", "checksum": jsjson.checksum_or_none(content["findings"][0])}
+    ]
+    assert envelope["receipt"]["inline_checksum"] == jsjson.fnv1a32(token)
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        '{"findings":[],"n":1e999}',
+        '{"findings":[],"s":"raw\x01control"}',
+        '{"findings":[],"s":"raw\x7fcontrol"}',
+        '{"findings":[],"s":"raw\x85control"}',
+        '{"findings":[],"s":"%"}',
+        '{"findings":[],"s":"%uD8"}',
+        '{"findings":[],"s":"%C3%"}',
+        '{"findings":[],"s":"%ED%A0%80"}',
+        '{"findings":[],"s":"%GG"}',
+        r'{"findings":[],"s":"\x41"}',
+        '{"findings":[],"A":1,"%41":2}',
+        r'{"findings":[],"A":1,"\u0041":2}',
+        '{"findings":[],"😀":1,"%uD83D%uDE00":2}',
+    ],
+)
+def test_ambiguous_or_malformed_inline_input_fails_before_write(
+    token, invoke, tmp_path, verify_git
+):
+    result = receipt(invoke, tmp_path, token)
+    envelope = json.loads(result.stdout)
+    assert envelope["status"] == "failed"
+    assert "inline slice-input rejected:" in envelope["stderr"]
+    assert not (tmp_path / "slice.json").exists()

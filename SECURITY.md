@@ -88,6 +88,10 @@ split is deliberate; it was decided on issue #82 (2026-08-02).
   from the merge base instead of the PR head; it is held in reserve, not implemented. The ingested block is
   code-tagged per source with its path and whether the diff under review modifies it, so an agent can weigh
   provenance; this is provenance, not a filter.
+- **The checkout's `.claude/` directory is trusted, as Claude Code trusts it.** A review runs inside the
+  working tree, so its project hooks, settings and workflows load as they do in any session there. A project
+  workflow can declare the pipeline's registered name and run in its place. Review a branch from an author you do
+  not trust only after checking what it adds under `.claude/`.
 - **Anything that leaves the pipeline is untrusted, whatever its source.** Repository-derived text that reaches a
   posted PR/MR comment, a rendered report, or a shell invocation stays fully inside the in-scope injection
   classes below.

@@ -129,7 +129,8 @@ function validatePrIdentity(id, errors) {
     return;
   }
   for (const field of PR_IDENTITY_FIELDS) {
-    const value = id[field.name];
+    const raw = id[field.name];
+    const value = field.normalize && raw !== undefined ? field.normalize(raw) : raw;
     const valid = value !== undefined && field.check(value);
     if ((value === undefined && field.required) || (value !== undefined && !valid)) {
       errors.push(`delivery.prIdentity.${field.name} must be ${field.describe}`);
@@ -205,6 +206,15 @@ export function stripNullOptionalsReport(args, descriptors = KNOB_REGISTRY) {
       dropped.push('delivery.prIdentity.title');
     }
     if (delivery.tier === null) { delete delivery.tier; dropped.push('delivery.tier'); }
+    if (isPlainObject(delivery.prIdentity)) {
+      const id = { ...delivery.prIdentity };
+      for (const field of PR_IDENTITY_FIELDS) {
+        if (field.normalize && id[field.name] !== undefined) {
+          id[field.name] = field.normalize(id[field.name]) ?? id[field.name];
+        }
+      }
+      delivery.prIdentity = id;
+    }
     out.delivery = delivery;
   }
   // Only undefined permits a default: zero caps are deliberate values.

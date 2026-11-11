@@ -212,7 +212,7 @@ Assemble the args waist the workflow consumes. It is a single JSON object passed
 - `pr_number` (required): a positive safe integer.
 - `sha_full` (required): a 40-character lowercase hex commit id.
 - `platform` (required): one of github, gitlab.
-- `web_origin` (required): an http(s) origin: scheme, host and optional port only.
+- `web_origin` (required): an http(s) URL without userinfo (normalized to its origin).
 - `title` (optional): a non-empty string when present.
 
 Producer commands:
