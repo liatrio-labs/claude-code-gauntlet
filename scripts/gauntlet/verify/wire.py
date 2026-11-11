@@ -389,10 +389,7 @@ def _parser() -> Parser:
     parser.add_argument(
         "--input-inline",
         metavar="TEXT",
-        help=(
-            "Receipt mode: the strict percent-encoded slice document "
-            "to decode and write."
-        ),
+        help=("Receipt mode: the percent-encoded slice document to decode and write."),
     )
     parser.add_argument(
         "--nonce",

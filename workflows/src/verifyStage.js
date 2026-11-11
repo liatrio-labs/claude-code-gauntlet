@@ -252,6 +252,7 @@ async function verifySliceWithRetry(c, inp, i, slice, record) {
     const batch = await dispatchVerifySlice(c, inp, i, unresolved, retryRecord, `${inp.nonce}.${i}.r1`, `verify-slice-${i}-retry`, 'r1');
     collect(batch);
     // Repeating an already isolated copy cannot narrow the fault any further.
+    // A batch that failed as a whole names no ids, so each unresolved finding is retried alone.
     const eligible = new Set(unresolved.length > 1 ? (batch.retryIds || unresolved.map((f) => f.id)) : []);
     const pending = slice.map((finding, index) => ({ finding, index }))
       .filter(({ finding }) => !accepted.has(finding.id));
