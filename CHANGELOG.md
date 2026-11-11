@@ -2,6 +2,21 @@
 
 <!-- version list -->
 
+## v3.62.1 (2026-11-11)
+
+### Bug Fixes
+
+- Keep reviews alive through three executor and args faults (#46)
+  ([#594](https://github.com/liatrio-labs/claude-code-gauntlet/pull/594),
+  [`00abfed`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/00abfedc9101565456197240b9125322d99e14c8))
+
+### Documentation
+
+- Document the Workflow allow rule for interactive sessions
+  ([#593](https://github.com/liatrio-labs/claude-code-gauntlet/pull/593),
+  [`3efd3de`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3efd3dec72ce448eb9950774da1ace48d087ec9b))
+
+
 ## v3.62.0 (2026-11-11)
 
 ### Features
