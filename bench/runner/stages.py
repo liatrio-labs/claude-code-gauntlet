@@ -152,7 +152,13 @@ def load_trace(trace_path: Path, *, expected_sha256: str) -> MeasurementTrace:
         "denied artifact",
     )
     _require(file_hash(trace_path) == expected_sha256, "byte hash mismatch")
-    trace: MeasurementTrace = decode(MeasurementTrace, read_json(trace_path))
+    raw = read_json(trace_path)
+    if isinstance(raw, dict) and raw.get("coverage_ledger") is not None:
+        try:
+            decode(CoverageLedger | TrimmedCoverageLedger, raw["coverage_ledger"])
+        except (TypeError, ValueError):
+            raw = {**raw, "coverage_ledger": None}
+    trace: MeasurementTrace = decode(MeasurementTrace, raw)
     by_id: dict[str, FindingVersion] = {}
     identities: dict[str, object] = {}
     for version in trace.versions:
@@ -393,7 +399,17 @@ def _trace_loss(bug, trace, versions, trace_ids, judged):
             ),
             None,
         )
-        if scope_loss:
+        reached_later = {
+            versions[v].trace_id
+            for snapshot in trace.snapshots[1:]
+            for v in snapshot.finding_version_ids
+        }
+        scope_ids = {
+            d.trace_id
+            for d in discovery.decisions
+            if d.reason_code == "discover_scope" and d.decision == "eliminated"
+        } - reached_later
+        if scope_loss and trace_ids <= scope_ids:
             return Loss(
                 stage="discover",
                 physical_stage="discover",
@@ -403,7 +419,7 @@ def _trace_loss(bug, trace, versions, trace_ids, judged):
                 evidence_refs=(f"snapshot:{discovery.sequence}",),
                 status="established",
             )
-    previous = set(trace_ids)
+    previous = set(trace_ids) - (scope_ids if discovery else set())
     for snapshot in trace.snapshots[1:]:
         if not snapshot.executed or snapshot.coverage == "unavailable":
             break

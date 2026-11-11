@@ -130,7 +130,7 @@ for (const row of POLICY_ROWS) test(`conditional schema policy: ${row.name}`, as
   await discover(ctx, { policy: row.policy });
   for (const call of ctx.calls) {
     const item = call.schema.properties.findings.items;
-    assert.equal(item.allOf, undefined);
+    assert.deepEqual(item.allOf, [{ if: { properties: {change_origin: {const: 'pre_existing'}}, required: ['change_origin'] }, then: {required: ['change_relevance']} }]);
     assert.equal(Boolean(item.properties.dimension), call.agentType === 'code-gauntlet:conventions-and-intent');
   }
 });
@@ -335,7 +335,7 @@ test('discovery retains inherited defects with explicit provenance through the t
   const { createMeasurementTrace } = await import('../src/measurementTrace.js');
   const trace = createMeasurementTrace('provenance');
   const ctx = stageCtx({ replies: { 'code-gauntlet:bug-detector': {
-    findings: ['introduced', 'moved_or_carried', 'pre_existing'].map((change_origin) => finding({ change_origin })),
+    findings: ['introduced', 'moved_or_carried', 'pre_existing'].map((change_origin) => finding({ change_origin, change_relevance: "The change calls this code with the new input." })),
     complete: true, total_seen: 3,
   } } });
   const out = await discover(ctx, { measurementTrace: trace });
@@ -350,8 +350,7 @@ test('discovery retains inherited defects with explicit provenance through the t
 
 
 const REGION_PLAN = {
-  version: 2, status: 'available', fact_reads: [{ offset: 3, limit: 4, bytes: 160 }],
-  fact_packets: [{ related_files: ['src/other'], reads: [{ offset: 3, limit: 4, bytes: 160 }] }],
+  version: 2, status: 'available', fact_packets: [{ related_files: ['src/other'], reads: [{ offset: 3, limit: 4, bytes: 160 }] }],
   regions: [
     { id: 'first', file: 'src/main', line_start: 10, line_end: 14, reads: [{ offset: 20, limit: 5, bytes: 200 }] },
     { id: 'second', file: 'src/main', line_start: 40, line_end: 44, reads: [{ offset: 25, limit: 5, bytes: 200 }] },
@@ -454,12 +453,84 @@ test('gap budget prioritizes neglected high-risk packets and records omissions i
 });
 
 test('invalid optional plans disclose unavailable coverage without degrading primary discovery', async () => {
-  for (const discoveryPlan of [null, [], 'bad', { version: 2 }, { ...REGION_PLAN, fact_packets: {} }, { ...REGION_PLAN, fact_reads: [{ offset: 100, limit: 4, bytes: 160 }] }]) {
+  for (const discoveryPlan of [null, [], 'bad', { version: 2 }, { ...REGION_PLAN, fact_packets: {} }, { ...REGION_PLAN, fact_packets: [{related_files: [], reads: [{offset:100,limit:4,bytes:160}]}] }]) {
     const ctx = stageCtx();
     const trace = createMeasurementTrace('unavailable');
     const out = await discover(ctx, { ...regionInput(), discoveryPlan, measurementTrace: trace });
     assert.equal(ctx.calls.length, 7);
     assert.ok(out.gaps.some((g) => g.includes('coverage unavailable')));
     assert.equal(trace.snapshots[0].coverage, 'complete');
+  }
+});
+
+test('malformed hunter entries are rejected without losing usable discoveries', async () => {
+  for (const measured of [false, true]) {
+    const ctx = stageCtx({ replies: { 'code-gauntlet:gap-hunter': {
+      findings: [null, 7, 'invalid', [], {}, finding({ file: 'src/other', line_start: 3 })], complete: true, total_seen: 6,
+    } } });
+    const out = await discover(ctx, { ...regionInput(), ...(measured ? { measurementTrace: createMeasurementTrace('invalid-hunter') } : {}) });
+    assert.equal(out.findings.length, 1);
+    assert.equal(out.rejected.length, 5);
+    assert.equal(out.findings[0].agent, 'gap-hunter');
+    assert.ok(out.gaps.some((g) => g.includes('Invalid finding shape')));
+  }
+});
+
+test('failed primaries cannot be rescued by an otherwise successful hunter', async () => {
+  const { runWith } = await import('../src/run.js');
+  const { validArgs } = await import('./helpers/argsFixtures.js');
+  const { makeCtx, makeFinding } = await import('./helpers/pipelineMock.js');
+  for (const malformed of [false, true]) {
+    const A = validArgs({ measurementTrace: true, contextLines: 40, discoveryPlan: structuredClone(REGION_PLAN) });
+    const ctx = makeCtx(A, { nullAgentLabels: malformed ? [] : ROSTER });
+    const original = ctx.agent;
+    ctx.agent = async (prompt, options) => {
+      if (options.agentType === 'code-gauntlet:gap-hunter') return { findings: [makeFinding('rescuer', {file: 'src/other', line_start: 3})], complete: true, total_seen: 1 };
+      const result = await original(prompt, options);
+      return malformed && ROSTER.includes(options.agentType) ? {findings:[null],complete:true,total_seen:1} : result;
+    };
+    const out = await runWith(ctx, A);
+    assert.equal(out.ok, false);
+    assert.match(out.error, /^all-degraded:/);
+    assert.deepEqual(JSON.parse(out.measurement.text).coverage_ledger.hunters, []);
+    assert.ok(JSON.parse(out.measurement.text).coverage_ledger.omitted.every((r) => r.reason === 'primary_failure'));
+  }
+});
+
+test('pre-existing origins require a concrete change connection in schema and discovery', async () => {
+  for (const value of [undefined, '', '  ', 2, 'The changed caller now supplies this state.']) {
+    const ctx = stageCtx({ replies: {
+      'code-gauntlet:bug-detector': { findings: [finding({change_origin: 'pre_existing', change_relevance: value})], complete: true, total_seen: 1 },
+      'code-gauntlet:gap-hunter': { findings: [finding({file: 'src/other', line_start: 3, change_origin: 'pre_existing', change_relevance: value})], complete: true, total_seen: 1 },
+    } });
+    const out = await discover(ctx, { ...regionInput(), measurementTrace: createMeasurementTrace('connection') });
+    assert.equal(out.findings.length, typeof value === 'string' && value.trim() ? 2 : 0);
+    for (const call of ctx.calls) {
+      for (const keyword of ['allOf','anyOf','oneOf']) assert.equal(Object.hasOwn(call.schema, keyword), false);
+      const item = call.schema.properties.findings.items;
+      assert.equal(new RegExp(item.properties.change_relevance.pattern).test('The changed caller relies on this code.'), true);
+      assert.equal(new RegExp(item.properties.change_relevance.pattern).test('  '), false);
+      const rules = item.allOf;
+      assert.ok(rules.some((r) => r.if.properties.change_origin?.const === 'pre_existing' && r.then.required.includes('change_relevance')));
+    }
+  }
+});
+
+test('ledger detail has an independent budget and its phase copy is bounded', async () => {
+  const { COVERAGE_LEDGER_CHAR_BUDGET } = await import('../src/coverageLedger.js');
+  for (const n of [200, 2000]) {
+    const plan = { version: 2, status: 'available', fact_packets: [], regions: Array.from({length:n}, (_, i) => ({
+      id: `region${i}`, file: `${'long-directory/'.repeat(n === 200 ? 8 : 80)}source${i}`, line_start: 1, line_end: 2,
+      reads: [{offset: 20, limit: 2, bytes: 80}],
+    })) };
+    const trace = createMeasurementTrace('detail');
+    const out = await discover(stageCtx(), {...regionInput(), discoveryPlan:plan, measurementTrace:trace});
+    const ledger = out.coverageLedger;
+    assert.ok(JSON.stringify(ledger).length <= COVERAGE_LEDGER_CHAR_BUDGET);
+    assert.deepEqual(ledger, trace.coverage_ledger);
+    assert.equal(ledger.status, n === 200 ? 'available' : 'trimmed');
+    assert.equal(ledger.hunters.length, 1);
+    assert.ok(ledger.omitted.length);
+    if (n === 200) assert.equal(ledger.regions.length, 200);
   }
 });

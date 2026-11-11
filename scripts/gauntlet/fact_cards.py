@@ -7,6 +7,7 @@ import math
 import re
 import time
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypedDict
 
@@ -16,12 +17,28 @@ from gauntlet.paths import NON_SOURCE_DIRS, is_test_path
 from gauntlet.registry import READ_PLAN_LINE_PREFIX_BYTES, READ_PLAN_MAX_BYTES
 
 MAX_FILES = 4000
+MAX_CALLEE_CALLS = 32
+MAX_CALL_OCCURRENCES = 64
 MAX_LISTING_BYTES = 1024 * 1024
 MAX_SCAN_SECONDS = 5.0
 MAX_CALL_LINE_BYTES = 4096
 MAX_SCAN_BYTES = 16 * 1024 * 1024
 MAX_FILE_BYTES = 256 * 1024
 _CALL = re.compile(r"\b([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*\(")
+
+
+@dataclass(frozen=True, slots=True)
+class CalleeCandidate:
+    file: str
+    line: int
+    lines: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class RankedCall:
+    key: tuple[int, bool, int]
+    call: str
+    matches: tuple[CalleeCandidate, ...]
 
 
 class FactCard(TypedDict):
@@ -87,6 +104,30 @@ def source_path(file: str) -> bool:
     )
 
 
+def _body_after_parameters(lines: tuple[str, ...], start: int, opening: int) -> bool:
+    # An argument object is not a definition body; the parameter list must end first.
+    depth = 1
+    indent = len(lines[start]) - len(lines[start].lstrip())
+    for row in range(start, min(len(lines), start + 10)):
+        text = lines[row]
+        if len(text) > MAX_CALL_LINE_BYTES:
+            return False
+        for column in range(opening + 1 if row == start else 0, len(text)):
+            if text[column] == "(":
+                depth += 1
+            elif text[column] == ")":
+                depth -= 1
+                if depth == 0:
+                    suffix = text[column + 1 :]
+                    header = suffix.split("{", 1)[0]
+                    if any(ch in header for ch in ";=()"):
+                        return False
+                    following = lines[row + 1] if row + 1 < len(lines) else ""
+                    nested = len(following) - len(following.lstrip()) > indent
+                    return "{" in suffix or nested
+    return False
+
+
 def build_fact_cards(
     source: SourceAdapter, annotated: AnnotatedDiff, diff_bytes: int
 ) -> FactCards:
@@ -134,12 +175,9 @@ def build_fact_cards(
                 call_files.setdefault(call, set()).add(annotated.entries[index]["file"])
         elif re.match(r"O\d+ -\|", line):
             old_calls.update(_CALL.findall(line.split("|", 1)[1]))
-    calls = sorted(
-        set(call_files) - old_calls,
-        key=lambda call: ("." not in call, call),
-    )[:32]
+    calls = [call for call in call_files if call not in old_calls]
     receivers = {call.split(".")[-2].lower() for call in calls if "." in call}
-    candidates: dict[str, list[tuple[str, int, tuple[str, ...]]]] = {}
+    candidates: dict[str, list[CalleeCandidate]] = {}
     neighbors: list[FactCard] = []
     callees: list[FactCard] = []
     siblings: list[FactCard] = []
@@ -253,57 +291,98 @@ def build_fact_cards(
                 )
             )
 
+    shown_head = {
+        (e["file"], e["line"])
+        for e in annotated.entries.values()
+        if e["side"] == "head"
+    }
+    names = {call.rsplit(".", 1)[-1] for call in calls}
+    occurrences: Counter[str] = Counter()
     for file, lines in loaded.items():
-        if file in changed:
-            continue
         if time.monotonic() >= deadline:
             scan["deadline_reached"] = result["scan_limited"] = True
             break
-        for call in calls:
-            name = call.rsplit(".", 1)[-1]
-            pattern = re.compile(r"(?<![\w.])" + re.escape(name) + r"\s*\(")
-            for n, line in enumerate(lines):
-                match = pattern.search(line)
-                if not match:
+        for n, line in enumerate(lines):
+            if n % 128 == 0 and time.monotonic() >= deadline:
+                scan["deadline_reached"] = result["scan_limited"] = True
+                break
+            for match in _CALL.finditer(line):
+                token = match[1]
+                name = token.rsplit(".", 1)[-1]
+                if name not in names:
+                    continue
+                occurrences[name] += 1
+                if occurrences[name] > MAX_CALL_OCCURRENCES or "." in token:
                     continue
                 prefix = line[: match.start()].strip()
-                # This is lexical evidence, not a language-specific declaration parser.
-                following = lines[n + 1] if n + 1 < len(lines) else ""
-                indent = len(line) - len(line.lstrip())
-                nested = len(following) - len(following.lstrip()) > indent
-                if (prefix and not any(c in prefix for c in "=();{}")) and (
-                    "{" in line[match.end() :] or nested
-                ):
-                    candidates.setdefault(call, []).append((file, n + 1, lines))
+                if (
+                    prefix and not any(c in prefix for c in "=();{}")
+                ) and _body_after_parameters(lines, n, match.end() - 1):
+                    # Changed lines are already in the diff, not an outside fact.
+                    if (file, n + 1) in shown_head:
+                        continue
+                    candidates.setdefault(name, []).append(
+                        CalleeCandidate(file, n + 1, lines)
+                    )
 
-    for call in sorted(
-        calls,
-        key=lambda c: (
-            not any(
-                Path(m[0]).stem.lower()
-                == (c.split(".")[-2].lower() if "." in c else "")
-                for m in candidates.get(c, [])
-            ),
-            c,
-        ),
-    ):
-        matches = candidates.get(call, [])
-        receiver = call.split(".")[-2].lower() if "." in call else ""
-        preferred = [m for m in matches if Path(m[0]).stem.lower() == receiver]
-        matches = preferred or matches
-        if len(matches) > 3:
+    def distance(file: str, related: set[str]) -> int:
+        parts = file.split("/")[:-1]
+        best = len(parts) + 1000
+        for other in related:
+            peer = other.split("/")[:-1]
+            shared = 0
+            for left, right in zip(parts, peer, strict=False):
+                if left != right:
+                    break
+                shared += 1
+            best = min(best, len(parts) + len(peer) - 2 * shared)
+        return best
+
+    ranked: list[RankedCall] = []
+    for order, call in enumerate(calls):
+        name = call.rsplit(".", 1)[-1]
+        matches = candidates.get(name, [])
+        if occurrences[name] > MAX_CALL_OCCURRENCES:
             result["omitted"] += len(matches)
             continue
-        for file, definition_line, lines in matches:
+        receiver = call.split(".")[-2].lower() if "." in call else ""
+        preferred = [m for m in matches if Path(m.file).stem.lower() == receiver]
+        matches = sorted(
+            preferred or matches,
+            key=lambda m: (
+                distance(m.file, call_files[call]),
+                is_test_path(m.file),
+                m.file,
+                m.line,
+            ),
+        )
+        if matches:
+            ranked.append(
+                RankedCall(
+                    (
+                        distance(matches[0].file, call_files[call]),
+                        not bool(preferred),
+                        order,
+                    ),
+                    call,
+                    tuple(matches),
+                )
+            )
+    ranked.sort(key=lambda ranked_call: ranked_call.key)
+    for ranked_call in ranked[MAX_CALLEE_CALLS:]:
+        result["omitted"] += min(3, len(ranked_call.matches))
+    for ranked_call in ranked[:MAX_CALLEE_CALLS]:
+        result["omitted"] += max(0, len(ranked_call.matches) - 3)
+        for definition in ranked_call.matches[:3]:
             callees.append(
                 card(
                     "callee_candidate",
-                    file,
-                    lines,
-                    definition_line,
-                    min(len(lines), definition_line + 9),
-                    sorted(call_files[call]),
-                    f"Lexical candidate for {call}; bounded excerpt, resolution unproven.",
+                    definition.file,
+                    definition.lines,
+                    definition.line,
+                    min(len(definition.lines), definition.line + 9),
+                    sorted(call_files[ranked_call.call]),
+                    f"Lexical candidate for {ranked_call.call}; bounded excerpt, resolution unproven.",
                 )
             )
 

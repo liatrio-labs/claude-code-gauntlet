@@ -47,19 +47,32 @@ console.log(JSON.stringify(out.gaps));
         capture_output=True,
         check=True,
     )
-    assert any(actual.startswith(gap) for actual in json.loads(result.stdout))
+    produced = json.loads(result.stdout)
+    assert any(actual.startswith(gap) for actual in produced)
+    audit_gap = (
+        "removed-test audit: gap ("
+        + (
+            "audit dispatch did not complete"
+            if reply is None
+            else "malformed audit rows"
+        )
+        + ")"
+    )
+    assert audit_gap in produced
     record = tmp_path / "workflows/wf_discovery.json"
     record.parent.mkdir()
     record.write_text(
         json.dumps(
             {
                 "workflowName": invoke.PIPELINE_META_NAME,
-                "result": {"ok": True, "gaps": [gap]},
+                "result": {"ok": True, "gaps": produced},
             }
         ),
         encoding="utf-8",
     )
-    assert check.workflow_stage_outcomes(tmp_path)[0] == ("discovery execution failed",)
+    failures, disclosures = check.workflow_stage_outcomes(tmp_path)
+    assert failures == ("discovery execution failed",)
+    assert "Recorded limitation: " + audit_gap in disclosures
 
 
 def _collect_discovery_attempt(tmp_path, fingerprint, out, checkpoint=None):

@@ -24,7 +24,7 @@ export async function emitLeakPrompts() {
     ['derived', 'derived', {}, {}],
     ['bucketed', 'return', { changedLines: 900, changedFiles: Array.from({ length: 24 }, (_, i) => `sample${i}.js`) }, {}],
     ['fallback', 'return', {}, {}],
-    ['uncovered', 'return', { contextLines: 10, discoveryPlan: { version: 2, status: 'available', fact_reads: [{ offset: 1, limit: 2, bytes: 80 }], fact_packets: [], regions: [{ id: 'unread', file: 'unvisited', line_start: 1, line_end: 2, reads: [{ offset: 4, limit: 2, bytes: 80 }] }] } }, {}],
+    ['uncovered', 'return', { contextLines: 10, discoveryPlan: { version: 2, status: 'available', fact_packets: [], regions: [{ id: 'unread', file: 'unvisited', line_start: 1, line_end: 2, reads: [{ offset: 4, limit: 2, bytes: 80 }] }] } }, {}],
   ];
   const body = readFileSync(new URL('../../pipeline.js', import.meta.url), 'utf8').replace(/^export const meta.*$/m, '');
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;

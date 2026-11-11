@@ -665,3 +665,172 @@ def test_discovery_scope_rejection_keeps_discover_loss_attribution(
     assert loss.stage == loss.physical_stage == "discover"
     assert loss.reason_code == "discover_scope" and loss.status == "established"
     assert dict(stages.loss_funnel(rows, population=("bug",)).losses)["discover"] == 1
+
+
+@pytest.fixture
+def emitted_coverage_ledgers():
+    result = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            """
+import { discover } from './workflows/src/discover.js';
+import { boundedCoverageLedger } from './workflows/src/coverageLedger.js';
+const regions = [0,1].map(i=>({id:`r${i}`,file:'source',line_start:i?0:1,line_end:i?0:2,reads:[{offset:1,limit:2,bytes:80}]}));
+const plan = {version:2,status:'available',fact_packets:[],regions};
+const ledgers=[];
+for(const reply of [null,{findings:[],complete:false,total_seen:0},{findings:[],complete:true,total_seen:0}]) {
+ const ctx={agent:async(_,o)=>o.agentType==='code-gauntlet:gap-hunter'?reply:{findings:[],complete:true,total_seen:0,removed_test_audit:[]},parallel:async ts=>Promise.all(ts.map(t=>t()))};
+ for(const input of [{},{agentFlags:{deep:false}},{discoveryPlan:{}},{discoveryPlan:{...plan,regions:regions.map(r=>({...r,reads:[{offset:1,limit:2,bytes:25000}]}))}}]) {
+  const out=await discover(ctx,{contextPath:'/prepared',contextLines:10,discoveryPlan:plan,...input});
+  if(out.coverageLedger)ledgers.push(out.coverageLedger);
+ }
+}
+const ctx={agent:async()=>null,parallel:async ts=>Promise.all(ts.map(t=>t()))};
+ledgers.push((await discover(ctx,{contextPath:'/prepared',contextLines:10,discoveryPlan:plan})).coverageLedger);
+ledgers.push(boundedCoverageLedger(ledgers[0],0));
+console.log(JSON.stringify(ledgers));
+""",
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return json.loads(result.stdout)
+
+
+def test_ledger_wire_keys_and_closed_values_match_live_discovery(
+    emitted_coverage_ledgers,
+):
+    from typing import get_type_hints
+
+    from gauntlet.discovery_plan import CoverageLedger, TrimmedCoverageLedger
+
+    from bench.runner.decode import decode
+
+    for ledger in emitted_coverage_ledgers:
+        shape = (
+            TrimmedCoverageLedger if ledger["status"] == "trimmed" else CoverageLedger
+        )
+        assert set(ledger) == set(get_type_hints(shape))
+        assert decode(shape, ledger) == ledger
+    assert {
+        h["status"] for ledger in emitted_coverage_ledgers for h in ledger["hunters"]
+    } == {"complete", "incomplete", "failed"}
+    assert {
+        r["reason"] for ledger in emitted_coverage_ledgers for r in ledger["omitted"]
+    } >= {"scope", "no_head_anchor", "primary_failure", "budget"}
+
+
+@pytest.mark.parametrize("shape", ["available", "trimmed"])
+def test_unknown_ledger_fields_degrade_only_coverage(
+    tmp_path, emitted_coverage_ledgers, shape
+):
+    trace, path, _ = emit_trace(tmp_path)
+    ledger = next(
+        ledger for ledger in emitted_coverage_ledgers if ledger["status"] == shape
+    )
+    raw = asdict(trace)
+    raw["coverage_ledger"] = {**ledger, "future_key": True}
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    loaded = stages.load_trace(path, expected_sha256=file_hash(path))
+    assert loaded.coverage_ledger is None
+    assert loaded.versions == trace.versions and loaded.snapshots == trace.snapshots
+
+
+@pytest.mark.parametrize(
+    "physical,reason,loss_stage",
+    [
+        ("verify", "verify_eliminated", "verify"),
+        ("filter", "threshold", "filter"),
+        ("challenge", "challenge_removed", "challenge"),
+        ("select", "delivery_cap", "cap"),
+    ],
+)
+def test_scope_rejected_match_does_not_hide_a_deeper_matched_survivor(
+    tmp_path, monkeypatch, physical, reason, loss_stage
+):
+    from bench.runner.contracts import ScoreRef
+
+    trace, path, _ = emit_trace(tmp_path)
+    scoped = trace.versions[0]
+    survivor = replace(
+        scoped,
+        version_id="survivor",
+        trace_id=trace.run_nonce + ":other:0",
+        finding={**scoped.finding, "trace_id": trace.run_nonce + ":other:0"},
+    )
+    target = next(i for i, s in enumerate(trace.snapshots) if s.stage == physical)
+    snapshots = []
+    for i, s in enumerate(trace.snapshots):
+        ids = (
+            (scoped.version_id, survivor.version_id)
+            if i == 0
+            else (survivor.version_id,)
+            if i < target
+            else ()
+        )
+        decisions = (
+            (
+                stages.StageDecision(
+                    scoped.trace_id,
+                    "eliminated",
+                    "discover_scope",
+                    "outside assignment",
+                    (),
+                ),
+            )
+            if i == 0
+            else (
+                stages.StageDecision(
+                    survivor.trace_id, "eliminated", reason, "later loss", ()
+                ),
+            )
+            if i == target
+            else ()
+        )
+        snapshots.append(
+            replace(
+                s,
+                finding_version_ids=ids,
+                decisions=decisions,
+                coverage="complete",
+                executed=True,
+            )
+        )
+    trace = replace(
+        trace,
+        versions=(scoped, survivor),
+        snapshots=tuple(snapshots),
+        dropped_stages=(),
+    )
+    path.write_text(json.dumps(asdict(trace)), encoding="utf-8")
+    trace = stages.load_trace(path, expected_sha256=file_hash(path))
+    bug = observations.BugObservation(
+        1,
+        ScoreRef("run", "epoch", "score"),
+        "url",
+        "attempt",
+        "bug",
+        None,
+        "missed",
+        (),
+        (),
+        None,
+    )
+    monkeypatch.setattr(
+        stages,
+        "_version_results",
+        lambda *_: {("url", v.version_id): {"bug": True} for v in trace.versions},
+    )
+    rows = stages.capture_score({"url": (path, trace)}, (bug,), None, {}, {}, {}, {})
+    loss = next(r.loss for r in rows if r.stage == "deliver")
+    assert (loss.stage, loss.physical_stage, loss.reason_code) == (
+        loss_stage,
+        physical,
+        reason,
+    )
+    assert survivor.trace_id in loss.trace_ids

@@ -4,7 +4,8 @@ import re
 import secrets
 import sys
 import unicodedata
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import AnyStr, Literal, get_args
 
 BlockTag = Literal["untrusted-code-content", "project-rules", "review-rules"]
@@ -67,3 +68,34 @@ def frame(
         framed = _BOUNDARY.sub(_neutralize, text).encode("utf-8", "surrogateescape")
         return opening.encode() + framed + closing.encode()
     return opening + _BOUNDARY.sub(_neutralize, body) + closing
+
+
+@dataclass(frozen=True, slots=True)
+class FrameSpan:
+    offset: int
+    limit: int
+
+
+@dataclass(frozen=True, slots=True)
+class FrameLayout:
+    content: bytes
+    opening: FrameSpan
+    sections: tuple[FrameSpan, ...]
+    closing: FrameSpan
+
+
+def frame_sections(
+    tag: BlockTag, sections: Sequence[bytes], attrs: Mapping[str, str] | None = None
+) -> FrameLayout:
+    """Frame once and locate complete LF-terminated records without parsing their text."""
+    if any(not section.endswith(b"\n") for section in sections):
+        raise ValueError("frame sections must end with LF")
+    content = frame(tag, b"".join(sections), attrs)
+    opening = FrameSpan(1, content[: content.index(b">\n") + 2].count(b"\n"))
+    row = opening.offset + opening.limit
+    spans = []
+    for section in sections:
+        span = FrameSpan(row, section.count(b"\n"))
+        spans.append(span)
+        row += span.limit
+    return FrameLayout(content, opening, tuple(spans), FrameSpan(row, 1))

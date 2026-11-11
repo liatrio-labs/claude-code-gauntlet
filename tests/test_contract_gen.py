@@ -322,7 +322,7 @@ def test_site_descriptor_gates_discovery_consumers(
 import { normalizePhaseFindings } from './workflows/src/checkpoints.js';
 import { discover } from './workflows/src/discover.js';
 const schemas = {};
-await discover({agent: async (_, o) => { schemas[o.label] = o.schema; return {findings:[], complete:true, total_seen:0, removed_test_audit:[]}; }, parallel: async ts => Promise.all(ts.map(t=>t()))}, {contextPath:'/context',contextLines:10,discoveryPlan:{version:2,status:'available',fact_reads:[{offset:1,limit:1,bytes:30}],fact_packets:[],regions:[{id:'gap',file:'source',line_start:1,line_end:2,reads:[{offset:3,limit:2,bytes:100}]}]}});
+await discover({agent: async (_, o) => { schemas[o.label] = o.schema; return {findings:[], complete:true, total_seen:0, removed_test_audit:[]}; }, parallel: async ts => Promise.all(ts.map(t=>t()))}, {contextPath:'/context',contextLines:10,discoveryPlan:{version:2,status:'available',fact_packets:[],regions:[{id:'gap',file:'source',line_start:1,line_end:2,reads:[{offset:3,limit:2,bytes:100}]}]}});
 const out = { findings: [{file:'main.txt', related:[{path:'/repo/ok.txt',active:true},{path:'../escape',active:false}], sites:[{file:'../escape',line_start:1,line_end:1,anchor:'q'}]}] };
 normalizePhaseFindings('discover', out, false, {repoRoot:'/repo'});
 console.log(JSON.stringify({out, schemas}, (key, value) => key === '$comment' ? undefined : value));
@@ -389,7 +389,7 @@ def test_anchor_descriptor_generates_all_consumers(registry_tree, invoke):
             + "await discover({agent: async (_, options) => {"
             + "schemas[options.label] = options.schema;"
             + "return {findings: [], complete: true, total_seen: 0, removed_test_audit: []};"
-            + "}, parallel: async tasks => Promise.all(tasks.map(task => task()))}, {contextPath:'/context',contextLines:10,discoveryPlan:{version:2,status:'available',fact_reads:[{offset:1,limit:1,bytes:30}],fact_packets:[],regions:[{id:'gap',file:'source',line_start:1,line_end:2,reads:[{offset:3,limit:2,bytes:100}]}]}});"
+            + "}, parallel: async tasks => Promise.all(tasks.map(task => task()))}, {contextPath:'/context',contextLines:10,discoveryPlan:{version:2,status:'available',fact_packets:[],regions:[{id:'gap',file:'source',line_start:1,line_end:2,reads:[{offset:3,limit:2,bytes:100}]}]}});"
             + "console.log(JSON.stringify(schemas, (key, value) => key === '$comment' ? undefined : value));",
         ],
         cwd=str(registry_tree),
@@ -1266,7 +1266,7 @@ def test_supplemental_reviewer_registration_generates_agent_manifest_and_dispatc
 import { discover } from './workflows/src/discover.js';
 const labels = [];
 await discover({agent: async (_, opts) => {labels.push(opts.agentType); return {findings:[],complete:true,total_seen:0,read_regions:[],removed_test_audit:[]};},parallel:async ts=>Promise.all(ts.map(t=>t()))},
-{contextPath:'/prepared', contextLines:10, discoveryPlan:{version:2,status:'available',fact_reads:[{offset:1,limit:2,bytes:50}],fact_packets:[],regions:[{id:'unread',file:'source',line_start:1,line_end:2,reads:[{offset:3,limit:2,bytes:100}]}]}});
+{contextPath:'/prepared', contextLines:10, discoveryPlan:{version:2,status:'available',fact_packets:[],regions:[{id:'unread',file:'source',line_start:1,line_end:2,reads:[{offset:3,limit:2,bytes:100}]}]}});
 console.log(JSON.stringify(labels));
 """,
         ],

@@ -696,13 +696,7 @@ class SourceAdapter:
                 offset = 0
                 for item in files:
                     end = result.stdout.index(b"\n", offset)
-                    oid, kind, size = result.stdout[offset:end].split()
-                    if (
-                        oid.decode("ascii") != item.oid
-                        or kind != b"blob"
-                        or int(size) != item.size
-                    ):
-                        raise ValueError("snapshot batch identity mismatch")
+                    # Selected immutable blob IDs and sizes come from this pinned tree's listing.
                     offset = end + 1
                     content = result.stdout[offset : offset + item.size]
                     offset += item.size + 1

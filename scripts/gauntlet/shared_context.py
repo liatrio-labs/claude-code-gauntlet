@@ -22,14 +22,14 @@ from gauntlet.diff import ContextMap, ContextMapEntry, DiffStructureError, annot
 from gauntlet.discovery_plan import (
     DiscoveryPlan,
     FactPacket,
-    ReadRange,
+    Region,
     RegionPlanError,
-    changed_regions,
+    changed_packets,
     read_line_bytes,
     read_ranges,
 )
 from gauntlet.fact_cards import build_fact_cards
-from gauntlet.framing import frame
+from gauntlet.framing import FrameLayout, frame, frame_sections
 from gauntlet.location import SourceAdapter
 from gauntlet.paths import NON_SOURCE_DIRS
 from gauntlet.pr_status import load_snapshot
@@ -62,7 +62,9 @@ search limits are disclosed; no card asserts a defect.
 
 Content bytes are rules (adding LF only if needed), a blank line and
 ``## Risk classification and AI-generated-code status``, CR/LF-trimmed stdin
-plus LF, the framed layout, a blank line and ``## Diff`` with the opening untrusted-content tag,
+plus LF, optional framed author text, the framed repository layout, the framed
+``## Discovery regions`` index and ``## Fact cards`` evidence, then ``## Diff``
+with the opening untrusted-content tag,
 the annotated diff (adding LF only if needed) with all block-tag openers and closers
 inside it rewritten to ``<\\`` and ``<\\/``, then the closing tag and LF. A single
 large Read can return only part of a file without notice; the workflow has no
@@ -251,6 +253,7 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
         presentation += b"\n"
     triage = triage.strip(b"\r\n")
     fact_cards = None
+    fact_layout: FrameLayout | None = None
     facts = b"Fact cards unavailable: repository root not supplied."
     layout = b"Layout unavailable: repository root not supplied."
     if args.repo_root:
@@ -268,19 +271,20 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
             metadata = json.dumps(
                 {k: v for k, v in fact_cards.items() if k != "cards"}, ensure_ascii=True
             )
-            fact_body = (
-                metadata[:-1]
-                + ', "cards": [\n'
-                + ",\n".join(
-                    json.dumps(card, ensure_ascii=True) for card in fact_cards["cards"]
+            sections = [(metadata[:-1] + ', "cards": [\n').encode()]
+            for index, card in enumerate(fact_cards["cards"]):
+                ending = ",\n" if index + 1 < len(fact_cards["cards"]) else "\n"
+                sections.append(
+                    (
+                        json.dumps(card, ensure_ascii=True).replace("<", "\\u003c")
+                        + ending
+                    ).encode()
                 )
-                + "\n]}\n"
+            sections.append(b"]}\n")
+            fact_layout = frame_sections(
+                "untrusted-code-content", sections, {"kind": "fact-cards"}
             )
-            facts = frame(
-                "untrusted-code-content",
-                fact_body.replace("<", "\\u003c").encode("utf-8"),
-                {"kind": "fact-cards"},
-            )
+            facts = fact_layout.content
         else:
             facts = b"Fact cards unavailable: diff could not be mapped."
         layout = _layout_json(layout_entries(source, changed_files)).encode("utf-8")
@@ -294,19 +298,19 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
     )
     plan_status = status
     try:
-        regions = (
-            changed_regions(annotated, context_read_chunks)
+        packets = (
+            changed_packets(annotated, context_read_chunks)
             if status == "available"
             else []
         )
     except RegionPlanError:
-        regions, plan_status = [], "unavailable"
-    if len(regions) > READ_PLAN_MAX_CHUNKS:
-        regions, plan_status = [], "unavailable"
+        packets, plan_status = [], "unavailable"
+    if len(packets) > READ_PLAN_MAX_CHUNKS:
+        packets, plan_status = [], "unavailable"
     grouped: dict[str, list[list[object]]] = {}
-    for region in regions:
-        grouped.setdefault(region["file"], []).append(
-            [region["id"], region["line_start"], region["line_end"]]
+    for packet in packets:
+        grouped.setdefault(packet.file, []).append(
+            [packet.id, packet.line_start, packet.line_end]
         )
     groups = [
         json.dumps(file, ensure_ascii=True)
@@ -332,45 +336,59 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
         + layout
         + region_index
     )
-    fact_section = b"\n\n## Fact cards: bounded lexical evidence\n\n" + facts
+    fact_header = b"\n\n## Fact cards: bounded lexical evidence\n\n"
+    fact_section = fact_header + facts
     prefix = before_facts + fact_section + b"\n\n## Diff\n\n"
     content = prefix + frame("untrusted-code-content", presentation) + b"\n"
-    fact_offset = before_facts.count(b"\n") + 2
-    fact_text = fact_section[1:].decode("utf-8", "replace") + "\n"
-    fact_reads = read_ranges(fact_text, fact_offset, context_read_chunks)
     fact_packets: list[FactPacket] = []
-    if fact_cards is not None and fact_cards["cards"]:
-        frame_offset = before_facts.count(b"\n") + 5
+    if fact_layout is not None and fact_cards is not None:
+        frame_offset = (before_facts + fact_header).count(b"\n") + 1
         rows = facts.decode("utf-8").split("\n")
-
-        def packet_read(start: int, count: int) -> list[ReadRange]:
-            return read_ranges(
-                "\n".join(rows[start : start + count]) + "\n",
-                frame_offset + start,
-                context_read_chunks,
-            )
-
-        for index, card in enumerate(fact_cards["cards"]):
+        for card, span in zip(
+            fact_cards["cards"], fact_layout.sections[1:-1], strict=True
+        ):
+            reads = []
+            for part in (
+                fact_layout.opening,
+                fact_layout.sections[0],
+                span,
+                fact_layout.sections[-1],
+                fact_layout.closing,
+            ):
+                reads.extend(
+                    read_ranges(
+                        "\n".join(rows[part.offset - 1 : part.offset - 1 + part.limit])
+                        + "\n",
+                        frame_offset + part.offset - 1,
+                        context_read_chunks,
+                    )
+                )
             fact_packets.append(
-                {
-                    "related_files": card["related_files"],
-                    "reads": [
-                        *packet_read(0, 2),
-                        *packet_read(index + 2, 1),
-                        *packet_read(len(rows) - 2, 2),
-                    ],
-                }
+                {"related_files": card["related_files"], "reads": reads}
             )
-    # Framing adds one opening LF and never changes body LF counts.
+    # The index uses stable diff identities; only this construction creates context reads.
     offset = prefix.count(b"\n") + 1
     rendered_rows = content.decode("utf-8", "replace").split("\n")
-    for region in regions:
-        for read in region["reads"]:
-            read["offset"] += offset
-            start = read["offset"] - 1
-            read["bytes"] = read_line_bytes(
-                rendered_rows[start : start + read["limit"]]
-            )
+    regions: list[Region] = []
+    for packet in packets:
+        start = offset + packet.annotated_offset - 1
+        regions.append(
+            {
+                "id": packet.id,
+                "file": packet.file,
+                "line_start": packet.line_start,
+                "line_end": packet.line_end,
+                "reads": [
+                    {
+                        "offset": start + 1,
+                        "limit": packet.line_count,
+                        "bytes": read_line_bytes(
+                            rendered_rows[start : start + packet.line_count]
+                        ),
+                    }
+                ],
+            }
+        )
     sidecar: ContextMap = {
         "version": 1,
         "sha": args.head_sha,
@@ -403,7 +421,6 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, object], int]:
         "version": 2,
         "status": plan_status,
         "regions": regions,
-        "fact_reads": fact_reads,
         "fact_packets": fact_packets,
     }
     return {

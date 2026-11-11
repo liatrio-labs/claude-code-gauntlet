@@ -1,13 +1,13 @@
 import { READ_PLAN_MAX_CHUNKS } from './registry.js';
-import { READ_PLAN_MAX_LINES, READ_PLAN_MAX_BYTES } from './contextPlan.js';
+import { READ_PLAN_MAX_LINES, READ_PLAN_MAX_BYTES, READ_PLAN_LINE_PREFIX_BYTES } from './contextPlan.js';
 import { repoRelativeFindingPath } from './paths.js';
-import { untrustedJson, utf8Bytes } from './wire.js';
+import { untrustedJson, utf8Encode } from './wire.js';
 
 const isNatural = (n) => Number.isSafeInteger(n) && n >= 0;
 const validReads = (reads, lines) => Array.isArray(reads) && reads.length > 0 && reads.length <= READ_PLAN_MAX_CHUNKS
   && reads.every((r) => r && Number.isSafeInteger(r.offset) && r.offset > 0
     && Number.isSafeInteger(r.limit) && r.limit > 0 && r.limit <= READ_PLAN_MAX_LINES
-    && Number.isSafeInteger(r.bytes) && r.bytes >= r.limit * 13
+    && Number.isSafeInteger(r.bytes) && r.bytes >= r.limit * (READ_PLAN_LINE_PREFIX_BYTES + 1)
     && r.offset + r.limit - 1 <= lines);
 
 export function validDiscoveryPlan(plan, lines) {
@@ -23,7 +23,7 @@ export function validDiscoveryPlan(plan, lines) {
       || (r.line_start === 0 && r.line_end !== 0) || !validReads(r.reads, lines)) return false;
     ids.add(r.id);
   }
-  return validReads(plan.fact_reads, lines) && plan.fact_packets.every((p) => p
+  return plan.fact_packets.every((p) => p
     && Array.isArray(p.related_files) && p.related_files.every((f) => typeof f === 'string') && validReads(p.reads, lines));
 }
 
@@ -91,11 +91,11 @@ export function gapHunterPrompt(path, _plan, regions, facts = []) {
     + untrustedJson({ path, reads: assignmentReads(regions, facts), regions: regions.map(({ reads: _reads, ...r }) => r) }, 'gap-assignment');
 }
 
-export function selectGapAssignment(path, plan, ledger, riskTable = [], enabled = true) {
+export function selectGapAssignment(path, plan, ledger, riskTable = [], enabled = true, disabledReason = 'scope') {
   if (ledger.status !== 'available') return { regions: [], facts: [], omitted: [], bytes: 0, omitted_fact_packets: 0 };
   const uncovered = plan.regions.filter((r) => ledger.uncovered.includes(r.id));
   const omitted = uncovered.filter((r) => !enabled || r.line_start === 0)
-    .map((r) => ({ id: r.id, reason: !enabled ? 'scope' : 'no_head_anchor' }));
+    .map((r) => ({ id: r.id, reason: !enabled ? disabledReason : 'no_head_anchor' }));
   const risks = new Map(riskTable.map((r) => [r.path, ({ high: 0, medium: 1, low: 2 })[r.risk] ?? 1]));
   const citedFiles = new Set(ledger.regions.filter((r) => r.cited_by.length).map((r) => r.file));
   const size = (r) => r.reads.reduce((n, read) => n + read.bytes, 0);
@@ -107,7 +107,7 @@ export function selectGapAssignment(path, plan, ledger, riskTable = [], enabled 
   const regions = [];
   const facts = [];
   const cost = (rs, fs) => assignmentReads(rs, fs).reduce((n, read) => n + read.bytes, 0)
-    + utf8Bytes(gapHunterPrompt(path, plan, rs, fs));
+    + utf8Encode(gapHunterPrompt(path, plan, rs, fs)).length;
   const fits = (rs, fs, budget = READ_PLAN_MAX_BYTES) => cost(rs, fs) <= budget
     && assignmentReads(rs, fs).reduce((n, read) => n + read.limit, 0) <= READ_PLAN_MAX_LINES;
   for (const r of ordered) if (fits([...regions, r], facts, Math.floor(READ_PLAN_MAX_BYTES * .75))) regions.push(r);
@@ -123,9 +123,16 @@ export function selectGapAssignment(path, plan, ledger, riskTable = [], enabled 
     omitted_fact_packets: (plan?.fact_packets?.length || 0) - facts.length };
 }
 
-export function boundedCoverageLedger(ledger, budget = READ_PLAN_MAX_BYTES) {
+// Trace detail has its own allocation; it is independent of a reviewer Read limit.
+export const COVERAGE_LEDGER_CHAR_BUDGET = 128000;
+export function boundedCoverageLedger(ledger, budget = COVERAGE_LEDGER_CHAR_BUDGET) {
   if (JSON.stringify(ledger).length <= budget) return ledger;
-  return { version: 2, status: 'trimmed', region_count: ledger.region_count ?? ledger.regions.length,
+  const summary = { version: 2, status: 'trimmed', region_count: ledger.region_count ?? ledger.regions.length,
     uncovered_count: ledger.uncovered_count ?? ledger.uncovered.length,
-    omitted_count: ledger.omitted_count ?? ledger.omitted.length };
+    omitted_count: ledger.omitted_count ?? ledger.omitted.length, hunter_count: ledger.hunter_count ?? ledger.hunters.length,
+    hunters: [...ledger.hunters], omitted: [...ledger.omitted], budget_bytes: ledger.budget_bytes,
+    assigned_bytes: ledger.assigned_bytes, omitted_fact_packets: ledger.omitted_fact_packets };
+  while (JSON.stringify(summary).length > budget && summary.omitted.length) summary.omitted.length = Math.floor(summary.omitted.length / 2);
+  while (JSON.stringify(summary).length > budget && summary.hunters.length) summary.hunters.length = Math.floor(summary.hunters.length / 2);
+  return summary;
 }

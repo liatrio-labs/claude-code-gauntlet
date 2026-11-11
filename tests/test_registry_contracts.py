@@ -351,6 +351,7 @@ def test_handwritten_field_tables():
         for row in registry()["dimensions"]
         for field in row["requiredWhenDimension"]
     }
+    conditional.add("change_relevance")
     for field, cells in canonical:
         assert cells[0] == registry()["propTypes"][field]
         expected = (

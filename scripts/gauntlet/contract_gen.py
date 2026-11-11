@@ -169,6 +169,7 @@ _REGISTRY_FIELDS = (
     "verifyFactProperties: m.VERIFY_FACT_PROPERTIES",
     "admissionStampProperties: m.ADMISSION_STAMP_PROPERTIES",
     "discoveryFindingTypes: m.DISCOVERY_FINDING_PROP_TYPES",
+    "discoveryIntakeRequirements: m.DISCOVERY_REQUIREMENTS",
     "resolvedSiteSchema: m.RESOLVED_SITE_SCHEMA",
     "deliveryGroupSchema: m.DELIVERY_GROUP_SCHEMA",
     "validationReturnProperties: m.VALIDATION_RETURN_PROPERTIES",
@@ -348,6 +349,11 @@ def field_required_status(
     for row in registry["dimensions"]:
         if field in row["requiredExtra"]:
             return "yes"
+    if any(
+        field in rule["required"]
+        for rule in registry.get("discoveryIntakeRequirements", [])
+    ):
+        return "conditional"
     for row in registry["dimensions"]:
         if field in row["requiredWhenDimension"]:
             return "conditional"

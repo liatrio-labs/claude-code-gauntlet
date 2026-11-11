@@ -104,6 +104,7 @@ export const FINDING_PROP_TYPES = deepFreeze({
   title: 'string', description: 'string', severity: 'string', confidence: 'number',
   dimension: 'string', origin: 'string', evidence: 'string',
   change_origin: { type: 'string', enum: ['introduced', 'moved_or_carried', 'pre_existing'], description: 'Relationship to this PR: introduced defect; defect in relocated, copied or newly relied-on code; or other pre-existing defect. Provenance is data, not a reason to omit a finding.' },
+  change_relevance: { type: 'string', minLength: 1, pattern: '\\S', description: 'How this change reaches or relies on the pre-existing code.' },
   anchor: { type: 'string', description: 'Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters.' },
   // Optional prose fields must be omitted when inapplicable; emitting null would violate their schema types.
   suggestion: 'string', claude_md_rule: 'string',
@@ -239,6 +240,8 @@ export const DIMENSIONS = deepFreeze([
   } : {}) },
   requiredWhenDimension: [...row.requiredWhenDimension, ...(row.admission ? [row.admission.field] : [])],
 })));
+
+export const DISCOVERY_REQUIREMENTS = deepFreeze([{ when: { change_origin: 'pre_existing' }, required: ['change_relevance'] }]);
 
 export const DISCOVERY_DISPATCHES = deepFreeze(['parallel', 'uncovered']);
 const DISCOVERY_REVIEWER_KEYS = ['agentType', 'dimension', 'dispatch', 'conditionalFlag', 'label', 'objective', 'tools', 'effort', 'color', 'modelOverride'];
@@ -620,6 +623,6 @@ export function identityCheck(identity, name, fields = PR_IDENTITY_FIELDS) {
 export const REPORT_PLACED_FIELDS = deepFreeze([
   'sites',
   'id', 'file', 'line_start', 'line_end', 'title', 'description', 'severity',
-  'confidence', 'dimension', 'origin', 'change_origin', 'evidence', 'suggestion',
+  'confidence', 'dimension', 'origin', 'change_origin', 'change_relevance', 'evidence', 'suggestion',
   'claude_md_rule', 'rule_source', 'spec_text', 'cross_file_refs',
 ]);

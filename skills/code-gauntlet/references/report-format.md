@@ -80,6 +80,7 @@ The pipeline's declaration lives in `workflows/src/registry.js`. A field this ta
 | `evidence` | string | yes | Code snippet or behavior demonstrating the issue. Required and non-empty in the discovery schema. |
 | `anchor` | string | yes | Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters. |
 | `change_origin` | string | yes | Relationship to this PR: introduced defect; defect in relocated, copied or newly relied-on code; or other pre-existing defect. Provenance is data, not a reason to omit a finding. |
+| `change_relevance` | string | conditional | How this change reaches or relies on the pre-existing code. |
 | `suggested_fix_code` | string | no | Complete replacement for file lines line_start through line_end, including indentation; include line_end. Omit if uncertain or incomplete. |
 | `sites` | array | no | Additional locations of this issue. |
 | `suggestion` | string | no | Prose fix advice; rendered by `post_review.py` as a "Suggested fix:" block. |

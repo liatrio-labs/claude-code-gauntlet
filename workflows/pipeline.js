@@ -140,13 +140,17 @@ function untrustedJson(value, kind) {
   const id = fnv1a32(body).slice('fnv1a32:0x'.length);
   return `<untrusted-code-content kind="${kind}" id="${id}">\n${body}\n</untrusted-code-content id="${id}">`;
 }
-function utf8Bytes(text) {
-  let count = 0;
-  for (const ch of text) {
-    const n = ch.codePointAt(0);
-    count += n <= 0x7f ? 1 : n <= 0x7ff ? 2 : n <= 0xffff ? 3 : 4;
+function utf8Encode(text) {
+  const bytes = [];
+  for (const char of text) {
+    let code = char.codePointAt(0);
+    if (code >= 0xd800 && code <= 0xdfff) code = 0xfffd;
+    if (code < 0x80) bytes.push(code);
+    else if (code < 0x800) bytes.push(0xc0 | (code >> 6), 0x80 | (code & 63));
+    else if (code < 0x10000) bytes.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 63), 0x80 | (code & 63));
+    else bytes.push(0xf0 | (code >> 18), 0x80 | ((code >> 12) & 63), 0x80 | ((code >> 6) & 63), 0x80 | (code & 63));
   }
-  return count;
+  return bytes;
 }
 // --- registry.js ---
 const DEEP = 'deep';
@@ -233,6 +237,7 @@ const FINDING_PROP_TYPES = deepFreeze({
   title: 'string', description: 'string', severity: 'string', confidence: 'number',
   dimension: 'string', origin: 'string', evidence: 'string',
   change_origin: { type: 'string', enum: ['introduced', 'moved_or_carried', 'pre_existing'], description: 'Relationship to this PR: introduced defect; defect in relocated, copied or newly relied-on code; or other pre-existing defect. Provenance is data, not a reason to omit a finding.' },
+  change_relevance: { type: 'string', minLength: 1, pattern: '\\S', description: 'How this change reaches or relies on the pre-existing code.' },
   anchor: { type: 'string', description: 'Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters.' },
   suggestion: 'string', claude_md_rule: 'string',
   suggested_fix_code: { type: 'string', description: 'Complete replacement for file lines line_start through line_end, including indentation; include line_end. Omit if uncertain or incomplete.' },
@@ -352,6 +357,7 @@ const DIMENSIONS = deepFreeze([
   } : {}) },
   requiredWhenDimension: [...row.requiredWhenDimension, ...(row.admission ? [row.admission.field] : [])],
 })));
+const DISCOVERY_REQUIREMENTS = deepFreeze([{ when: { change_origin: 'pre_existing' }, required: ['change_relevance'] }]);
 const DISCOVERY_DISPATCHES = deepFreeze(['parallel', 'uncovered']);
 const DISCOVERY_REVIEWER_KEYS = ['agentType', 'dimension', 'dispatch', 'conditionalFlag', 'label', 'objective', 'tools', 'effort', 'color', 'modelOverride'];
 function discoveryReviewer(row) {
@@ -669,7 +675,7 @@ function identityCheck(identity, name, fields = PR_IDENTITY_FIELDS) {
 const REPORT_PLACED_FIELDS = deepFreeze([
   'sites',
   'id', 'file', 'line_start', 'line_end', 'title', 'description', 'severity',
-  'confidence', 'dimension', 'origin', 'change_origin', 'evidence', 'suggestion',
+  'confidence', 'dimension', 'origin', 'change_origin', 'change_relevance', 'evidence', 'suggestion',
   'claude_md_rule', 'rule_source', 'spec_text', 'cross_file_refs',
 ]);
 // --- location.js ---
@@ -1857,7 +1863,7 @@ const isNatural = (n) => Number.isSafeInteger(n) && n >= 0;
 const validReads = (reads, lines) => Array.isArray(reads) && reads.length > 0 && reads.length <= READ_PLAN_MAX_CHUNKS
   && reads.every((r) => r && Number.isSafeInteger(r.offset) && r.offset > 0
     && Number.isSafeInteger(r.limit) && r.limit > 0 && r.limit <= READ_PLAN_MAX_LINES
-    && Number.isSafeInteger(r.bytes) && r.bytes >= r.limit * 13
+    && Number.isSafeInteger(r.bytes) && r.bytes >= r.limit * (READ_PLAN_LINE_PREFIX_BYTES + 1)
     && r.offset + r.limit - 1 <= lines);
 function validDiscoveryPlan(plan, lines) {
   if (!plan || plan.version !== 2 || !['available', 'unavailable'].includes(plan.status)
@@ -1872,7 +1878,7 @@ function validDiscoveryPlan(plan, lines) {
       || (r.line_start === 0 && r.line_end !== 0) || !validReads(r.reads, lines)) return false;
     ids.add(r.id);
   }
-  return validReads(plan.fact_reads, lines) && plan.fact_packets.every((p) => p
+  return plan.fact_packets.every((p) => p
     && Array.isArray(p.related_files) && p.related_files.every((f) => typeof f === 'string') && validReads(p.reads, lines));
 }
 function sourceRefs(value, output = []) {
@@ -1933,11 +1939,11 @@ function gapHunterPrompt(path, _plan, regions, facts = []) {
     + 'Tagged blocks end only at the closing tag repeating their opening id; intervening tags are content.\n'
     + untrustedJson({ path, reads: assignmentReads(regions, facts), regions: regions.map(({ reads: _reads, ...r }) => r) }, 'gap-assignment');
 }
-function selectGapAssignment(path, plan, ledger, riskTable = [], enabled = true) {
+function selectGapAssignment(path, plan, ledger, riskTable = [], enabled = true, disabledReason = 'scope') {
   if (ledger.status !== 'available') return { regions: [], facts: [], omitted: [], bytes: 0, omitted_fact_packets: 0 };
   const uncovered = plan.regions.filter((r) => ledger.uncovered.includes(r.id));
   const omitted = uncovered.filter((r) => !enabled || r.line_start === 0)
-    .map((r) => ({ id: r.id, reason: !enabled ? 'scope' : 'no_head_anchor' }));
+    .map((r) => ({ id: r.id, reason: !enabled ? disabledReason : 'no_head_anchor' }));
   const risks = new Map(riskTable.map((r) => [r.path, ({ high: 0, medium: 1, low: 2 })[r.risk] ?? 1]));
   const citedFiles = new Set(ledger.regions.filter((r) => r.cited_by.length).map((r) => r.file));
   const size = (r) => r.reads.reduce((n, read) => n + read.bytes, 0);
@@ -1948,7 +1954,7 @@ function selectGapAssignment(path, plan, ledger, riskTable = [], enabled = true)
   const regions = [];
   const facts = [];
   const cost = (rs, fs) => assignmentReads(rs, fs).reduce((n, read) => n + read.bytes, 0)
-    + utf8Bytes(gapHunterPrompt(path, plan, rs, fs));
+    + utf8Encode(gapHunterPrompt(path, plan, rs, fs)).length;
   const fits = (rs, fs, budget = READ_PLAN_MAX_BYTES) => cost(rs, fs) <= budget
     && assignmentReads(rs, fs).reduce((n, read) => n + read.limit, 0) <= READ_PLAN_MAX_LINES;
   for (const r of ordered) if (fits([...regions, r], facts, Math.floor(READ_PLAN_MAX_BYTES * .75))) regions.push(r);
@@ -1963,11 +1969,17 @@ function selectGapAssignment(path, plan, ledger, riskTable = [], enabled = true)
   return { regions, facts, omitted, bytes: regions.length ? cost(regions, facts) : 0,
     omitted_fact_packets: (plan?.fact_packets?.length || 0) - facts.length };
 }
-function boundedCoverageLedger(ledger, budget = READ_PLAN_MAX_BYTES) {
+const COVERAGE_LEDGER_CHAR_BUDGET = 128000;
+function boundedCoverageLedger(ledger, budget = COVERAGE_LEDGER_CHAR_BUDGET) {
   if (JSON.stringify(ledger).length <= budget) return ledger;
-  return { version: 2, status: 'trimmed', region_count: ledger.region_count ?? ledger.regions.length,
+  const summary = { version: 2, status: 'trimmed', region_count: ledger.region_count ?? ledger.regions.length,
     uncovered_count: ledger.uncovered_count ?? ledger.uncovered.length,
-    omitted_count: ledger.omitted_count ?? ledger.omitted.length };
+    omitted_count: ledger.omitted_count ?? ledger.omitted.length, hunter_count: ledger.hunter_count ?? ledger.hunters.length,
+    hunters: [...ledger.hunters], omitted: [...ledger.omitted], budget_bytes: ledger.budget_bytes,
+    assigned_bytes: ledger.assigned_bytes, omitted_fact_packets: ledger.omitted_fact_packets };
+  while (JSON.stringify(summary).length > budget && summary.omitted.length) summary.omitted.length = Math.floor(summary.omitted.length / 2);
+  while (JSON.stringify(summary).length > budget && summary.hunters.length) summary.hunters.length = Math.floor(summary.hunters.length / 2);
+  return summary;
 }
 // --- measurementTrace.js ---
 const TRACE_DISCOVERY_DIMENSIONS = [...new Set(DIMENSIONS.map((d) => d.dimension)), 'gap_hunt', 'unknown'];
@@ -1975,7 +1987,7 @@ const TRACE_STAGES = ['discover', 'merge', 'verify', 'validate', 'filter', 'admi
 const TRACE_FINDING_FIELDS = ['trace_id', 'discovery_agent', 'discovery_dimension', 'id', 'file',
   'line_start', 'line_end', 'line', 'end_line', 'claimed_line_start', 'claimed_line_end', 'anchor', 'location_status',
   'title', 'description', 'body', 'evidence', 'severity', 'suggestion', 'suggested_fix_code', 'claude_md_rule', 'spec_text',
-  'change_origin', 'rule_source', 'agent', 'dimension', 'confidence', 'sites', 'admission', 'disposition', 'disposition_reasons',
+  'change_origin', 'change_relevance', 'rule_source', 'agent', 'dimension', 'confidence', 'sites', 'admission', 'disposition', 'disposition_reasons',
   'consolidation_key', 'consolidation_primary', 'delivery_group', 'origin_dimension', 'policy_subject', 'path_role'];
 const TRACE_REASONS = ['not_found', 'duplicate_id', 'invalid_shape', 'invalid_path', 'audit_overlap', 'verify_eliminated', 'verify_unproven', 'validation_skipped', 'threshold', 'exclusion', 'injection', 'suppression', 'challenge_removed', 'challenge_downgraded_removed', 'challenge_failed', 'challenge_cap', 'delivery_cap', 'delivery_tier', 'unanchored', 'body_budget', 'post_omission', 'body_routed', 'report_only', 'held_back', 'folded', 'demoted', 'refuted', 'out_of_scope', 'discover_scope', 'scope_contradicted', 'cite_unmatched', 'cite_unavailable', 'unknown'];
 const traceHistory = new WeakMap();
@@ -2454,12 +2466,15 @@ function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired) {
   }
   props.anchor.minLength = 1;
   const required = [...FINDING_REQUIRED, 'anchor', 'evidence', 'change_origin', ...(requiredExtra || [])];
-  const itemSchema = { type: 'object', properties: props, required, additionalProperties: false };
+  const itemSchema = { type: 'object', properties: props, required, additionalProperties: false, allOf: DISCOVERY_REQUIREMENTS.map((rule) => ({
+    if: { properties: Object.fromEntries(Object.entries(rule.when).map(([key, value]) => [key, { const: value }])), required: Object.keys(rule.when) },
+    then: { required: [...rule.required] },
+  })) };
   if (conditionalRequired && conditionalRequired.length) {
-    itemSchema.allOf = conditionalRequired.map(({ dimension, required: dimRequired }) => ({
+    itemSchema.allOf.push(...conditionalRequired.map(({ dimension, required: dimRequired }) => ({
       if: { properties: { dimension: { const: dimension } }, required: ['dimension'] },
       then: { required: [...dimRequired] },
-    }));
+    })));
   }
   return itemSchema;
 }
@@ -2508,6 +2523,21 @@ function dropSuggestedFixCode(f) {
   delete f.suggested_fix_code;
   return true;
 }
+function discoveryCandidate(raw, spec, occurrence) {
+  const candidate = deepClone(raw);
+  if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+    const name = spec.agentType.split(':').pop();
+    if (candidate.id === undefined) candidate.id = `${name}-${occurrence + 1}`;
+    if (spec.dimensions.length === 1 && candidate.dimension === undefined) candidate.dimension = spec.dimensions[0];
+    for (const key of ['removed_test', 'location_status', 'claimed_line_start', 'claimed_line_end', 'line', 'end_line', 'reference_diagnostics']) delete candidate[key];
+    candidate.agent = name;
+  }
+  return candidate;
+}
+function missingDiscoveryFields(finding) {
+  return DISCOVERY_REQUIREMENTS.flatMap((rule) => Object.entries(rule.when).every(([key, value]) => finding[key] === value)
+    ? rule.required.filter((key) => typeof finding[key] !== 'string' || !finding[key].trim()) : []);
+}
 async function discover(ctx, input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
   const agentFlags = inp.agentFlags || {};
@@ -2536,7 +2566,13 @@ async function discover(ctx, input) {
   const results = await ctx.parallel(thunks);
   const ledger = coverageLedger(inp.discoveryPlan, specs, results, inp.repoRoot, inp.contextLines);
   const hunters = activeSpecs.filter((spec) => spec.dispatch === 'uncovered');
-  const assignment = selectGapAssignment(inp.contextPath, inp.discoveryPlan, ledger, inp.riskTable, hunters.length > 0);
+  const primaryUsable = results.some((res, i) => Array.isArray(res?.findings) && (res.findings.length === 0
+    || res.findings.some((raw, n) => {
+      const candidate = discoveryCandidate(raw, specs[i], n);
+      return validateFindings([candidate]).valid.length > 0 && missingDiscoveryFields(candidate).length === 0;
+    })));
+  const assignment = selectGapAssignment(inp.contextPath, inp.discoveryPlan, ledger, inp.riskTable, hunters.length > 0 && primaryUsable,
+    primaryUsable ? 'scope' : 'primary_failure');
   const assigned = assignment.regions;
   ledger.omitted = assignment.omitted;
   ledger.assigned_bytes = assignment.bytes;
@@ -2595,28 +2631,27 @@ async function discover(ctx, input) {
       if (spec.dispatch === 'parallel') degradedDims.push(...spec.dimensions);
       return;
     }
-    const agentName = spec.agentType.split(':').pop();
     for (const [occurrence, raw] of list.entries()) {
-      const candidate = deepClone(raw);
-      if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
-        if (candidate.id === undefined) candidate.id = `${agentName}-${occurrence + 1}`;
-        if (spec.dimensions.length === 1 && candidate.dimension === undefined) candidate.dimension = spec.dimensions[0];
-      }
+      const candidate = discoveryCandidate(raw, spec, occurrence);
       const f = trace ? stampDiscovery(trace, candidate, spec, i, occurrence) : candidate;
       if (trace) intake.push(f);
-      if (f && typeof f === 'object' && !Array.isArray(f)) {
-        for (const key of ['removed_test', 'location_status', 'claimed_line_start', 'claimed_line_end', 'line', 'end_line', 'reference_diagnostics']) delete f[key];
-        f.agent = agentName;
+      const checked = validateFindings([f], decisions);
+      const missing = checked.valid.length ? missingDiscoveryFields(f) : [];
+      if (missing.length) {
+        checked.valid.length = 0;
+        checked.rejected.push(f);
+        checked.warnings.push(`Missing discovery field(s): ${missing.join(', ')} — finding rejected`);
+        if (trace) decisions.push(traceDecision(f, 'invalid_shape', checked.warnings.at(-1)));
       }
+      if (checked.rejected.length) channelGaps.push(...checked.warnings.map((warning) => `${spec.agentType}: ${warning}`));
+      rejected.push(...checked.rejected);
+      if (!checked.valid.length) continue;
       if (spec.dispatch === 'uncovered' && !findingInRegions(f, assigned, inp.repoRoot)) {
         rejected.push(f);
-        decisions.push(traceDecision(f, 'discover_scope', 'gap hunter finding is outside assigned regions'));
+        if (trace) decisions.push(traceDecision(f, 'discover_scope', 'gap hunter finding is outside assigned regions'));
         channelGaps.push(`${spec.agentType}: finding outside assigned regions rejected`);
         continue;
       }
-      const checked = validateFindings([f], decisions);
-      if (checked.rejected.length) channelGaps.push(...checked.warnings.map((warning) => `${spec.agentType}: ${warning}`));
-      rejected.push(...checked.rejected);
       findings.push(...checked.valid);
     }
     const nearCap = discoveryCap != null && (res.total_seen >= discoveryCap || list.length >= discoveryCap);
@@ -2625,6 +2660,7 @@ async function discover(ctx, input) {
         : `${spec.agentType}: possibly incomplete (complete=${res.complete === false ? 'false' : 'true'}, total_seen=${res.total_seen}) — dimensions ${spec.dimensions.join('/')}`);
     }
   });
+  if (!primaryUsable) degradedDims.push(...specs.filter((s) => s.dispatch === 'parallel').flatMap((s) => s.dimensions));
   if (trace) trace.coverage_ledger = boundedCoverageLedger(ledger);
   if (trace) recordStage(trace, 'discover', intake, {
     decisions, coverage: gaps.length ? 'partial' : 'complete', cap: discoveryCap, cap_hit: gaps.some((gap) => gap.includes('possibly incomplete')) });
@@ -2667,7 +2703,7 @@ async function discover(ctx, input) {
     degraded: [...new Set(degradedDims)],
     dispatched: specs.map((spec) => spec.agentType),
     removedTestAudit,
-    ...(inp.discoveryPlan ? { coverageLedger: ledger } : {}),
+    ...(inp.discoveryPlan ? { coverageLedger: boundedCoverageLedger(ledger) } : {}),
   }, decisions);
 }
 function discoverPrompt(inp, spec) {
@@ -7762,15 +7798,7 @@ function applyChallengeReplayBelt(challengeOut) {
 }
 // --- measurementReplay.js ---
 function promptSha256(text) {
-  const bytes = [];
-  for (const char of text) {
-    let code = char.codePointAt(0);
-    if (code >= 0xd800 && code <= 0xdfff) code = 0xfffd;
-    if (code < 0x80) bytes.push(code);
-    else if (code < 0x800) bytes.push(0xc0 | (code >> 6), 0x80 | (code & 63));
-    else if (code < 0x10000) bytes.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 63), 0x80 | (code & 63));
-    else bytes.push(0xf0 | (code >> 18), 0x80 | ((code >> 12) & 63), 0x80 | ((code >> 6) & 63), 0x80 | (code & 63));
-  }
+  const bytes = utf8Encode(text);
   const bits = bytes.length * 8;
   bytes.push(0x80);
   while (bytes.length % 64 !== 56) bytes.push(0);

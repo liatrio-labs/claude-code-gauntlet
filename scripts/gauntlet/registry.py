@@ -293,6 +293,7 @@ TRACE_FINDING_FIELDS: tuple[str, ...] = (
     "claude_md_rule",
     "spec_text",
     "change_origin",
+    "change_relevance",
     "rule_source",
     "agent",
     "dimension",
@@ -1843,6 +1844,7 @@ class FindingMetadata(FindingFacts, total=False):
     origin: str
     evidence: str
     change_origin: ChangeOrigin
+    change_relevance: str
     anchor: str
     suggestion: str
     claude_md_rule: str

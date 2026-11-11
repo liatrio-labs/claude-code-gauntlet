@@ -174,11 +174,36 @@ def test_run_preserves_subprocess_failure_types(monkeypatch, failure):
 
 
 def test_bounded_capture_stops_before_materialising_unlimited_child_output(tmp_path):
+    marker = tmp_path / "finished"
     result = proc.run_bounded_bytes(
-        [sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'x' * 1000000)"],
+        [
+            sys.executable,
+            "-c",
+            "import sys; from pathlib import Path; sys.stdout.buffer.write(b'x' * 16000000); sys.stdout.flush(); Path(sys.argv[1]).touch()",
+            str(marker),
+        ],
         cwd=str(tmp_path),
         timeout=5,
         max_output=100,
     )
-    assert result.truncated
-    assert result.stdout == b"x" * 100
+    assert result.truncated and result.stdout == b"x" * 100
+    assert result.returncode != 0 and not marker.exists()
+
+
+def test_bounded_capture_deadline_kills_a_child_blocked_without_output(tmp_path):
+    marker = tmp_path / "started"
+    finished = tmp_path / "finished"
+    with pytest.raises(proc.TimeoutExpired):
+        proc.run_bounded_bytes(
+            [
+                sys.executable,
+                "-c",
+                "import sys, threading; from pathlib import Path; Path(sys.argv[1]).touch(); threading.Event().wait(1.5); Path(sys.argv[2]).touch()",
+                str(marker),
+                str(finished),
+            ],
+            cwd=str(tmp_path),
+            timeout=0.5,
+            max_output=100,
+        )
+    assert marker.exists() and not finished.exists()

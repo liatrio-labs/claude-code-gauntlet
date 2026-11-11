@@ -1331,10 +1331,10 @@ const POLICY_ROWS = [
   { name: 'default claude pin and conditional schema', policy: {},
     expected: { subagentModel: null, provider: 'firstParty', gateway: false, mappedAliases: [], conditionalSchema: true },
     models: ['claude-opus-5-5', 'claude-sonnet-5-5'], conditional: true },
-  { name: 'gateway keeps claude pin and flat schema', policy: { tier: 'optimized', subagentModel: null, gateway: true },
+  { name: 'gateway keeps claude pin and disables dimension rules', policy: { tier: 'optimized', subagentModel: null, gateway: true },
     expected: { subagentModel: null, provider: 'firstParty', gateway: true, mappedAliases: [], conditionalSchema: false },
     models: ['claude-opus-5-5', 'claude-sonnet-5-5'], conditional: false },
-  { name: 'bedrock alias and flat schema', policy: { tier: 'optimized', subagentModel: null, provider: 'bedrock', gateway: false },
+  { name: 'bedrock alias and disabled dimension rules', policy: { tier: 'optimized', subagentModel: null, provider: 'bedrock', gateway: false },
     expected: { subagentModel: null, provider: 'bedrock', gateway: false, mappedAliases: [], conditionalSchema: false },
     models: ['opus', 'sonnet'], conditional: false },
 ];
@@ -1345,7 +1345,7 @@ for (const row of POLICY_ROWS) test(`policy wiring: ${row.name}`, async () => {
   assert.deepEqual([...new Set(ctx.calls.map((call) => call.model))].sort(), row.models);
   const items = ctx.calls.find((call) => call.agentType === 'code-gauntlet:conventions-and-intent').schema.properties.findings.items;
   if (row.conditional) assert.equal(Array.isArray(items.allOf), true);
-  else assert.equal(items.allOf, undefined);
+  else assert.equal(items.allOf.length, 1);
 });
 
 const UNMEASURED_GAP = 'context_unmeasured: no usable args.contextLines was stamped, so the shared-context read plan could not be computed '
@@ -1745,7 +1745,7 @@ for (const input of [
 
 test('run transports prepared region coverage into conditional discovery and its measurement', async () => {
   const A = validArgs({ measurementTrace: true, contextLines: 10,
-    discoveryPlan: { version: 2, status: 'available', fact_reads: [{ offset: 1, limit: 2, bytes: 80 }], fact_packets: [],
+    discoveryPlan: { version: 2, status: 'available', fact_packets: [],
       regions: [{ id: 'only', file: 'a.js', line_start: 1, line_end: 2, reads: [{ offset: 5, limit: 2, bytes: 80 }] }] } });
   const ctx = makeCtx(A, { findings: [] });
   const result = await runWith(ctx, A);
@@ -1754,7 +1754,7 @@ test('run transports prepared region coverage into conditional discovery and its
   assert.ok(hunter.prompt.includes(`${A.outputDir}/code-gauntlet-context-${A.headShaShort}.md`));
   assert.equal(result.measurement.status, 'available');
   assert.deepEqual(JSON.parse(result.measurement.text).coverage_ledger.uncovered, ['only']);
-  const invalid = await runWith(makeCtx(A), { ...A, discoveryPlan: { ...A.discoveryPlan, fact_reads: [{ offset: 10, limit: 2 }] } });
+  const invalid = await runWith(makeCtx(A), { ...A, discoveryPlan: { ...A.discoveryPlan, fact_packets: [{ related_files: [], reads: [{offset:10,limit:2,bytes:80}]}] } });
   assert.equal(invalid.ok, true);
   assert.ok(invalid.gaps.some((gap) => gap.includes('coverage unavailable')));
 });
@@ -1762,7 +1762,7 @@ test('run transports prepared region coverage into conditional discovery and its
 test('the whole preparation receipt carries the optional discovery plan without individual copies', async () => {
   const A = validArgs({ contextReceipt: { contextLines: 10, contextChars: 200, contextMaxLineChars: 20,
     contextReadPlanVersion: 1, contextReadChunks: [10],
-    discoveryPlan: { version: 2, status: 'available', fact_reads: [{ offset: 1, limit: 2, bytes: 80 }], fact_packets: [],
+    discoveryPlan: { version: 2, status: 'available', fact_packets: [],
       regions: [{ id: 'receipt', file: 'a.js', line_start: 1, line_end: 2, reads: [{ offset: 5, limit: 2, bytes: 80 }] }] } } });
   const ctx = makeCtx(A, { findings: [] });
   const result = await runWith(ctx, A);

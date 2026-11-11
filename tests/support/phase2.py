@@ -35,3 +35,12 @@ def write_context_inputs(
         (output_dir / f"code-gauntlet-project-rules-{sha}.md").write_bytes(rules)
     if diff is not None:
         (output_dir / f"code-gauntlet-diff-{sha}.patch").write_bytes(diff)
+
+
+def fact_card_payload(content: bytes | str) -> bytes:
+    raw = content.encode() if isinstance(content, str) else content
+    match = re.search(
+        rb'kind="fact-cards"[^>]*>\n(.*?)\n</untrusted-code-content', raw, re.S
+    )
+    assert match is not None, "prepared context has no fact-card frame"
+    return match[1]
