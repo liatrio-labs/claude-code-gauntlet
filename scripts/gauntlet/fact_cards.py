@@ -298,14 +298,22 @@ def build_fact_cards(
     }
     names = {call.rsplit(".", 1)[-1] for call in calls}
     occurrences: Counter[str] = Counter()
-    for file, lines in loaded.items():
+    for file, lines in loaded.items() if names else ():
         if time.monotonic() >= deadline:
             scan["deadline_reached"] = result["scan_limited"] = True
             break
         for n, line in enumerate(lines):
-            if n % 128 == 0 and time.monotonic() >= deadline:
+            if time.monotonic() >= deadline:
                 scan["deadline_reached"] = result["scan_limited"] = True
                 break
+            # Bound regex work before encoding or scanning generated/minified lines.
+            if (
+                len(line) > MAX_CALL_LINE_BYTES
+                or len(line.encode("utf-8")) > MAX_CALL_LINE_BYTES
+            ):
+                scan["oversize"] += 1
+                result["scan_limited"] = True
+                continue
             for match in _CALL.finditer(line):
                 token = match[1]
                 name = token.rsplit(".", 1)[-1]
