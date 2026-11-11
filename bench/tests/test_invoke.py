@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import ClassVar
 from unittest.mock import patch
 
+import pytest
+
 from bench.runner import invoke
 from bench.runner.costs import parse_costs
 from bench.runner.invoke import InvokeResult, build_env, invoke_review
@@ -172,6 +174,30 @@ def test_build_env_strips_model_mappings_in_both_auth_modes(tmp_path, monkeypatc
         assert all(f"ANTHROPIC_DEFAULT_{alias}_MODEL" not in env for alias in aliases)
         assert env["KEEP"] == "preserved"
     assert all(f"ANTHROPIC_DEFAULT_{alias}_MODEL" in ambient for alias in aliases)
+
+
+@pytest.mark.parametrize("auth_mode", ["api", "subscription"])
+@pytest.mark.parametrize(
+    "key",
+    [
+        "CLAUDE_CODE_EFFORT_LEVEL",
+        "CLAUDE_CODE_SUBAGENT_EFFORT",
+        "MAX_THINKING_TOKENS",
+    ],
+)
+def test_build_env_strips_effort_overrides_on_every_run(
+    tmp_path, monkeypatch, auth_mode, key
+):
+    monkeypatch.setattr(invoke, "_load_dotenv_key", lambda path, key: None)
+    ambient = {
+        key: "override",
+        "CLAUDE_CODE_OAUTH_TOKEN": "example-token",
+        "KEEP": "preserved",
+    }
+    env = build_env(PR, tmp_path / "run", ambient, child_auth=auth_mode)
+    assert key not in env
+    assert env["KEEP"] == "preserved"
+    assert ambient[key] == "override"
 
 
 class BuildEnvTest(InvokeTestBase):
