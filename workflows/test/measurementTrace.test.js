@@ -81,7 +81,7 @@ test('400 long claims retain discovery within the return budget and reuse versio
   assert.equal(out.measurement.status, 'available');
   assert.ok(JSON.stringify(out).length <= RETURN_CHAR_BUDGET);
   assert.equal(out.review, envelope.review);
-  const saved = JSON.parse(out.measurement.text);
+  const saved = decodeMeasurement(out.measurement);
   assert.deepEqual(saved.dropped_stages, []);
   assert.equal(saved.snapshots[0].coverage, 'complete');
   assert.equal(saved.snapshots[0].finding_version_ids.length, 400);

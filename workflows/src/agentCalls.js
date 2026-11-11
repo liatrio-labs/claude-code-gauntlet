@@ -24,7 +24,7 @@ export function defineAgentCall(name, schemaFor, variants = () => [[]]) {
   if (AGENT_CALLS.some((call) => call.name === name)) throw new Error(`Duplicate agent call ${name}`);
   AGENT_CALLS.push({ name, schemaFor, variants });
   return async (ctx, prompt, options, ...inputs) => {
-    const request = { stage: name === 'refutations' ? options.label.split('-')[0] : name.split(':')[0], error: null };
+    const request = { label: options.label, stage: name === 'refutations' ? options.label.split('-')[0] : name.split(':')[0], error: null };
     if (ctx.agentRequests) ctx.agentRequests.push(request);
     try {
       const schema = schemaFor(...inputs);
@@ -44,4 +44,10 @@ export function repeatedRequestGap(requests, stage) {
   return calls.length && error && /API Error:\s*400\b|invalid_request_error|input_schema/i.test(error)
     && calls.every((request) => request.error === error)
     ? `${stage}: all ${calls.length} agent requests failed with the same request error: ${error}` : null;
+}
+
+// Collapse only the call failures accounted for by the aggregate; other stage gaps remain evidence.
+export function requestFailureGaps(gaps, requests, stage, aggregate) {
+  const labels = new Set(requests.filter((request) => request.stage === stage).map((request) => request.label));
+  return [...gaps.filter((gap) => !labels.has(gap.slice(0, gap.indexOf(': ')))), aggregate];
 }

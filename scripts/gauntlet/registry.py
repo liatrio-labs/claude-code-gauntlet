@@ -130,7 +130,6 @@ _AdmissionAssessmentsItemPredicate_Literal = Literal[
     "concrete_equivalent",
     "behavior_preserved",
     "applicable",
-    "current_defect",
 ]
 _AdmissionAssessmentsItemStatus_Literal = Literal["confirmed", "rejected", "unresolved"]
 _AdmissionVersion_Literal = Literal[1]
@@ -988,7 +987,6 @@ DIMENSION_ROWS: list[DimensionRow] = [
                     "required": [],
                     "predicates": [],
                     "phase": "semantic",
-                    "defaultDisposition": "report_only",
                     "tier": "suggestion",
                 },
             },
@@ -1140,7 +1138,6 @@ DIMENSION_ROWS: list[DimensionRow] = [
                     "required": [],
                     "predicates": [],
                     "phase": "semantic",
-                    "defaultDisposition": "report_only",
                     "tier": "suggestion",
                 },
             },

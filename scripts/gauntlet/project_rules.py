@@ -18,6 +18,7 @@ from gauntlet.cli import Command, Parser
 from gauntlet.framing import frame
 from gauntlet.fs import confined, read_json, read_text, write_atomic
 from gauntlet.markdown import blocks, span_close, tick_run_index
+from gauntlet.retired_settings import has_retired_settings
 
 SkipReason = Literal[
     "missing",
@@ -32,46 +33,6 @@ SkipReason = Literal[
     "cycle",
     "duplicate_of",  # Same real path or comment-free, outer-stripped content.
 ]
-
-
-def has_retired_settings(text: str) -> bool:
-    tagged = re.search(
-        r"(?is)```(?:yaml)?\s*#?\s*(?:code-gauntlet|deep-review)[^\n]*\n.*?```|<!--\s*(?:code-gauntlet|deep-review)-config\s*\n.*?-->",
-        text,
-    )
-    if tagged:
-        return True
-    numeric = re.finditer(
-        r"(?im)^[ \t]*(?:confidence_threshold|security_min_confidence)\s*[:=]\s*([0-9]{1,3})(?![0-9])",
-        text,
-    )
-    if any(int(match[1]) <= 100 for match in numeric):
-        return True
-    if re.search(
-        r"(?im)^[ \t]*severity_threshold\s*[:=]\s*(?:critical|high|medium|low)", text
-    ):
-        return True
-    if re.search(r"(?im)^[ \t]*ignore\s*:\s*\n(?:[ \t]*-[^\n]*\n?)+", text):
-        return True
-    lines = re.split(r"\r\n|\r|\n", text)
-    for index, line in enumerate(lines):
-        if re.fullmatch(r"## Default Delivery[ \t]*", line):
-            body = []
-            for following in lines[index + 1 :]:
-                if re.match(r"^#{1,6}[ \t]|^[ \t]{0,3}(?:`{3,}|~{3,})", following):
-                    break
-                body.append(following)
-            content = re.sub(r"<!--.*?-->", "", "\n".join(body), flags=re.S)
-            candidate = next(
-                (
-                    value.strip()
-                    for value in re.split(r"\r\n|\r|\n", content)
-                    if value.strip()
-                ),
-                "",
-            )
-            return re.fullmatch(r"[a-z_]+(?:,[a-z_]+)*", candidate) is not None
-    return False
 
 
 class _RequiredSkip(TypedDict):
@@ -348,12 +309,18 @@ class RuleCollector:
             )
 
 
-_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
-
-
 def _effective(text: str) -> str:
     """Fingerprint the comment-free view Claude Code reads; emit verbatim text."""
-    return _HTML_COMMENT_RE.sub("", text).strip()
+    parts = []
+    cursor = 0
+    while True:
+        start = text.find("<!--", cursor)
+        end = text.find("-->", start + 4) if start >= 0 else -1
+        if end < 0:
+            parts.append(text[cursor:])
+            return "".join(parts).strip()
+        parts.append(text[cursor:start])
+        cursor = end + 3
 
 
 def _search_dirs(repo_root: str, changed_files: Sequence[str]) -> list[str]:

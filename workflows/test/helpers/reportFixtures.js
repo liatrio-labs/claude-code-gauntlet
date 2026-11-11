@@ -7,7 +7,10 @@ export function corpus(name) {
 }
 
 export function finding(id, overrides = {}) {
-  return makeFinding(id, { disposition: 'deliver', evidence: '', ...overrides });
+  const raw = makeFinding(id);
+  delete raw.verdict;
+  delete raw.verdict_route;
+  return { ...raw, disposition: 'deliver', evidence: '', ...overrides };
 }
 
 export function reportInput(overrides = {}) {

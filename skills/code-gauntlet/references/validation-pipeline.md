@@ -106,7 +106,7 @@ artifact paths (documentation, data and repository rules). No external classifie
 undecodable source is reported as a gap. Incremental reviews use the full local base-to-captured-head range; an
 unavailable base prevents verification and produces a gap. Security findings go to blind
 challenge after a validator refutation. Only two independently verified refutations eliminate;
-a single refutation stays report-only at main tier, without asserting low impact.
+a single verified refutation stays report-only at main tier, without asserting low impact.
 
 One smaller retry round repairs missing, duplicate or malformed typed returns. A persistent
 failure records `validation=skipped` and proceeds as not established. Unknown Verify origins
@@ -124,19 +124,18 @@ The registry routes truth and consequence independently:
 | Refuted without verified counter-evidence | `not-established` |
 | Confirmed present failure | `posted` at its severity |
 | Confirmed latent consequence | `posted-latent`, low severity, suggestion tier |
-| Confirmed artifact defect, admitted for its finding kind | `posted-artifact`, low severity |
+| Confirmed artifact defect | `posted-artifact`, low severity |
 | Confirmed no practical effect | `report-only` |
 | Not established or absent verdict | `not-established` |
 
-These are eligibility routes before challenge and delivery. Injection checks still apply.
+These are eligibility routes before challenge and delivery. Every posting route retains factual and deterministic kind gates. Injection checks still apply.
 REVIEW.md is prose project rules, with no settings parser, thresholds, ignore lists, exclusions,
 or per-directory overrides. A retired config block produces one local notice.
 
 ## Admission (`evaluateAdmission`)
 
 For typed findings, admission projects the route table into existing delivery rights and retains
-source-verification safeguards. It does not make a second posting-value judgment. The old
-predicate reducer remains only for reading existing checkpoints without typed verdicts.
+source-verification safeguards. It does not make a second posting-value judgment. Missing or invalid typed verdicts use the unresolved route, including older checkpoints.
 
 ## Challenge stage (`challengeStage`)
 
@@ -144,8 +143,9 @@ The existing blind challenger checks admitted findings and unresolved validation
 `limits.challengeCap`. Its allowlist supplies only title, description and location (and the saved
 diff for deleted tests), withholding upstream verdicts and reasoning. It returns the same typed
 schema and uses the same code citation check and routing table. A successful independent check
-can establish an unresolved finding; unresolved results and failed or capped calls stay local as
-held back. Consequence-based report-only findings also receive blind challenge. Finding-kind
+can establish an unresolved finding, including one skipped after validator dispatch failure.
+The validator skip remains recorded. Unresolved results and failed or capped calls stay local
+as held back. Consequence-based report-only findings also receive blind challenge. Finding-kind
 admission failures remain local.
 
 One ranking orders severity, consequence seriousness, security, proven origin, main versus suggestion tier, inline

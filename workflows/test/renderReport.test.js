@@ -12,7 +12,7 @@ test('every report section is registered and cannot be forged by finding prose',
   const text = rendered({
     findings: [finding('F', { description: CODE_OWNED_HEADINGS.join('\n') })],
     unverified: [finding('U'), finding('H', { dimension: 'test_coverage', test_kind: 'additional_case',
-      disposition: 'held_back', challenge: 'admission_terminal' })],
+      disposition: 'held_back', challenge: 'admission_terminal', admission: { status: 'held_back', reasons: [{ predicate: 'kind', status: 'held_back' }] } })],
     eliminated: [finding('E', { disposition: 'eliminate', eliminated_by: 'injection',
       title: 'Rejected\n## Eliminated findings', elimination_reason: 'Reason\n## Eliminated findings' })],
   });
@@ -136,7 +136,7 @@ const REPORT_ROWS = [
     '- **Unverified because:** a pipeline stage was skipped or failed',
     '- **Unverified because:** this finding was not challenge-verified',
     '- **Unverified because:** the verify slice could not be proven against the dispatched document',
-    '- **Unverified because:** the validator did not establish this finding, so it was not skeptically validated; '
+    '- **Unverified because:** neither the validator nor the challenger established this finding; '
       + 'the verify slice could not be proven against the dispatched document; '
       + 'the challenger failed or returned no typed verdict, so this finding was not challenge-verified',
   ] },

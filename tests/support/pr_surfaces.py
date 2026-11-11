@@ -41,19 +41,15 @@ def render_pr_surfaces() -> RenderedSurfaces:
             severity="low",
             dimension="simplification",
             agent="code-simplifier",
-            quality_basis="simpler_equivalent",
-            title="The end-of-day check can reuse the shared `isBefore` helper",
-            body="The end-of-day comparison repeats the shared helper with the same inputs.",
-            suggestion="Reuse isBefore with the same timestamps.",
-            behavior_preserved="The shared helper compares the same two timestamps.",
-            admission_assessments=[
-                {"predicate": predicate, "status": status, "references": ["primary"]}
-                for predicate, status in [
-                    ("present_defect", "rejected"),
-                    ("concrete_equivalent", "confirmed"),
-                    ("behavior_preserved", "confirmed"),
-                ]
-            ],
+            quality_basis="current_correctness",
+            title="The end-of-day helper documents an inclusive bound that is exclusive",
+            body="The docstring says the end timestamp is included, but the comparison excludes it.",
+            suggestion="Document the exclusive end bound.",
+            verdict={
+                "claim": "confirmed",
+                "consequence": "artifact_defect",
+                "justification": "The documented comparison contradicts the helper.",
+            },
         ),
         finding(
             id="ZONE",
@@ -80,13 +76,16 @@ def render_pr_surfaces() -> RenderedSurfaces:
                 """
 import { disposeFindings } from './workflows/src/dispose.js';
 import { evaluateAdmission } from './workflows/src/admission.js';
+import { routeVerdict } from './workflows/src/verdict.js';
 import { renderPublicSummary, renderReport } from './workflows/src/renderReport.js';
 import { writerPayload } from './workflows/src/persistPlan.js';
 import { reportInput } from './workflows/test/helpers/reportFixtures.js';
 let source='';for await(const chunk of process.stdin)source+=chunk;
-const findings=JSON.parse(source).map(f=>evaluateAdmission({...f,description:f.body,
+const findings=JSON.parse(source).map(f=>{const typed={...f,description:f.body,
  origin:'new',validation:f.validation??'validated',challenge:'survived',path_role:'source',
- policy_subject:'ordinary',diff_validation:f.diff_validation??{in_diff:true},dimension:f.dimension??'bug',confidence:90}));
+ policy_subject:'ordinary',diff_validation:f.diff_validation??{in_diff:true},dimension:f.dimension??'bug',
+ verdict:f.verdict??(f.validation==='skipped'?undefined:{claim:'confirmed',consequence:'present_failure',justification:'Inspected caller failure'})};
+ routeVerdict(typed);return evaluateAdmission(typed);});
 const out=disposeFindings({findings,grouping_reply:{groups:[{
  finding_ids:findings.slice(0,4).map(f=>f.id)}]}});
 const input=reportInput({findings:out.findings,unverified:out.unverified,delivered:out.findings});

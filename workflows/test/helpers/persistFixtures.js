@@ -61,7 +61,7 @@ export function replaySurvivor() {
 }
 
 export function persistInput(over = {}) {
-  const findings = over.findings || [makeFinding('F1'), makeFinding('F2')].map(({ diff_validation: _diff,
+  const findings = over.findings || [makeFinding('F1'), makeFinding('F2')].map(({ verdict: _verdict, verdict_route: _route, diff_validation: _diff,
     path_role: _role, policy_subject: _subject, validation: _validation, challenge: _challenge, admission: _admission,
     body_fix_task_eligible: _eligible, report_tag: _tag, report_destination: _destination, ...finding }) => finding);
   return {

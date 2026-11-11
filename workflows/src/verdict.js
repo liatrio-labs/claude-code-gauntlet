@@ -1,9 +1,9 @@
 import { VERDICT_ROUTES, VERDICT_CASES, CONSEQUENCE_ORDER, VERDICT_SCHEMA, VERDICT_RESOLUTIONS } from './registry.js';
-import { schemaAccepts } from './schema.js';
+import { schemaErrors } from './schema.js';
 import { deepClone } from './wire.js';
 
 export function verdictRejections(value, schema = VERDICT_SCHEMA) {
-  return schemaAccepts(value, schema) ? [] : ['schema_rejected'];
+  return schemaErrors(value, schema);
 }
 
 export function buildVerdict(value) {

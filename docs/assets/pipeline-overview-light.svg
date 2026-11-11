@@ -110,7 +110,7 @@
   <text class="agent-kind" x="518" y="531">AGENT</text>
   <text class="stage-title" x="518" y="568">Validate</text>
   <text class="detail" x="518" y="604">Claim + consequence</text>
-  <text class="detail" x="518" y="630">Reachability</text>
+  <text class="detail" x="518" y="630">Code citation</text>
   <text class="detail" x="518" y="656">Try to disprove</text>
   <path class="flow" d="M700 590 H728" marker-end="url(#arrow)"/>
 

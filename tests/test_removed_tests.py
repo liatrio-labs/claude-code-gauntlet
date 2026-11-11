@@ -245,32 +245,19 @@ def test_removed_losses_share_admission_and_source_anchors(
         "validation": "validated",
         "policy_subject": "coverage",
         "challenge": "survived",
-        "admission_assessments": [
-            {"predicate": predicate, "status": "confirmed", "references": refs}
-            for predicate, refs in (
-                ("resolved_production_element", ["production_element"]),
-                ("complete_searches", ["searched_paths:0"]),
-                (
-                    "complete_behavioral_absence",
-                    ["production_element", "searched_paths:0"],
-                ),
-            )
-        ],
+        "verdict": {
+            "claim": "confirmed",
+            "consequence": "artifact_defect",
+            "justification": "Lost regression coverage",
+        },
     }
-    claim["admission_assessments"].append(
-        {
-            "predicate": "present_defect",
-            "status": "rejected",
-            "references": ["primary"],
-        }
-    )
     values = json.loads(
         run_node(
             "import {evaluateAdmission} from './workflows/src/admission.js';"
             "import {disposeFindings} from './workflows/src/dispose.js';"
             "let data='';for await(const chunk of process.stdin)data+=chunk;"
             "const claim=JSON.parse(data);const indirect=structuredClone(claim);"
-            "indirect.admission_assessments[2].status='rejected';"
+            "indirect.verdict.consequence='no_practical_effect';"
             "const bad=structuredClone(claim);bad.resolved_references.production_element.location_status='unconfirmed';"
             "const rows=[claim,{...claim,criticality:7},indirect,bad].map(evaluateAdmission);"
             "process.stdout.write(JSON.stringify(rows.map(f=>{const out=disposeFindings({findings:[f]});return [...out.findings,...out.unverified][0]})));",

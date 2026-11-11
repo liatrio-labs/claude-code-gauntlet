@@ -342,7 +342,15 @@ def test_review_prose_uses_ordinary_imports_and_reports_retired_blocks(
 @pytest.mark.parametrize(
     "form",
     [
+        "## Default Delivery\npr_comments\n",
         "## Default Delivery\r\npr_comments\r\n",
+        "# Default Delivery\npr_comments\n",
+        "### Default Delivery\nmarkdown\n",
+        "ignore: [generated, vendor]\n",
+        "```yaml code-gauntlet ignore: [generated]```\n",
+        "```yaml code-gauntlet\nignore: [generated]\n",
+        "<!-- deep-review-config ignore: [generated] -->\n",
+        "<!-- code-gauntlet-config\nignore: [generated]\n",
         "confidence_threshold = 70\n",
         "security_min_confidence: 60\n",
         "severity_threshold: high\n",
@@ -381,3 +389,43 @@ def test_ordinary_review_prose_is_not_retired_configuration(
     assert code == 0
     assert not receipt["unsupported_review_config"]
     assert prose.strip() in body
+
+
+@pytest.mark.parametrize("marker", ["```", "<!--"])
+def test_adversarial_retired_markers_finish_within_rule_collection_budget(
+    tmp_path, marker
+):
+    import subprocess
+    import sys
+
+    script = r"""
+import json,sys,time
+from pathlib import Path
+sys.path.insert(0,sys.argv[2])
+from gauntlet.project_rules import RuleCollector,collect_sources
+root=Path(sys.argv[1]);timings=[]
+for size in (8000,16000,32000,64000):
+ text = '```'+' '*size+'!' if sys.argv[3] == '```' else '<!--'*(size//4)
+ (root/'REVIEW.md').write_text(text,encoding='utf-8')
+ collector=RuleCollector(str(root),65536,131072,512)
+ start=time.perf_counter();collect_sources(collector,[]);timings.append(time.perf_counter()-start)
+ assert not collector.unsupported_review_config
+print(json.dumps(timings))
+"""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            script,
+            str(tmp_path),
+            str(Path(__file__).resolve().parents[1] / "scripts"),
+            marker,
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=5,
+        check=True,
+    )
+    timings = json.loads(result.stdout)
+    assert max(timings) < 2, timings

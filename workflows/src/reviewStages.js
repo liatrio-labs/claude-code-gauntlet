@@ -57,9 +57,8 @@ export async function validateStage(ctx, input) {
     label, agentType: 'code-gauntlet:validator', model,
   });
   const consume = (res, batch, label) => {
-    const list = res === null || res === undefined
-      ? null
-      : (Array.isArray(res) ? res : (Array.isArray(res.validations) ? res.validations : null));
+    const list = res && Array.isArray(res.validations)
+      && !verdictRejections({ ...res, validations: [] }, VALIDATE_SCHEMA).length ? res.validations : null;
     if (list) completed += 1;
     const entries = (list || []).filter((e) => e && typeof e === 'object').map((e) => ({ raw: e, id: e.finding_id }));
     const rejections = [];
@@ -211,8 +210,9 @@ export async function challengeStage(ctx, input) {
   results.forEach((result, idx) => {
     const res = result?.verdict;
     const finding = candidates[idx];
-    if (verdictRejections(res).length) {
-      gaps.push(`challenge-${idx}: challenger returned no typed verdict — finding ${finding.id} unchallenged`);
+    const rejections = verdictRejections(result, CHALLENGE_SCHEMA);
+    if (rejections.length) {
+      gaps.push(`challenge-${idx}: challenger returned no typed verdict (${rejections.join(', ')}) — finding ${finding.id} unchallenged`);
       skipped.push({ ...finding, challenge: 'failed' });
       return;
     }

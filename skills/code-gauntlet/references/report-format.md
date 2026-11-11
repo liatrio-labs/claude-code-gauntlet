@@ -153,7 +153,7 @@ Typed posting verdicts supersede semantic kind defaults; deterministic kind defa
 - `quality_basis: duplication`: {"description": "Duplicated behavior identified by duplicate_of.", "phase": "semantic", "predicates": ["resolved_duplicate", "confirmed_duplication"], "required": ["duplicate_of"], "tier": "suggestion"}; default disposition `held_back`.
 - `quality_basis: simpler_equivalent`: {"anyOf": ["suggestion", "suggested_fix_code"], "description": "Simpler replacement preserving observable behavior.", "phase": "semantic", "predicates": ["concrete_equivalent", "behavior_preserved"], "required": ["behavior_preserved"], "tier": "suggestion"}; default disposition `held_back`.
 - `quality_basis: stack_idiom`: {"description": "Behavior-preserving replacement grounded in existing repository precedent.", "phase": "semantic", "predicates": ["resolved_precedent", "precedent_not_added", "applicable"], "required": ["precedent"], "tier": "suggestion"}; default disposition `held_back`.
-- `quality_basis: other`: {"defaultDisposition": "report_only", "description": "No demonstrated defect, duplication, simpler equivalent or applicable precedent.", "phase": "semantic", "predicates": [], "required": [], "tier": "suggestion"}; default disposition `report_only`.
+- `quality_basis: other`: {"description": "No demonstrated defect, duplication, simpler equivalent or applicable precedent.", "phase": "semantic", "predicates": [], "required": [], "tier": "suggestion"}; default disposition `held_back`.
 
 ### simplification admission
 
@@ -161,7 +161,7 @@ Typed posting verdicts supersede semantic kind defaults; deterministic kind defa
 - `quality_basis: duplication`: {"description": "Duplicated behavior identified by duplicate_of.", "phase": "semantic", "predicates": ["resolved_duplicate", "confirmed_duplication"], "required": ["duplicate_of"], "tier": "suggestion"}; default disposition `held_back`.
 - `quality_basis: simpler_equivalent`: {"anyOf": ["suggestion", "suggested_fix_code"], "description": "Simpler replacement preserving observable behavior.", "phase": "semantic", "predicates": ["concrete_equivalent", "behavior_preserved"], "required": ["behavior_preserved"], "tier": "suggestion"}; default disposition `held_back`.
 - `quality_basis: stack_idiom`: {"description": "Behavior-preserving replacement grounded in existing repository precedent.", "phase": "semantic", "predicates": ["resolved_precedent", "precedent_not_added", "applicable"], "required": ["precedent"], "tier": "suggestion"}; default disposition `held_back`.
-- `quality_basis: other`: {"defaultDisposition": "report_only", "description": "No demonstrated defect, duplication, simpler equivalent or applicable precedent.", "phase": "semantic", "predicates": [], "required": [], "tier": "suggestion"}; default disposition `report_only`.
+- `quality_basis: other`: {"description": "No demonstrated defect, duplication, simpler equivalent or applicable precedent.", "phase": "semantic", "predicates": [], "required": [], "tier": "suggestion"}; default disposition `held_back`.
 <!-- /generated-from-registry-location -->
 
 ---
@@ -271,7 +271,7 @@ These did not clear the full pipeline (a stage was skipped or failed) and carry 
 
 - **Location:** `{finding.file}:10`
 - **Dimension:** {finding.dimension}
-- **Unverified because:** the validator did not establish this finding, so it was not skeptically validated; the verify slice could not be proven against the dispatched document; the challenge cap was reached, so this finding was not challenge-verified
+- **Unverified because:** neither the validator nor the challenger established this finding; the verify slice could not be proven against the dispatched document; the challenge cap was reached, so this finding was not challenge-verified
 
 {finding.description}
 

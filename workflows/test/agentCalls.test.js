@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
-import { AGENT_CALLS, toolSchemaErrors } from '../src/agentCalls.js';
+import { AGENT_CALLS, toolSchemaErrors, requestFailureGaps } from '../src/agentCalls.js';
 import { runWith } from '../src/run.js';
 import { validArgs } from './helpers/argsFixtures.js';
 import { makeCtx, makeFinding } from './helpers/pipelineMock.js';
@@ -46,9 +46,8 @@ for (const variation of ['same request error', 'different request errors', 'ordi
     const stageGaps = out.gaps.filter((gap) => gap.startsWith('challenge'));
     if (variation === 'same request error') {
       const gap = `challenge: all 109 agent requests failed with the same request error: ${error}`;
-      assert.equal(stageGaps.length, 110);
+      assert.equal(stageGaps.length, 1);
       assert.equal(stageGaps.at(-1), gap);
-      assert.ok(stageGaps.some((value) => value.startsWith('challenge-0:')));
       assert.deepEqual(snapshot.gaps, stageGaps);
       assert.equal(snapshot.coverage, 'partial');
       assert.ok(payload.report.includes(error), payload.report.slice(-2000));
@@ -59,3 +58,9 @@ for (const variation of ['same request error', 'different request errors', 'ordi
     }
   });
 }
+
+test('aggregate request failures retain unrelated stage gaps', () => {
+  assert.deepEqual(requestFailureGaps(['challenge-0: no answer', 'challenge-1: no answer', 'code-gauntlet:validator: no answer', 'independent: missing context'],
+    [{ stage: 'challenge', label: 'challenge-0' }, { stage: 'challenge', label: 'challenge-1' }, { stage: 'challenge', label: 'code-gauntlet:validator' }], 'challenge', 'challenge: request error'),
+  ['independent: missing context', 'challenge: request error']);
+});

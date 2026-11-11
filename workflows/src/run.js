@@ -1,4 +1,4 @@
-import { repeatedRequestGap } from './agentCalls.js';
+import { repeatedRequestGap, requestFailureGaps } from './agentCalls.js';
 import { suppressAuditOverlaps } from './removedTests.js';
 // Pipeline sequencing, replay, diagnostics, and return envelopes.
 import { setupContext } from './contextPlan.js';
@@ -317,7 +317,7 @@ export async function runWith(ctx, rawArgs) {
     const out = replayed ? checkpoints[name] : await thunk();
     const requestError = !replayed && repeatedRequestGap(c.agentRequests, name);
     if (requestError) {
-      out.gaps = [...(out.gaps || []), requestError];
+      out.gaps = requestFailureGaps(out.gaps || [], c.agentRequests, name, requestError);
       const snapshot = measurementTrace?.snapshots.find((item) => item.stage === name);
       if (snapshot) { snapshot.gaps = [...out.gaps]; snapshot.coverage = 'partial'; }
     }
