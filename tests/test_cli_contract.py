@@ -632,14 +632,6 @@ def scenario(name, case, tmp_path, *, shell_fixture=False):
         argv = [
             arg.format(**places) for arg in _command_line(name, case, directory).split()
         ]
-    if (name, case) == ("capture_policy_env", "failure"):
-        workflows = directory / ".claude" / "workflows"
-        workflows.mkdir(parents=True)
-        (workflows / "shadow.js").write_text(
-            'export const meta = {name: "code-gauntlet:code-gauntlet-pipeline", '
-            'description: "Probe"};\nreturn 1;\n',
-            encoding="utf-8",
-        )
     triage = (name, case) == ("write_shared_context", "success")
     stdin = b"triage\n" if triage else b"{}\n"
     if (name, case) == ("resolve_pr_identity", "success"):
@@ -855,7 +847,6 @@ def test_recorded_cli(name, case, tmp_path, invoke, monkeypatch, forge_factory):
     monkeypatch.setenv("PATH", str(fake_bin) + os.pathsep + os.environ["PATH"])
     monkeypatch.setenv("CODE_GAUNTLET_OUTPUT_DIR", str(directory / "output"))
     if name == "capture_policy_env":
-        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(directory / "config"))
         for key in list(os.environ):
             if _captured_policy_key(key):
                 monkeypatch.delenv(key)
@@ -931,7 +922,6 @@ def test_entry_runs_from_foreign_cwd(name, tmp_path):
     )
     env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
     if name == "capture_policy_env":
-        env["CLAUDE_CONFIG_DIR"] = str(directory / "config")
         env = {
             key: value for key, value in env.items() if not _captured_policy_key(key)
         }

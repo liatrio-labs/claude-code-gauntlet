@@ -5,8 +5,6 @@ checkpoint source so recovery can reuse completed work without reconstructing fi
 
 ## 1. `resumeFromRunId` first
 
-Before a resume, re-run `scripts/capture_policy_env.py` and stop if it refuses; retain the original args.
-
 Every Workflow invocation returns a `runId` (also visible in `/workflows`). Re-launch the
 same registered workflow with the same args plus `resumeFromRunId`:
 

@@ -68,21 +68,6 @@ See [the merge policy](CONTRIBUTING.md#pull-requests).
 
 ## Scope
 
-### Named workflow dispatch
-
-`scripts/capture_policy_env.py` checks for local definitions of the pipeline's
-qualified name before emitting the policy needed to assemble dispatch args, in
-interactive, headless, and benchmark sessions; recovery repeats the capture.
-It checks direct `.js` files in the personal workflow directory and
-`.claude/workflows` in the working directory and every ancestor.
-Files unable to claim the name are ignored; an actual or ambiguous possible shadow
-stops capture with one message naming the path and no policy output.
-This disk check cannot bind the host's cached resolution atomically: removed cached
-files, subsequent writes, duplicate installed plugins, remote configuration storage,
-and undisclosed `--project-config-root` locations require host enforcement.
-An orchestrator that bypasses policy capture also bypasses this check.
-Returned nonces and plain checksums prove consistency, not pipeline identity.
-
 ### Trust boundaries
 
 The pipeline reads several kinds of repository-supplied text and extends each a different level of trust. The
@@ -103,6 +88,10 @@ split is deliberate; it was decided on issue #82 (2026-08-02).
   from the merge base instead of the PR head; it is held in reserve, not implemented. The ingested block is
   code-tagged per source with its path and whether the diff under review modifies it, so an agent can weigh
   provenance; this is provenance, not a filter.
+- **The checkout's `.claude/` directory is trusted, as Claude Code trusts it.** A review runs inside the
+  working tree, so its project hooks, settings and workflows load as they do in any session there. A project
+  workflow can declare the pipeline's registered name and run in its place. Review a branch from an author you do
+  not trust only after checking what it adds under `.claude/`.
 - **Anything that leaves the pipeline is untrusted, whatever its source.** Repository-derived text that reaches a
   posted PR/MR comment, a rendered report, or a shell invocation stays fully inside the in-scope injection
   classes below.
