@@ -280,6 +280,10 @@ def check_workflow_shadow() -> None:
         Path(configured) if configured else Path.home() / ".claude"
     ).absolute()
     directories = workflow_directories(cwd, config_dir)
+    if configured == "":
+        # Whether the host treats an empty value as unset or as a relative path
+        # is unconfirmed, so both readings are checked.
+        directories.append(cwd / "workflows")
     # The host resolves paths lexically; Bash may report a physical cwd instead.
     logical = os.environ.get("PWD")
     if logical and os.path.isabs(logical):

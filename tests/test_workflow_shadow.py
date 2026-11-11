@@ -487,6 +487,15 @@ def test_literal_and_nonliteral_metadata(workspace, source, refused):
         assert_policy(result)
 
 
+def test_empty_config_dir_also_checks_the_relative_reading(workspace):
+    repo, cwd, config = workspace
+    path = put(cwd / "workflows", workflow())
+    result = run_capture(cwd, "")
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert str(path) in result.stderr
+
+
 @pytest.mark.parametrize("blocker", [".claude", ".claude/workflows"])
 def test_a_file_where_a_workflow_directory_would_be_is_no_source(workspace, blocker):
     repo, cwd, config = workspace
