@@ -264,7 +264,7 @@ class RuleCollector:
             return
 
         if os.path.basename(real) == "REVIEW.md" and re.search(
-            r"(?im)^\s*```(?:yaml)?\s*#?\s*(?:code-gauntlet|deep-review)\b|<!--\s*(?:code-gauntlet|deep-review)-config\b",
+            r"(?im)^\s*```(?:yaml)?\s*#?\s*(?:code-gauntlet|deep-review)\b|<!--\s*(?:code-gauntlet|deep-review)-config\b|^\s*#{1,6}\s+(?:Default Delivery|Ignore|Exclude|Skip)\b|^\s*(?:confidence_threshold|security_min_confidence|severity_threshold|ignore)\s*[:=]",
             text,
         ):
             self.unsupported_review_config = True

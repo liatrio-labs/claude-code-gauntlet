@@ -13,7 +13,6 @@
       "id": "f",
       "claim": "confirmed",
       "consequence": "present_failure",
-      "reachability": "current",
       "justification": "Caller inspected"
     }
   ]

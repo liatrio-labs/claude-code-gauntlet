@@ -1,3 +1,4 @@
+import { defineAgentCall } from './agentCalls.js';
 import { canonicalRange, clearLocation } from './location.js';
 import { hostPlatformForRoots } from './paths.js';
 import { FINDING_PROP_TYPES, LOCATION_STATUSES, RESOLVED_SITE_SCHEMA, VERIFY_FACT_PROPERTIES, modelFor } from './registry.js';
@@ -70,6 +71,8 @@ const VERIFY_SCHEMA = {
   },
   required: ['status'],
 };
+
+const callVerify = defineAgentCall('verify', () => VERIFY_SCHEMA);
 
 // Small slices can repair transcription failures; disclose fan-out instead of
 // flooring the operator's chosen size.
@@ -304,11 +307,10 @@ async function verifySliceWithRetry(c, inp, i, slice, record) {
 async function dispatchVerifySlice(c, inp, i, slice, record, sliceNonce, label, attempt = '') {
   let env;
   try {
-    env = await c.agent(verifyPrompt(inp, i, sliceNonce, record.inlinePayload, attempt), {
+    env = await callVerify(c, verifyPrompt(inp, i, sliceNonce, record.inlinePayload, attempt), {
       label,
       agentType: 'code-gauntlet:executor',
       model: record.model,
-      schema: VERIFY_SCHEMA,
     });
   } catch (e) {
     return { ok: false, reason: `executor threw (${(e && e.message) || 'unknown'})` };

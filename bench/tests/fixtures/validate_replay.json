@@ -302,21 +302,18 @@
         "validations": [
           {
             "finding_id": "bug-detector-1",
-            "reachability": "current",
             "justification": "Inspected code",
             "claim": "confirmed",
             "consequence": "present_failure"
           },
           {
             "finding_id": "bug-detector-2",
-            "reachability": "future_change_only",
             "justification": "Inspected code",
             "claim": "confirmed",
             "consequence": "no_practical_effect"
           },
           {
             "finding_id": "bug-detector-3",
-            "reachability": "uncertain",
             "justification": "Inspected code",
             "claim": "confirmed",
             "consequence": "latent",
@@ -324,10 +321,8 @@
           },
           {
             "finding_id": "cross-file-impact-1",
-            "reachability": "current",
             "justification": "Inspected code",
             "claim": "not_established",
-            "consequence": "present_failure",
             "missing_fact": "Whether the external caller passes zero"
           }
         ]

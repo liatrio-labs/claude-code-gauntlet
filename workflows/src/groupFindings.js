@@ -1,3 +1,4 @@
+import { defineAgentCall } from './agentCalls.js';
 import { asText } from './wire.js';
 import { modelFor } from './registry.js';
 
@@ -20,14 +21,16 @@ export function groupingSchema(ids) {
   } } }, required: ['groups'], additionalProperties: false };
 }
 
+const callGrouper = defineAgentCall('challenge:group', groupingSchema, () => [[['finding']]]);
+
 export async function groupFindings(ctx, findings, policy = {}) {
   const grouping_ids = findings.map((f) => f.id);
   if (findings.length < 2) return { grouping_ids };
   try {
-    const grouping_reply = await ctx.agent(groupingPrompt(findings), {
+    const grouping_reply = await callGrouper(ctx, groupingPrompt(findings), {
       label: 'group-findings', agentType: 'code-gauntlet:grouper',
-      model: modelFor('code-gauntlet:grouper', policy), schema: groupingSchema(grouping_ids),
-    });
+      model: modelFor('code-gauntlet:grouper', policy),
+    }, grouping_ids);
     return { grouping_ids, grouping_reply: grouping_reply ?? null };
   } catch (error) {
     return { grouping_ids, grouping_reply: null, grouping_error: `dispatch failed: ${asText(error?.message || error) || 'unknown error'}` };

@@ -179,7 +179,7 @@ test('main_only tier exclusions do not count as a delivery cap hit', async () =>
       if (row.finding_id === 'SUGGESTION') Object.assign(row, { consequence: 'latent', latent_condition: 'New caller' });
     }
     if (dispatch.label.startsWith('challenge-') && prompt.includes('finding SUGGESTION')) {
-      Object.assign(result, { consequence: 'latent', latent_condition: 'New caller' });
+      Object.assign(result.verdict, { consequence: 'latent', latent_condition: 'New caller' });
     }
     return result;
   };
@@ -250,4 +250,28 @@ test('measured persistence records native UTF-8 hashes, results and thrown error
   assert.equal(out.measurement.text, '{}');
   const full = { ...envelope, text: 'x'.repeat(1100000) };
   assert.equal(appendDeliveryReplay(full, large), full);
+});
+
+test('selection traces one reason for every member of an indivisible omitted group', async () => {
+  const args = validArgs({ measurementTrace: true, limits: { deliveryCap: 1 }, delivery: { tier: 'main_only' } });
+  const ctx = makeCtx(args, { findings: [makeFinding('MAIN'), makeFinding('CHILD'), makeFinding('SUGGESTION'), makeFinding('WIN', { severity: 'critical' })] });
+  const original = ctx.agent;
+  ctx.agent = async (prompt, opts) => {
+    if (opts.label === 'group-findings') return { groups: [{ finding_ids: ['MAIN', 'CHILD'] }] };
+    const result = await original(prompt, opts);
+    if (opts.label.startsWith('validate-')) for (const v of result.validations) {
+      if (['CHILD', 'SUGGESTION'].includes(v.finding_id)) Object.assign(v, { consequence: 'latent', latent_condition: 'Another caller' });
+    }
+    if (opts.label.startsWith('challenge-') && /finding (?:CHILD|SUGGESTION)/.test(prompt)) Object.assign(result.verdict, { consequence: 'latent', latent_condition: 'Another caller' });
+    return result;
+  };
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, true);
+  const trace = JSON.parse(out.measurement.text);
+  const ids = new Map(trace.versions.map((v) => [v.trace_id, v.finding.id]));
+  const selected = trace.snapshots.find((s) => s.stage === 'select');
+  const reasons = Object.fromEntries(selected.decisions.map((d) => [ids.get(d.trace_id), d.reason_code]));
+  assert.equal(reasons.MAIN, 'delivery_cap');
+  assert.equal(reasons.CHILD, 'delivery_cap');
+  assert.equal(reasons.SUGGESTION, 'delivery_tier');
 });

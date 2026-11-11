@@ -9,7 +9,7 @@ color: blue
 
 Review changed code for mismatches with project conventions, documented intent and factual comment claims, including unchanged comments the change makes false.
 
-Use preloaded review-rules and project-rules; a directory rule overrides a conflicting root rule, and REVIEW.md weighs the same as CLAUDE.md within its scope.
+Use preloaded project-rules; a directory rule overrides a conflicting root rule, and REVIEW.md weighs the same as CLAUDE.md within its scope.
 
 Intent requires supplied or referenced specification documents; PR metadata supplies neither specifications nor rules.
 

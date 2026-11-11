@@ -72,24 +72,9 @@ _Claim_Literal = Literal["confirmed", "refuted", "not_established"]
 _Consequence_Literal = Literal[
     "present_failure", "latent", "artifact_defect", "no_practical_effect"
 ]
-_Reachability_Literal = Literal["current", "future_change_only", "uncertain"]
 _RefutationKind_Literal = Literal[
     "premise_false", "guard_exists", "no_reachable_caller"
 ]
-_PolicySubject_Literal = Literal["test_defect", "coverage", "ordinary", "unresolved"]
-_AdmissionAssessmentsItemPredicate_Literal = Literal[
-    "confirmed_test_defect",
-    "resolved_production_element",
-    "complete_searches",
-    "complete_behavioral_absence",
-    "present_defect",
-    "confirmed_duplication",
-    "concrete_equivalent",
-    "behavior_preserved",
-    "applicable",
-    "current_defect",
-]
-_AdmissionAssessmentsItemStatus_Literal = Literal["confirmed", "rejected", "unresolved"]
 PathRole = Literal["source", "test", "non_source", "unknown"]
 BlameClass = Literal["new", "pre_existing", "surfaced", "unknown"]
 BlameSource = Literal[
@@ -127,6 +112,20 @@ _ResolvedReferencesPrecedentPathRole_Literal = Literal[
 _ResolvedReferencesPrecedentLocationStatus_Literal = Literal[
     "confirmed", "relocated", "unconfirmed"
 ]
+_PolicySubject_Literal = Literal["test_defect", "coverage", "ordinary", "unresolved"]
+_AdmissionAssessmentsItemPredicate_Literal = Literal[
+    "confirmed_test_defect",
+    "resolved_production_element",
+    "complete_searches",
+    "complete_behavioral_absence",
+    "present_defect",
+    "confirmed_duplication",
+    "concrete_equivalent",
+    "behavior_preserved",
+    "applicable",
+    "current_defect",
+]
+_AdmissionAssessmentsItemStatus_Literal = Literal["confirmed", "rejected", "unresolved"]
 _AdmissionVersion_Literal = Literal[1]
 _AdmissionStatus_Literal = Literal["admitted", "report_only", "held_back"]
 _AdmissionReasonsItemStatus_Literal = Literal["report_only", "held_back"]
@@ -304,6 +303,7 @@ TRACE_FINDING_FIELDS: tuple[str, ...] = (
     "challenge_verdict",
     "verdict_route",
     "refutation_check",
+    "validator_refutation_check",
     "rule_source",
     "agent",
     "dimension",
@@ -1372,7 +1372,7 @@ KNOB_REGISTRY = (
         },
         "env": "CODE_GAUNTLET_PR_COMMENT_CAP",
         "defaults": {
-            "headless": ["6", "default"],
+            "headless": ["25", "default"],
             "interactive": ["null", "default"],
         },
         "type": "int_or_null",
@@ -1684,12 +1684,6 @@ class Refutation(TypedDict):
     anchor: str
 
 
-class AdmissionAssessmentsItem(TypedDict):
-    predicate: _AdmissionAssessmentsItemPredicate_Literal
-    status: _AdmissionAssessmentsItemStatus_Literal
-    references: list[str]
-
-
 class ResolvedReferencesSearchedPathsItem(TypedDict):
     path: str
     available: bool
@@ -1758,6 +1752,12 @@ class ResolvedReferences(TypedDict, total=False):
     production_element: ResolvedReferencesProductionElement
     duplicate_of: ResolvedReferencesDuplicateOf
     precedent: ResolvedReferencesPrecedent
+
+
+class AdmissionAssessmentsItem(TypedDict):
+    predicate: _AdmissionAssessmentsItemPredicate_Literal
+    status: _AdmissionAssessmentsItemStatus_Literal
+    references: list[str]
 
 
 class AdmissionReasonsItem(TypedDict):

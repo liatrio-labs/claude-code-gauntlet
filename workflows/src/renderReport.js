@@ -212,7 +212,7 @@ function coerceReportFinding(finding, severities) {
       value = Array.isArray(raw) ? raw : [];
     } else if (['disposition_reasons', 'delivery_group', 'admission', 'admission_assessments', 'body_fix_task_eligible'].includes(key)) {
       value = raw;
-    } else if (key === 'consolidation_primary' || key === 'challenge_contested') {
+    } else if (key === 'consolidation_primary') {
       value = raw;
     } else if (key === 'risk_level') {
       value = reportRiskLevel(raw);
@@ -465,9 +465,7 @@ function renderFinding(builder, finding, unverified, permalinks) {
   if (finding.demoted_by === 'reachability') {
     bullets.push('- **Reachability:** only under a future change (severity demoted to low)');
   }
-  if (finding.challenge_contested === true) {
-    bullets.push('- **Contested:** the challenger could not confirm the cited location');
-  }
+
   if (bullets.length) blocks.push(() => bullets.forEach((line) => builder.addSpans(line, [where])));
 
   if (isPresent(finding.description)) blocks.push(() => builder.add(foldedProse(finding.description)));
@@ -844,6 +842,7 @@ function methodologyRows(input, rawFindings) {
 
   const gapCount = Number.isInteger(input.gapCount) ? input.gapCount : 0;
   rows.push(['Gaps', String(gapCount)]);
+  for (const gap of input.gaps || []) rows.push(['Gap', inline(gap)]);
   const dispatched = Array.isArray(input.dimensions && input.dimensions.dispatched) ? input.dimensions.dispatched.length : 0;
   const degraded = Array.isArray(input.dimensions && input.dimensions.degraded) ? input.dimensions.degraded.length : 0;
   rows.push(['Dimensions', `dispatched=${dispatched}; degraded=${degraded}`]);
@@ -929,7 +928,7 @@ export function renderReport(input, knobs = KNOB_REGISTRY) {
   summaryBlock(builder, inp, 'report');
 
   builder.add();
-  if (inp.unsupportedReviewConfig === true) builder.add('REVIEW.md settings are no longer supported; its prose is read as project rules.');
+  if (inp.unsupportedReviewConfig === true) builder.add('REVIEW.md settings are no longer supported; use CODE_GAUNTLET_DELIVERY for delivery; its prose is read as project rules.');
   builder.add('## Change Context');
   builder.add();
   if (isPresent(inp.summary)) {

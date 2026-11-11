@@ -6,7 +6,7 @@
       "file": "src",
       "id": "f",
       "line_start": 10,
-      "reachability": "current",
+      "reachability": "uncertain",
       "refutation_check": {
         "verified": true
       },
@@ -14,18 +14,29 @@
       "report_tag": "suggestion",
       "severity": "high",
       "validation_justification": "Guard exists",
+      "validator_refutation_check": {
+        "verified": true
+      },
       "validator_verdict": {
         "claim": "refuted",
-        "consequence": "present_failure",
         "justification": "Guard exists",
-        "reachability": "current",
+        "refutation": {
+          "anchor": "return safe;",
+          "file": "guard",
+          "line_end": 1,
+          "line_start": 1
+        },
         "refutation_kind": "guard_exists"
       },
       "verdict": {
         "claim": "refuted",
-        "consequence": "present_failure",
         "justification": "Guard exists",
-        "reachability": "current",
+        "refutation": {
+          "anchor": "return safe;",
+          "file": "guard",
+          "line_end": 1,
+          "line_start": 1
+        },
         "refutation_kind": "guard_exists"
       },
       "verdict_route": "eliminated"

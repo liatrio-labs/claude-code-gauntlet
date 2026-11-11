@@ -99,6 +99,7 @@ class StageSnapshot:
     coverage: Coverage
     cap: int | None
     cap_hit: bool
+    gaps: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +110,14 @@ class MeasurementTrace:
     snapshots: tuple[StageSnapshot, ...]
     complete: bool
     dropped_stages: tuple[Stage, ...] = ()
+
+    def wire(self):
+        value = asdict(self)
+        # Missing optional diagnostics must not change a replay's observed prefix.
+        for snapshot in value["snapshots"]:
+            if snapshot["gaps"] is None:
+                del snapshot["gaps"]
+        return value
 
 
 @dataclass(frozen=True, slots=True)

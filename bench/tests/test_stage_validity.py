@@ -159,13 +159,13 @@ const original = ctx.agent;
 const returned = [];
 ctx.agent = async (prompt, dispatch) => {
   if (dispatch.label.startsWith('validate-batch-')) {
-    return { validations: [...prompt.matchAll(/^- (\S+) \[/gm)].map((m) => ({ finding_id: m[1], claim: 'confirmed', consequence: 'present_failure', reachability: 'current', justification: 'Inspected caller' })) };
+    return { validations: [...prompt.matchAll(/^- (\S+) \[/gm)].map((m) => ({ finding_id: m[1], claim: 'confirmed', consequence: 'present_failure', justification: 'Inspected caller' })) };
   }
   if (dispatch.agentType === 'code-gauntlet:test-analyzer') {
     if (process.argv[1] === 'null') return null;
     if (process.argv[1] === 'malformed') return {};
   }
-  if (dispatch.label.startsWith('challenge-')) return {claim:'confirmed',consequence:'present_failure',reachability:'current',justification:'Inspected caller'};
+  if (dispatch.label.startsWith('challenge-')) return {verdict:{claim:'confirmed',consequence:'present_failure',justification:'Inspected caller'}};
   const result = await original(prompt, dispatch);
   if (dispatch.label.startsWith('code-gauntlet:')) returned.push(dispatch.label);
   return result;
@@ -248,8 +248,8 @@ ctx.agent = async (prompt, dispatch) => {
       (stage === 'verify' && label.startsWith('verify-slice-')) ||
       (stage === 'validate' && label.startsWith('validate-batch-')) ||
       (stage === 'challenge' && label.startsWith('challenge-'))) throw new Error('execution failed');
-  if (label.startsWith('validate-batch-')) return { validations: [...prompt.matchAll(/^- (\\S+) \\[/gm)].map((m) => ({ finding_id: m[1], claim: 'confirmed', consequence: 'present_failure', reachability: 'current', justification: 'Inspected caller' })) };
-  if (label.startsWith('challenge-')) return {claim:'confirmed',consequence:'present_failure',reachability:'current',justification:'Inspected caller'};
+  if (label.startsWith('validate-batch-')) return { validations: [...prompt.matchAll(/^- (\\S+) \\[/gm)].map((m) => ({ finding_id: m[1], claim: 'confirmed', consequence: 'present_failure', justification: 'Inspected caller' })) };
+  if (label.startsWith('challenge-')) return {verdict:{claim:'confirmed',consequence:'present_failure',justification:'Inspected caller'}};
   return original(prompt, dispatch);
 };
 const out = await runWith(ctx, args);

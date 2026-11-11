@@ -190,9 +190,6 @@ def test_windows_style_changed_entry_discovers_nested_rules(collect_rules, write
     assert "NESTED-RULE" in body
 
 
-# A contributor's PR can plant either link; both collectors must refuse it.
-
-
 def test_import_target_change_does_not_propagate_from_or_to_importer(
     collect_rules, write_rule
 ):
@@ -339,4 +336,27 @@ def test_review_prose_uses_ordinary_imports_and_reports_retired_blocks(
         "Keep invariants clear." in body and "A rule reached through an import." in body
     )
     assert "<project-rules " in body and "<review-rules " not in body
+    assert receipt["gaps"] == []
+
+
+@pytest.mark.parametrize(
+    "form",
+    [
+        "## Default Delivery\npr_comments\n",
+        "confidence_threshold = 70\n",
+        "security_min_confidence: 60\n",
+        "severity_threshold: high\n",
+        "ignore:\n  - generated\n",
+        "<!-- deep-review-config\nignore:\n  - generated\n-->\n",
+        "```yaml\n# deep-review\nignore:\n  - generated\n```\n",
+    ],
+)
+def test_every_retired_configuration_form_is_disclosed_locally(
+    collect_rules, write_rule, form
+):
+    write_rule("REVIEW.md", form + "\nA prose invariant.\n")
+    code, receipt, body = collect_rules()
+    assert code == 0
+    assert receipt["unsupported_review_config"]
+    assert "A prose invariant." in body
     assert receipt["gaps"] == []

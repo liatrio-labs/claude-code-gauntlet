@@ -12,11 +12,8 @@
     {
       "id": "f",
       "claim": "not_established",
-      "consequence": "latent",
-      "reachability": "uncertain",
       "justification": "Need caller",
-      "missing_fact": "Does a caller pass zero?",
-      "latent_condition": "A caller passes zero"
+      "missing_fact": "Does a caller pass zero?"
     }
   ]
 }

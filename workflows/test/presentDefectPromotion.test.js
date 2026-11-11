@@ -11,7 +11,7 @@ for (const [dimension, fields] of [
   ['type_design', { quality_basis: 'other' }], ['test_coverage', { test_kind: 'critical_gap' }],
 ]) test(`typed truth replaces a second value decision: ${dimension}/${JSON.stringify(fields)}`, async () => {
   const ctx = stageCtx({ reply: { validations: [{ finding_id: 'f', claim: 'confirmed', consequence: 'present_failure',
-    reachability: 'current', justification: 'Current caller fails' }] } });
+    justification: 'Current caller fails' }] } });
   const validated = await validateStage(ctx, { findings: [makeFinding('f', { dimension, ...fields })] });
   const result = await runAndCapture(validArgs({ checkpoints: { validate: validated } }));
   assert.equal(result.payload.postReview.length, 1);

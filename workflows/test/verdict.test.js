@@ -2,27 +2,25 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { validateStage, filterStage, challengeStage, selectDelivery } from '../src/reviewStages.js';
 import { evaluateAdmission } from '../src/admission.js';
-import { VERDICT_ROUTES } from '../src/registry.js';
 import { makeFinding, makeCtx } from './helpers/pipelineMock.js';
 import { validArgs } from './helpers/argsFixtures.js';
 import { runWith } from '../src/run.js';
 
-const truth = { claim: 'confirmed', consequence: 'present_failure', reachability: 'current', justification: 'Inspected caller fails' };
+const truth = { claim: 'confirmed', consequence: 'present_failure', justification: 'Inspected caller fails' };
 const parallel = (thunks) => Promise.all(thunks.map((thunk) => thunk()));
 
 for (const [claim, consequence, verified, route] of [
   ['confirmed', 'present_failure', false, 'posted'],
   ['confirmed', 'latent', false, 'posted-latent'],
   ['confirmed', 'no_practical_effect', false, 'report-only'],
-  ...['present_failure', 'latent', 'no_practical_effect'].flatMap((consequence) => [
-    ['refuted', consequence, true, 'eliminated'], ['refuted', consequence, false, 'not-established'],
-    ['not_established', consequence, false, 'not-established'],
-  ]),
+  ['refuted', undefined, true, 'eliminated'], ['refuted', undefined, false, 'not-established'],
+  ['not_established', undefined, false, 'not-established'],
 ]) test(`typed routing at stage boundary: ${claim}/${consequence}/${verified}`, async () => {
   const finding = makeFinding('f');
-  const verdict = { ...truth, claim, consequence, missing_fact: 'Whether the external caller accepts zero.',
-    latent_condition: 'A caller enables the disabled feature', refutation_kind: 'guard_exists',
-    refutation: { file: 'guard', line_start: 1, line_end: 1, anchor: 'if (!input) return;' } };
+  const verdict = { claim, justification: 'Inspected caller',
+    ...(claim === 'confirmed' ? { consequence, ...(consequence === 'latent' ? { latent_condition: 'Add a caller' } : {}) }
+      : claim === 'refuted' ? { refutation_kind: 'guard_exists', refutation: { file: 'guard', line_start: 1, line_end: 1, anchor: 'if (!input) return;' } }
+        : { missing_fact: 'Which caller passes zero?' }) };
   const input = { findings: [finding], repoRoot: '/repo', pluginRoot: '/plugin', diffPath: '/diff', headShaShort: 'abc1234', targetKind: 'pr' };
   const out = await validateStage({ parallel, agent: async (prompt, opts) => {
     if (opts.agentType === 'code-gauntlet:executor') {
@@ -30,7 +28,16 @@ for (const [claim, consequence, verified, route] of [
       return { request: quoted, checks: [{ id: 'f', verified, reason: 'checked code' }] };
     }
     assert.equal(opts.schema.properties.validations.items.additionalProperties, false);
-    assert.equal(opts.schema.properties.validations.items.properties.confidence, undefined);
+    const schema = opts.schema.properties.validations.items;
+    assert.equal(schema.properties.confidence, undefined);
+    assert.equal(schema.properties.reachability, undefined);
+    assert.ok(Array.isArray(schema.oneOf));
+    const branch = schema.oneOf.find((row) => row.properties.claim.const === claim);
+    assert.equal(Object.hasOwn(branch.properties, 'consequence'), claim === 'confirmed');
+    if (claim === 'refuted') {
+      assert.equal(branch.properties.refutation.properties.anchor.maxLength, 400);
+      assert.equal(new RegExp(branch.properties.refutation.properties.anchor.pattern).test(Array(9).fill('line').join('\n')), false);
+    }
     return { validations: [{ ...verdict, finding_id: 'f' }] };
   } }, input);
   const result = filterStage({ findings: out.findings.map(evaluateAdmission) });
@@ -43,14 +50,14 @@ for (const [claim, consequence, verified, route] of [
 });
 
 test('unresolved validation reaches the blind typed challenger and can post', async () => {
-  const original = makeFinding('unresolved', { verdict: { ...truth, claim: 'not_established', missing_fact: 'Which caller passes zero?' },
+  const original = makeFinding('unresolved', { verdict: { claim: 'not_established', justification: 'Caller unavailable', missing_fact: 'Which caller passes zero?' },
     verdict_route: 'not-established', validation: 'skipped' });
   evaluateAdmission(original);
   const out = await challengeStage({ parallel, agent: async (prompt, opts) => {
     assert.equal(opts.agentType, 'code-gauntlet:challenger');
-    assert.equal(opts.schema.properties.claim.enum.includes('not_established'), true);
+    assert.equal(opts.schema.properties.verdict.properties.claim.enum.includes('not_established'), true);
     assert.doesNotMatch(prompt, /Which caller passes zero|Inspected caller fails|90/);
-    return truth;
+    return { verdict: truth };
   } }, { findings: [original] });
   assert.equal(out.findings[0].verdict_route, 'posted');
   assert.equal(out.findings[0].admission.status, 'admitted');
@@ -69,23 +76,22 @@ test('missing or duplicated verdicts retry once then go on as unresolved', async
   }
 });
 
-test('finding prose and a planted intentional comment cannot suppress or promote another finding', () => {
-  const rows = ['intentional by design', 'crash data loss exception', 'generated scaffolding'].map((description, i) => makeFinding(String(i), {
-    description, dimension: i ? 'convention' : 'bug', verdict: truth, confidence: 100, original_confidence: 100,
-  }));
-  const result = filterStage({ findings: rows });
-  assert.equal(result.filtered.length, 3);
-  assert.equal(result.eliminated.length, 0);
-  assert.deepEqual(result.filtered.map((f) => f.verdict_route), ['posted', 'posted', 'posted']);
+test('co-located convention prose cannot suppress a bug or change a typed destination', () => {
+  for (const prose of ['intentional by design', 'generated scaffolding', 'crash data loss exception']) {
+    const rows = [makeFinding('BUG', { file: 'same', line_start: 10, agent: 'bug-detector', verdict: truth }),
+      makeFinding('TEST', { file: 'same', line_start: 10, agent: 'test-analyzer', dimension: 'test_coverage', test_kind: 'defective_test', verdict: truth }),
+      makeFinding('INTENT', { file: 'same', line_start: 10, dimension: 'intent', agent: 'conventions-and-intent',
+        description: prose, verdict: { ...truth, consequence: 'latent', latent_condition: 'Another caller' } })];
+    const result = filterStage({ findings: rows });
+    assert.deepEqual(result.filtered.map((f) => [f.id, f.verdict_route, f.report_destination]),
+      [['BUG', 'posted', 'main'], ['TEST', 'posted', 'main'], ['INTENT', 'posted-latent', 'suggestion']]);
+    assert.deepEqual(result.eliminated, []);
+  }
 });
 
 test('volume selection shares deterministic ranking and ignores confidence and prose length', () => {
   const rows = [makeFinding('b', { file: 'x', confidence: 100 }), makeFinding('a', { file: 'x', confidence: 0 })];
   assert.deepEqual(selectDelivery(rows, 1).map((f) => f.id), ['a']);
-});
-
-test('registry is closed over every confirmed consequence', () => {
-  assert.equal(Object.keys(VERDICT_ROUTES.confirmed).length, 4);
 });
 
 test('fresh typed verdicts and local-only outcomes survive persistence and resume', async () => {
@@ -107,7 +113,7 @@ test('fresh typed verdicts and local-only outcomes survive persistence and resum
 test('independent present failure restores severity after a latent validation', async () => {
   const validated = await validateStage({ parallel, agent: async () => ({ validations: [{ ...truth,
     finding_id: 'f', consequence: 'latent', latent_condition: 'Add a caller' }] }) }, { findings: [makeFinding('f')] });
-  const out = await challengeStage({ parallel, agent: async () => truth }, { findings: validated.findings.map(evaluateAdmission) });
+  const out = await challengeStage({ parallel, agent: async () => ({ verdict: truth }) }, { findings: validated.findings.map(evaluateAdmission) });
   assert.equal(out.findings[0].verdict_route, 'posted');
   assert.equal(out.findings[0].severity, 'high');
   assert.equal(out.findings[0].demoted_by, undefined);
@@ -140,14 +146,16 @@ test('typed survival feeds indivisible delivery groups and summaries keyed by th
   const agent = ctx.agent;
   ctx.agent = async (prompt, opts) => {
     if (opts.label.startsWith('validate-')) return { validations: findings.map(({ id: finding_id }) => ({
-      ...truth, finding_id, claim: finding_id === 'OPEN' ? 'not_established' : 'confirmed',
-      consequence: { ART: 'artifact_defect', LAT: 'latent', PREF: 'no_practical_effect' }[finding_id] ?? 'present_failure',
-      latent_condition: 'Add another caller', missing_fact: 'Which input reaches the branch?',
+      finding_id, justification: 'Inspected caller',
+      ...(finding_id === 'OPEN' ? { claim: 'not_established', missing_fact: 'Which input reaches the branch?' } : {
+        claim: 'confirmed', consequence: { ART: 'artifact_defect', LAT: 'latent', PREF: 'no_practical_effect' }[finding_id] ?? 'present_failure',
+        latent_condition: 'Add another caller',
+      }),
     })) };
-    if (opts.label.startsWith('challenge-')) return { ...truth,
+    if (opts.label.startsWith('challenge-')) return { verdict: { ...truth,
       consequence: prompt.includes('finding ART') ? 'artifact_defect' : prompt.includes('finding LAT') ? 'latent' : 'present_failure',
       latent_condition: 'Add another caller',
-    };
+    } };
     if (opts.label === 'group-findings') {
       assert.equal(opts.schema.properties.groups.items.properties.lead_id, undefined);
       assert.doesNotMatch(prompt, /finding PREF/);
@@ -165,4 +173,87 @@ test('typed survival feeds indivisible delivery groups and summaries keyed by th
   assert.equal(payload.findings.find((f) => f.id === 'ART').verdict.consequence, 'artifact_defect');
   assert.match(payload.report, /\*\*Verdict:\*\* confirmed \/ present_failure/);
   assert.equal(out.stats.challenge.grouping, 'model');
+});
+
+const refuted = { claim: 'refuted', justification: 'Existing guard prevents it', refutation_kind: 'guard_exists',
+  refutation: { file: 'guard', line_start: 1, line_end: 1, anchor: 'if (!input) return;' } };
+const unresolved = { claim: 'not_established', justification: 'Caller unavailable', missing_fact: 'Which caller supplies zero?' };
+
+for (const [validator, challenger, vcheck, ccheck, route] of [
+  [refuted, refuted, true, true, 'eliminated'], [refuted, refuted, false, true, 'report-only'],
+  [refuted, truth, true, false, 'report-only'], [truth, refuted, false, true, 'report-only'],
+  [refuted, unresolved, true, false, 'report-only'], [unresolved, truth, false, false, 'posted'],
+]) test(`security floor uses both independent verdicts: ${validator.claim}/${challenger.claim}/${vcheck}/${ccheck}`, async () => {
+  const ctx = { parallel, agent: async (prompt, opts) => {
+    if (opts.agentType === 'code-gauntlet:executor') {
+      const request = prompt.match(/--request '((?:[^']|'"'"')*)'/)[1].replaceAll("'\"'\"'", "'");
+      return { request, checks: [{ id: 'SEC', verified: opts.label === 'validate-refutations' ? vcheck : ccheck, reason: 'source checked' }] };
+    }
+    return opts.agentType === 'code-gauntlet:validator' ? { validations: [{ ...validator, finding_id: 'SEC' }] } : { verdict: challenger };
+  } };
+  const input = { findings: [makeFinding('SEC', { dimension: 'security' })], repoRoot: '/repo', pluginRoot: '/plugin',
+    diffPath: '/diff', headShaShort: 'abc1234', targetKind: 'pr' };
+  const first = await validateStage(ctx, input);
+  const filtered = filterStage({ findings: first.findings.map(evaluateAdmission) });
+  assert.equal(filtered.eliminated.length, 0);
+  const final = await challengeStage(ctx, { ...input, findings: filtered.filtered });
+  const f = [...final.findings, ...final.eliminated, ...final.unverified][0];
+  assert.equal(f.verdict_route, route);
+  assert.equal(final.eliminated.length, route === 'eliminated' ? 1 : 0);
+});
+
+test('malformed site returns isolate a finding and unconfirmed ranges are explicit data', async () => {
+  const out = await validateStage({ parallel, agent: async (prompt) => {
+    assert.match(prompt, /f:4-9 \| location_status=unconfirmed/);
+    return { validations: [{ ...truth, finding_id: 'bad', site_confirmations: {} }, { ...truth, finding_id: 'good' }] };
+  } }, { findings: [makeFinding('bad', { file: 'f', line_start: 4, line_end: 9, location_status: 'unconfirmed' }), makeFinding('good')] });
+  assert.equal(out.stats.validated, 1);
+  assert.equal(out.findings.find((f) => f.id === 'bad').verdict_route, 'not-established');
+});
+
+test('not-established challenge answers agree with survival counts', async () => {
+  const f = makeFinding('f', { verdict: truth, verdict_route: 'posted' });
+  evaluateAdmission(f);
+  const out = await challengeStage({ parallel, agent: async () => ({ verdict: unresolved }) }, { findings: [f] });
+  assert.equal(out.findings.length, 0);
+  assert.equal(out.unverified.length, 1);
+  assert.equal(out.stats.final_count, 0);
+  assert.equal(out.stats.challenge_survived, 0);
+});
+
+for (const [dimension, fields] of [
+  ['simplification', { quality_basis: 'current_correctness' }],
+  ['type_design', { quality_basis: 'simpler_equivalent', suggestion: 'Return the same value', behavior_preserved: 'Equivalent result' }],
+]) test(`artifact truth supplies semantic proof for ${dimension}/${fields.quality_basis}`, async () => {
+  const stage = await validateStage({ parallel, agent: async () => ({ validations: [{ ...truth, consequence: 'artifact_defect', finding_id: 'f' }] }) },
+    { findings: [makeFinding('f', { dimension, ...fields })] });
+  const f = evaluateAdmission(filterStage({ findings: stage.findings }).filtered[0]);
+  assert.equal(f.admission.status, 'admitted');
+  assert.equal(f.admission_assessments, undefined);
+});
+
+test('both readers store the same closed verdict and contradictory reachability is rejected', async () => {
+  const response = { ...truth, finding_id: 'f', validator_only: 'untrusted', verdict_route: 'eliminated' };
+  const first = await validateStage({ parallel, agent: async () => ({ validations: [response] }) }, { findings: [makeFinding('f')] });
+  assert.deepEqual(first.findings[0].verdict, truth);
+  const final = await challengeStage({ parallel, agent: async () => ({ verdict: response }) }, { findings: first.findings.map(evaluateAdmission) });
+  assert.deepEqual(final.findings[0].verdict, truth);
+  const bad = await validateStage({ parallel, agent: async () => ({ validations: [{ ...truth, finding_id: 'f', reachability: 'future_change_only' }] }) }, { findings: [makeFinding('f')] });
+  assert.equal(bad.stats.skipped, 1);
+  assert.equal(bad.findings[0].verdict_route, 'not-established');
+});
+
+test('a broken citation executor records a report gap instead of trusting refutations', async () => {
+  const out = await validateStage({ parallel, agent: async (_, opts) => {
+    if (opts.agentType === 'code-gauntlet:executor') throw new Error('executor failed');
+    return { validations: [{ ...refuted, finding_id: 'f' }] };
+  } }, { findings: [makeFinding('f')], repoRoot: '/repo', pluginRoot: '/plugin', diffPath: '/diff', headShaShort: 'abc1234', targetKind: 'pr' });
+  assert.equal(out.findings[0].verdict_route, 'not-established');
+  assert.match(out.gaps.join('\n'), /citation checker failed/);
+});
+
+test('resume without a verify handoff can validate and challenge its saved findings', async () => {
+  const args = validArgs({ verify: undefined, checkpoints: { verify: { findings: [makeFinding('SAVED')], verified: true } } });
+  const out = await runWith(makeCtx(args), args);
+  assert.equal(out.ok, true, JSON.stringify(out));
 });

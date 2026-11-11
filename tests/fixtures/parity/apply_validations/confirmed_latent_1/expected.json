@@ -3,13 +3,13 @@
   "findings": [
     {
       "confidence": 90,
-      "demoted_by": "reachability",
+      "demoted_by": "consequence",
       "demotion_reason": "Add a caller",
       "file": "src",
       "id": "f",
       "line_start": 10,
       "original_severity": "high",
-      "reachability": "current",
+      "reachability": "future_change_only",
       "report_destination": "suggestion",
       "report_tag": "suggestion",
       "severity": "low",
@@ -18,15 +18,13 @@
         "claim": "confirmed",
         "consequence": "latent",
         "justification": "Caller inspected",
-        "latent_condition": "Add a caller",
-        "reachability": "current"
+        "latent_condition": "Add a caller"
       },
       "verdict": {
         "claim": "confirmed",
         "consequence": "latent",
         "justification": "Caller inspected",
-        "latent_condition": "Add a caller",
-        "reachability": "current"
+        "latent_condition": "Add a caller"
       },
       "verdict_route": "posted-latent"
     }

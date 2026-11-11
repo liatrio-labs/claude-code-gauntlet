@@ -15,6 +15,6 @@ Rules in changed-file directories and their ancestors are collected with source 
 Markdown imports follow the same bounded collector as other project-rules files.
 
 Configuration blocks and headings no longer set confidence, severity, ignores, or delivery.
-A retired config block produces one local report notice and has no posting effect.
+A retired settings form produces one local report notice naming `CODE_GAUNTLET_DELIVERY` as the delivery replacement and has no posting effect.
 Use the documented environment pins for delivery controls. See the
 [format reference](../skills/code-gauntlet/references/review-md-spec.md).

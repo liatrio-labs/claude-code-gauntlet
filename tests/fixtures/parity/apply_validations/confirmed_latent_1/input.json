@@ -13,7 +13,6 @@
       "id": "f",
       "claim": "confirmed",
       "consequence": "latent",
-      "reachability": "current",
       "justification": "Caller inspected",
       "latent_condition": "Add a caller"
     }

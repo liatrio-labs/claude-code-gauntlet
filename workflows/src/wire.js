@@ -121,12 +121,6 @@ export function asText(value) {
   return typeof value === 'string' ? value : '';
 }
 
-// Keep infinities as numeric filter inputs; the report's finite-only policy is deliberately separate.
-// Non-numbers and NaN need the numeric fallback so arithmetic cannot concatenate text or propagate NaN.
-export function asConfidence(value) {
-  return typeof value === 'number' && !Number.isNaN(value) ? value : 0;
-}
-
 // Freeze nested row data too, since freezing a table alone still permits rule changes.
 const rejectFrozenCollectionMutation = () => { throw new TypeError('Cannot modify a frozen collection'); };
 

@@ -5,12 +5,17 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict
 
+from gauntlet import proc
 from gauntlet.cli import CliError, Command, Parser
-from gauntlet.diff import HeaderEvent, LineEvent, walk_diff
+from gauntlet.diff import HeaderEvent, LineEvent, patch_report_policy, walk_diff
+from gauntlet.git_diff import DIFF_FLAGS
 from gauntlet.location import SourceAdapter
+from gauntlet.paths import is_source_evidence_path
+from gauntlet.registry import ANCHOR_LIMITS
 
 
 class CitationWire(TypedDict):
@@ -32,8 +37,31 @@ _COMMENT = re.compile(
 _LINE_COMMENT = re.compile(r"(?:^|\s)(?://|\#|--|;|%).*$")
 
 
+@dataclass(frozen=True, slots=True)
+class ChangeFacts:
+    added: frozenset[tuple[str, int]]
+
+
+def change_facts(diff: str) -> ChangeFacts:
+    if not diff.startswith("diff --git "):
+        raise ValueError("unavailable_diff")
+    prefixed = patch_report_policy(diff) == "git-prefixed"
+    added = set()
+    path = ""
+    for event in walk_diff(diff, strict=True):
+        if isinstance(event, HeaderEvent) and event.kind == "new_path":
+            path = event.value.removeprefix("b/") if prefixed else event.value
+        elif (
+            isinstance(event, LineEvent)
+            and event.new_line is not None
+            and event.old_line is None
+        ):
+            added.add((path, event.new_line))
+    return ChangeFacts(frozenset(added))
+
+
 def check_citation(
-    citation: CitationWire, source: SourceAdapter, diff: str
+    citation: CitationWire, source: SourceAdapter, facts: ChangeFacts
 ) -> CheckWire:
     def reject(reason: str) -> CheckWire:
         return {"verified": False, "reason": reason}
@@ -46,14 +74,18 @@ def check_citation(
         not isinstance(file, str)
         or type(start) is not int
         or type(end) is not int
-        or not 1 <= start <= end <= start + 7
+        or not 1 <= start <= end <= start + ANCHOR_LIMITS["lines"] - 1
     ):
         return reject("invalid_span")
     lines = source.read(file)
     if lines is None or end > len(lines):
         return reject("unavailable_source")
     anchor = citation.get("anchor")
-    if not isinstance(anchor, str) or not anchor.strip() or len(anchor) > 400:
+    if (
+        not isinstance(anchor, str)
+        or not anchor.strip()
+        or len(anchor) > ANCHOR_LIMITS["chars"]
+    ):
         return reject("quote_mismatch")
     quoted = anchor.replace("\r\n", "\n").split("\n")
     # A citation may name surrounding context; resolve its contiguous quote within that span.
@@ -66,21 +98,10 @@ def check_citation(
     if len(matches) != 1:
         return reject("quote_mismatch")
     start, end = matches[0] + 1, matches[0] + len(quoted)
-    if not diff.startswith("diff --git "):
-        return reject("unavailable_diff")
-    added: set[tuple[str, int]] = set()
-    path = ""
-    for event in walk_diff(diff, strict=True):
-        if isinstance(event, HeaderEvent) and event.kind == "new_path":
-            path = event.value.removeprefix("b/")
-        elif (
-            isinstance(event, LineEvent)
-            and event.new_line is not None
-            and event.old_line is None
-        ):
-            added.add((path, event.new_line))
+    if not is_source_evidence_path(file):
+        return reject("non_source_evidence")
     # Requiring every cited line to predate the PR prevents padding a new guard with old context.
-    if any((file, line) in added for line in range(start, end + 1)):
+    if any((file, line) in facts.added for line in range(start, end + 1)):
         return reject("added_evidence")
     without_blocks = _COMMENT.sub(
         lambda m: "\n" * m.group().count("\n"), "\n".join(lines)
@@ -106,13 +127,45 @@ def _handle(args: argparse.Namespace) -> int:
     source = SourceAdapter.capture(args.repo_root, args.target_kind, args.head_sha)
     try:
         diff = args.diff_file.read_text(encoding="utf-8")
+        if args.incremental:
+            if not args.base_ref or not source.captured_head:
+                raise ValueError("full_pr_diff_unavailable")
+            base = proc.run_bytes(
+                [
+                    "git",
+                    "rev-parse",
+                    "--verify",
+                    "--end-of-options",
+                    args.base_ref + "^{commit}",
+                ],
+                cwd=str(args.repo_root),
+                timeout=5,
+            )
+            sha = base.stdout.decode("ascii").strip()
+            if base.returncode or not re.fullmatch(r"[0-9a-f]{40}", sha):
+                raise ValueError("full_pr_diff_unavailable")
+            full = proc.run_bytes(
+                ["git", "diff", *DIFF_FLAGS, sha + "..." + source.captured_head, "--"],
+                cwd=str(args.repo_root),
+                timeout=30,
+            )
+            if full.returncode:
+                raise ValueError("full_pr_diff_unavailable")
+            diff = full.stdout.decode("utf-8")
+        facts = change_facts(diff)
         checks = [
-            dict(id=row["id"], **check_citation(row.get("refutation"), source, diff))
+            dict(id=row["id"], **check_citation(row.get("refutation"), source, facts))
             for row in request["citations"]
         ]
-    except (OSError, ValueError):
+    except (OSError, ValueError, proc.TimeoutExpired):
         checks = [
-            dict(id=row["id"], verified=False, reason="unavailable_diff")
+            dict(
+                id=row["id"],
+                verified=False,
+                reason="full_pr_diff_unavailable"
+                if args.incremental
+                else "unavailable_diff",
+            )
             for row in request["citations"]
         ]
     print(json.dumps({"request": args.request, "checks": checks}))
@@ -127,4 +180,6 @@ parser.add_argument(
     "--target-kind", choices=("pr", "mr", "branch", "local"), required=True
 )
 parser.add_argument("--diff-file", type=Path, required=True)
+parser.add_argument("--incremental", action="store_true")
+parser.add_argument("--base-ref")
 CLI = Command(parser=parser, main=_handle)

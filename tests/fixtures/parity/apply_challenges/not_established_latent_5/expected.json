@@ -6,7 +6,7 @@
         "core": false,
         "inline_eligible": true,
         "input_fields": [],
-        "input_proof": "fnv1a32:0x09d1388d",
+        "input_proof": "fnv1a32:0xc7066614",
         "kind": "ordinary",
         "reasons": [
           {
@@ -23,11 +23,8 @@
       "challenge_justification": "Need caller",
       "challenge_verdict": {
         "claim": "not_established",
-        "consequence": "latent",
         "justification": "Need caller",
-        "latent_condition": "A caller passes zero",
-        "missing_fact": "Does a caller pass zero?",
-        "reachability": "uncertain"
+        "missing_fact": "Does a caller pass zero?"
       },
       "confidence": 90,
       "file": "src",
@@ -40,20 +37,15 @@
       "validation": "validated",
       "verdict": {
         "claim": "not_established",
-        "consequence": "latent",
         "justification": "Need caller",
-        "latent_condition": "A caller passes zero",
-        "missing_fact": "Does a caller pass zero?",
-        "reachability": "uncertain"
+        "missing_fact": "Does a caller pass zero?"
       },
       "verdict_route": "not-established"
     }
   ],
   "stats": {
-    "challenge_contested": 0,
-    "challenge_downgraded": 0,
     "challenge_removed": 0,
-    "challenge_survived": 1,
+    "challenge_survived": 0,
     "final_count": 1,
     "total_input": 1,
     "unchallenged": 0

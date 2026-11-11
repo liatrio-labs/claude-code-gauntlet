@@ -223,7 +223,9 @@ def sample_tables(sample, reader, bounded, proximity):
         consequence = verdict.get("consequence")
         worth[
             (
-                "yes"
+                "not_applicable"
+                if verdict.get("claim") in ("refuted", "not_established")
+                else "yes"
                 if consequence in ("present_failure", "latent", "artifact_defect")
                 else "no"
                 if consequence == "no_practical_effect"

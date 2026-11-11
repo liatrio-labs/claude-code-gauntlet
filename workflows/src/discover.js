@@ -1,3 +1,4 @@
+import { defineAgentCall } from './agentCalls.js';
 // Summary and discovery stages, finding schemas, and scope flags.
 import { AGENT_TYPE_TEST_ANALYZER, DIMENSIONS, DISPATCH_RESULTS, modelFor, DISCOVERY_FINDING_PROP_TYPES, FINDING_REQUIRED, conditionalSchemaActive } from './registry.js';
 import { computeLightEligible } from './knobs.js';
@@ -10,6 +11,9 @@ import { validateFindings } from './mergeFindings.js';
 
 // StructuredOutput requires an object wrapper around summary prose.
 const SUMMARIZE_SCHEMA = { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] };
+
+const callSummary = defineAgentCall('summarize', () => SUMMARIZE_SCHEMA);
+const callDiscovery = defineAgentCall('discover', findingSchema, () => agentSpecs().flatMap((spec) => [[spec, {}], [spec, { gateway: true }]]));
 
 export async function summarize(ctx, input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
@@ -26,28 +30,25 @@ export async function summarize(ctx, input) {
     if (bucketed) {
       const buckets = [];
       for (let i = 0; i < changedFiles.length; i += bucketSize) buckets.push(changedFiles.slice(i, i + bucketSize));
-      const thunks = buckets.map((files, idx) => () => ctx.agent(summarizePrompt(inp, files), {
+      const thunks = buckets.map((files, idx) => () => callSummary(ctx, summarizePrompt(inp, files), {
         label: `summarize-bucket-${idx}`,
         agentType: 'code-gauntlet:change-summarizer',
         model,
-        schema: SUMMARIZE_SCHEMA,
       }));
       const partials = (await ctx.parallel(thunks)).filter(Boolean);
       if (partials.length === 0) return { summary: '', gaps: ['summarize failed'] };
-      const mergeResult = await ctx.agent(summarizeMergePrompt(inp, partials), {
+      const mergeResult = await callSummary(ctx, summarizeMergePrompt(inp, partials), {
         label: 'summarize-merge',
         agentType: 'code-gauntlet:change-summarizer',
         model,
-        schema: SUMMARIZE_SCHEMA,
       });
       if (!mergeResult) return { summary: '', gaps: ['summarize failed'] };
       return { summary: mergeResult.summary || '', gaps: [] };
     }
-    const result = await ctx.agent(summarizePrompt(inp, changedFiles), {
+    const result = await callSummary(ctx, summarizePrompt(inp, changedFiles), {
       label: 'summarize',
       agentType: 'code-gauntlet:change-summarizer',
       model,
-      schema: SUMMARIZE_SCHEMA,
     });
     if (!result) return { summary: '', gaps: ['summarize failed'] };
     return { summary: result.summary || '', gaps: [] };
@@ -240,12 +241,11 @@ export async function discover(ctx, input) {
   // Labels preserve agent identity for gap attribution.
   const thunks = specs.map((spec) => {
     const model = modelFor(spec.agentType, policy);
-    return () => ctx.agent(discoverPrompt(inp, spec), {
+    return () => callDiscovery(ctx, discoverPrompt(inp, spec), {
       label: spec.agentType,
       agentType: spec.agentType,
       model,
-      schema: findingSchema(spec, policy),
-    });
+    }, spec, policy);
   });
 
   const results = await ctx.parallel(thunks);

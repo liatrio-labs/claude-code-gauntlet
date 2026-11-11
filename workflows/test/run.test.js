@@ -325,7 +325,7 @@ test('whole issue groups reach every artifact', async (t) => {
   const orphan = applyChallenges([
     member('REMOVED', { file: 'orphan.txt', consolidation_key: 'old', consolidation_primary: true }),
     member('ORPHAN', { file: 'orphan.txt', agent: 'security-reviewer', consolidation_key: 'old' }),
-  ], [{ id: 'REMOVED', claim: 'refuted', consequence: 'present_failure', reachability: 'current', justification: 'Guard', refutation_check: { verified: true } }, { id: 'ORPHAN', claim: 'confirmed', consequence: 'present_failure', reachability: 'current', justification: 'Caller' }]);
+  ], [{ id: 'REMOVED', claim: 'refuted', justification: 'Guard', refutation_kind: 'guard_exists', refutation: {file:'guard',line_start:1,line_end:1,anchor:'return safe;'}, refutation_check: { verified: true } }, { id: 'ORPHAN', claim: 'confirmed', consequence: 'present_failure', justification: 'Caller' }]);
   const orphanRun = await runAndCapture(validArgs({ checkpoints: { challenge: challengeOutput(orphan) } }));
   assert.deepEqual(orphanRun.payload.postReview.map((f) => f.delivery_group.finding_ids), [['ORPHAN']]);
   assert.equal(orphanRun.payload.postReview[0].consolidation_key, undefined);
@@ -391,7 +391,7 @@ test('final disposition survives replay and persistence', async () => {
   assert.equal(badProof.stats.verified, false);
   assert.equal(badProof.stats.unverified, 2);
   const scored = applyChallenges([makeFinding('NUMERIC'), makeFinding('SECURITY', { dimension: 'security', risk_level: 4 })],
-    [{ id: 'NUMERIC', claim: 'refuted', consequence: 'present_failure', reachability: 'current', justification: 'Guard', refutation_check: { verified: true } }, { id: 'SECURITY', claim: 'confirmed', consequence: 'latent', reachability: 'future_change_only', justification: 'Future', latent_condition: 'New caller' }]);
+    [{ id: 'NUMERIC', claim: 'refuted', justification: 'Guard', refutation_kind: 'guard_exists', refutation: {file:'guard',line_start:1,line_end:1,anchor:'return safe;'}, refutation_check: { verified: true } }, { id: 'SECURITY', claim: 'confirmed', consequence: 'latent', justification: 'Future', latent_condition: 'New caller' }]);
   assert.equal(scored.findings[0].severity, 'low');
   const raw = challengeOutput({ findings: [...scored.findings,
     makeFinding('BODY', { report_tag: 'suggestion', diff_validation: { in_diff: false, reason: 'off diff' } }),

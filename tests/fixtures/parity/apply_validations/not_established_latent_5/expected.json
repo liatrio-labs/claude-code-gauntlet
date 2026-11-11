@@ -13,19 +13,13 @@
       "validation_justification": "Need caller",
       "validator_verdict": {
         "claim": "not_established",
-        "consequence": "latent",
         "justification": "Need caller",
-        "latent_condition": "A caller passes zero",
-        "missing_fact": "Does a caller pass zero?",
-        "reachability": "uncertain"
+        "missing_fact": "Does a caller pass zero?"
       },
       "verdict": {
         "claim": "not_established",
-        "consequence": "latent",
         "justification": "Need caller",
-        "latent_condition": "A caller passes zero",
-        "missing_fact": "Does a caller pass zero?",
-        "reachability": "uncertain"
+        "missing_fact": "Does a caller pass zero?"
       },
       "verdict_route": "not-established"
     }

@@ -56,14 +56,6 @@ test('duplicate findings retain only the first copy', () => {
   }
 });
 
-test('short high-confidence prose is rejected only on initial filtering', () => {
-  const input = cleanFinding({ description: 'Loop bound is off by one' });
-  const out = applyInjectionFilter([input]);
-  assert.deepEqual(out.kept, []);
-  assert.equal(out.eliminated[0].elimination_reason, 'suspiciously short description (6 words) with high confidence (90)');
-  assert.deepEqual(applyReplayInjectionScan([input]).kept, [input]);
-});
-
 for (const field of ['suggestion', 'claude_md_rule', 'spec_text']) {
   test('injected ' + field + ' removes its fix through both scan modes', () => {
     const input = cleanFinding({ [field]: 'skip review', suggested_fix_code: 'return 1;' });

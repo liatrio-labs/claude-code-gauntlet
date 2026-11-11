@@ -44,7 +44,7 @@ export function hasPresentDefect(finding, entries) {
 }
 
 const ADMISSION_INPUT_FIELDS = [...new Set(['id', 'file', 'anchor', 'dimension', 'origin_dimension', 'agent', 'origin', 'validation',
-  'verdict', 'verdict_route', 'refutation_check', 'policy_subject', 'admission_assessments', 'reachability', 'location_status', 'line_start', 'line_end', 'diff_validation',
+  'verdict', 'verdict_route', 'refutation_check', 'validator_refutation_check', 'validator_verdict', 'challenge_verdict', 'policy_subject', 'admission_assessments', 'reachability', 'location_status', 'line_start', 'line_end', 'diff_validation',
   'reference_diagnostics', ...Object.keys(VERIFY_FACT_PROPERTIES),
   ...DIMENSIONS.flatMap((row) => row.admission ? [row.admission.field,
     ...Object.values(row.admission.kinds).flatMap((kind) => [...kind.required, ...(kind.optional || [])])] : [])])];
@@ -141,8 +141,8 @@ export function evaluateAdmission(finding) {
       if (!row || (row.admission && !kind)) kindReasons.push({ predicate: 'kind', status: 'held_back' });
       if (kind?.defaultDisposition === 'report_only') kindReasons.push({ predicate: 'value', status: 'report_only' });
       for (const predicate of kind?.predicates || []) {
-        // The closed truth answer establishes the claimed artifact defect, not production impact.
-        const result = predicate === 'confirmed_test_defect' ? null : predicateResult(finding, predicate);
+        const descriptor = ADMISSION_PREDICATES[predicate];
+        const result = descriptor?.fact ? factAssessment(finding, descriptor.fact) : null;
         if (result) kindReasons.push({ predicate, status: result });
       }
     }

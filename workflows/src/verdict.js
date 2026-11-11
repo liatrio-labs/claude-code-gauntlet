@@ -1,24 +1,45 @@
-import { VERDICT_ROUTES, VERDICT_SCHEMA } from './registry.js';
+import { VERDICT_ROUTES, VERDICT_PROPERTIES, VERDICT_CASES } from './registry.js';
+import { deepClone } from './wire.js';
 
 export function verdictRejections(value) {
-  if (!value || typeof value !== 'object') return ['missing_verdict'];
+  if (!value || typeof value !== 'object' || !Object.hasOwn(VERDICT_CASES, value.claim)) return ['missing_verdict'];
+  const fields = VERDICT_CASES[value.claim];
   const reasons = [];
-  for (const [key, schema] of Object.entries(VERDICT_SCHEMA.properties)) {
-    if (VERDICT_SCHEMA.required.includes(key) || value[key] !== undefined) {
-      if (schema.enum ? !schema.enum.includes(value[key]) : schema.type === 'string'
-        && (typeof value[key] !== 'string' || !value[key].trim())) reasons.push(`invalid_${key}`);
-    }
+  for (const key of ['claim', 'justification', ...fields]) {
+    const schema = VERDICT_PROPERTIES[key];
+    if (key === 'latent_condition' && value.consequence !== 'latent' && value[key] === undefined) continue;
+    if (schema.type === 'object' && (!value[key] || typeof value[key] !== 'object' || Array.isArray(value[key]))) reasons.push(`invalid_${key}`);
+    if (schema.enum ? !schema.enum.includes(value[key]) : schema.type === 'string'
+      && (typeof value[key] !== 'string' || !value[key].trim())) reasons.push(`invalid_${key}`);
   }
-  if (value.claim === 'not_established' && (typeof value.missing_fact !== 'string' || !value.missing_fact.trim())) reasons.push('missing_fact');
-  if (value.consequence === 'latent' && (typeof value.latent_condition !== 'string' || !value.latent_condition.trim())) reasons.push('latent_condition');
-  // Missing citations cannot refute, but are retained for the next independent check.
+  for (const key of Object.values(VERDICT_CASES).flat()) {
+    if (!fields.includes(key) && value[key] !== undefined) reasons.push(`unexpected_${key}`);
+  }
+  if (value.reachability !== undefined) reasons.push('unexpected_reachability');
+  if (value.site_confirmations !== undefined && (!Array.isArray(value.site_confirmations)
+    || value.site_confirmations.some((site) => !site || typeof site !== 'object'
+      || typeof site.file !== 'string' || !Number.isInteger(site.line_start) || !Number.isInteger(site.line_end)
+      || typeof site.confirmed !== 'boolean'))) reasons.push('invalid_site_confirmations');
   return reasons;
+}
+
+export function buildVerdict(value) {
+  return Object.fromEntries(['claim', 'justification', ...VERDICT_CASES[value.claim]]
+    .filter((key) => value[key] !== undefined).map((key) => [key, deepClone(value[key])]));
 }
 
 export function verdictRule(finding) {
   const value = finding.verdict;
   if (verdictRejections(value).length) return VERDICT_ROUTES.not_established;
-  if (value.claim === 'refuted') return VERDICT_ROUTES.refuted[finding.refutation_check?.verified === true ? 'verified' : 'unverified'];
+  const context = { dimension: finding.dimension?.toLowerCase(), phase: finding.challenge_verdict ? 'challenge' : 'validation', claim: value.claim,
+    verified: finding.refutation_check?.verified === true,
+    validatorRefuted: finding.validator_verdict?.claim === 'refuted',
+    validatorVerified: finding.validator_refutation_check?.verified === true,
+    anyRefutation: value.claim === 'refuted' || finding.validator_verdict?.claim === 'refuted' };
+  const override = VERDICT_ROUTES.overrides
+    .find((row) => Object.entries(row.when).every(([key, expected]) => context[key] === expected));
+  if (override) return override;
+  if (value.claim === 'refuted') return VERDICT_ROUTES.refuted[context.verified ? 'verified' : 'unverified'];
   return value.claim === 'confirmed' ? VERDICT_ROUTES.confirmed[value.consequence] : VERDICT_ROUTES.not_established;
 }
 
@@ -31,12 +52,13 @@ export function routeVerdict(finding) {
   }
   delete finding.route_reason;
   finding.verdict_route = rule.route;
-  finding.reachability = finding.verdict?.reachability ?? 'uncertain';
+  finding.reachability = finding.verdict?.claim === 'confirmed'
+    ? finding.verdict.consequence === 'latent' ? 'future_change_only' : 'current' : 'uncertain';
   finding.report_destination = finding.report_tag = rule.tier;
   if (rule.severity) {
     finding.original_severity ??= finding.severity;
     finding.severity = rule.severity;
-    finding.demoted_by = rule.demotion ?? 'reachability';
+    finding.demoted_by = 'consequence';
     finding.demotion_reason = finding.verdict.latent_condition ?? finding.verdict.justification;
   }
   return finding;

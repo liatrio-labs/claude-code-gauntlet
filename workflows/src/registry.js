@@ -304,6 +304,11 @@ export const VERDICT_ROUTES = deepFreeze({
     artifact_defect: { route: 'posted-artifact', status: 'admitted', tier: 'suggestion', severity: 'low', admission: 'kind', demotion: 'consequence' },
     no_practical_effect: { route: 'report-only', status: 'report_only', tier: 'suggestion' },
   },
+  overrides: [
+    { when: { dimension: 'security', phase: 'validation', claim: 'refuted' }, route: 'not-established', status: 'held_back', tier: 'main' },
+    { when: { dimension: 'security', phase: 'challenge', claim: 'refuted', verified: true, validatorRefuted: true, validatorVerified: true }, route: 'eliminated', status: 'report_only', tier: 'suggestion' },
+    { when: { dimension: 'security', phase: 'challenge', anyRefutation: true }, route: 'report-only', status: 'report_only', tier: 'main' },
+  ],
   refuted: { verified: { route: 'eliminated', status: 'report_only', tier: 'suggestion' },
     unverified: { route: 'not-established', status: 'held_back', tier: 'main' } },
   not_established: { route: 'not-established', status: 'held_back', tier: 'main' },
@@ -311,28 +316,36 @@ export const VERDICT_ROUTES = deepFreeze({
 export const VERDICT_PROPERTIES = deepFreeze({
   claim: { type: 'string', enum: ['confirmed', 'refuted', 'not_established'] },
   consequence: { type: 'string', enum: Object.keys(VERDICT_ROUTES.confirmed) },
-  reachability: { type: 'string', enum: ['current', 'future_change_only', 'uncertain'] },
   justification: { type: 'string', minLength: 1 },
   refutation_kind: { type: 'string', enum: ['premise_false', 'guard_exists', 'no_reachable_caller'] },
-  refutation: SOURCE_REFERENCE,
+  refutation: { ...SOURCE_REFERENCE, description: `Executable counter-evidence: at most ${ANCHOR_LIMITS.lines} inclusive source lines.`,
+    properties: { ...SOURCE_REFERENCE.properties, anchor: { type: 'string', minLength: 1, maxLength: ANCHOR_LIMITS.chars, pattern: `^(?:[^\\n]*\\n){0,${ANCHOR_LIMITS.lines - 1}}[^\\n]*$` },
+      line_end: { type: 'integer', minimum: 1, description: `Inclusive end, no more than ${ANCHOR_LIMITS.lines - 1} after line_start.` } } },
   missing_fact: { type: 'string', minLength: 1 },
   latent_condition: { type: 'string', minLength: 1 },
 });
-export const VERDICT_SCHEMA = deepFreeze({ type: 'object', properties: VERDICT_PROPERTIES,
-  required: ['claim', 'consequence', 'reachability', 'justification'], additionalProperties: false,
-  allOf: [
-    { if: { properties: { claim: { const: 'refuted' } }, required: ['claim'] }, then: { required: ['refutation_kind', 'refutation'] } },
-    { if: { properties: { claim: { const: 'not_established' } }, required: ['claim'] }, then: { required: ['missing_fact'] } },
-    { if: { properties: { consequence: { const: 'latent' } }, required: ['consequence'] }, then: { required: ['latent_condition'] } },
-  ],
+export const VERDICT_CASES = deepFreeze({
+  confirmed: ['consequence', 'latent_condition'],
+  refuted: ['refutation_kind', 'refutation'],
+  not_established: ['missing_fact'],
 });
-export const VALIDATION_RETURN_PROPERTIES = deepFreeze({ ...RECURRENCE_RETURN_PROPERTIES, ...VERDICT_PROPERTIES,
+export function verdictSchema(extra = {}, requiredExtra = []) {
+  return { type: 'object', properties: { ...VERDICT_PROPERTIES, ...extra },
+    required: ['claim', 'justification', ...requiredExtra], additionalProperties: false,
+    oneOf: Object.entries(VERDICT_CASES).map(([claim, fields]) => ({ type: 'object',
+      properties: { claim: { type: 'string', const: claim }, justification: VERDICT_PROPERTIES.justification,
+        ...Object.fromEntries(fields.map((key) => [key, VERDICT_PROPERTIES[key]])), ...extra },
+      required: ['claim', 'justification', ...fields.filter((key) => key !== 'latent_condition'), ...requiredExtra],
+      additionalProperties: false,
+      ...(claim === 'confirmed' ? { allOf: [{ if: { properties: { consequence: { const: 'latent' } }, required: ['consequence'] }, then: { required: ['latent_condition'] } }] } : {}),
+    })),
+  };
+}
+export const VERDICT_SCHEMA = deepFreeze(verdictSchema());
+export const VALIDATION_RETURN_PROPERTIES = deepFreeze({ ...RECURRENCE_RETURN_PROPERTIES, ...VERDICT_PROPERTIES });
+export const ADMISSION_STAMP_PROPERTIES = deepFreeze({
   policy_subject: { type: 'string', enum: Object.keys(POLICY_SUBJECTS) },
   admission_assessments: { type: 'array', items: ASSESSMENT },
-});
-export const ADMISSION_STAMP_PROPERTIES = deepFreeze({
-  policy_subject: VALIDATION_RETURN_PROPERTIES.policy_subject,
-  admission_assessments: VALIDATION_RETURN_PROPERTIES.admission_assessments,
   admission: { type: 'object', properties: {
     version: { type: 'integer', enum: [1] }, input_proof: { type: 'string' },
     input_fields: { type: 'array', items: { type: 'string' } },
@@ -459,8 +472,8 @@ export const PIPELINE_FINDING_FIELDS = deepFreeze([
   'agent', 'body', 'line', 'end_line', 'verified', 'validation', 'challenge',
   'validation_justification', 'challenge_justification', 'elimination_reason',
   'original_confidence', 'validator_confidence', 'reachability', 'challenge_score',
-  'verdict', 'validator_verdict', 'challenge_verdict', 'verdict_route', 'refutation_check',
-  'challenge_contested', 'severity_downgraded', 'original_severity',
+  'verdict', 'validator_verdict', 'challenge_verdict', 'verdict_route', 'refutation_check', 'validator_refutation_check',
+  'severity_downgraded', 'original_severity',
   'report_destination', 'report_tag', 'eliminated_by', 'replay_belt',
   'contested', 'contestation_drop', 'contestation_reason', 'demoted_by', 'demotion_reason',
   'consensus_count', 'consensus_boost', 'corroborated_by', 'corroborations',

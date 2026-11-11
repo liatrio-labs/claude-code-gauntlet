@@ -9,7 +9,7 @@ import json
 import re
 import subprocess
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory, TemporaryFile
 from typing import Any, Literal, TypedDict
@@ -617,7 +617,7 @@ def replay_delivery(inputs, *, candidate=False):
     request = dict(
         record,
         checkpoint=json.loads(inputs.checkpoint),
-        trace=asdict(inputs.trace) if inputs.trace is not None else None,
+        trace=inputs.trace.wire() if inputs.trace is not None else None,
     )
     # A file cannot fill a pipe while the host waits for the next dispatch.
     with (

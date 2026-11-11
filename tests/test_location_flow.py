@@ -143,7 +143,7 @@ for(const f of validated.findings){
 }
 const mapped=validated.findings.find(f=>f.id==='cross-test');
 assert.equal(mapped.effective_test_kind,'defective_test');assert.equal(mapped.test_kind,undefined);
-const challenged=await challengeStage({parallel:async ts=>Promise.all(ts.map(t=>t())),agent:async()=>({claim:'confirmed',consequence:'present_failure',reachability:'current',justification:'Inspected source'})},{findings:validated.findings});
+const challenged=await challengeStage({parallel:async ts=>Promise.all(ts.map(t=>t())),agent:async()=>({verdict:{claim:'confirmed',consequence:'present_failure',justification:'Inspected source'}})},{findings:validated.findings});
 const out=disposeFindings(challenged);
 for(const f of [...out.findings,...out.unverified])assert.equal(deliveryAllows(f,'body'),f.admission.status==='admitted',f.id);
 assert.equal(out.findings.find(f=>f.id==='source-test').disposition,'report_only');
@@ -433,13 +433,13 @@ const persist = async list => {
   if(!o.schema.properties.validations.items.properties.site_confirmations)throw Error('missing return metadata');
   const packet=JSON.parse(prompt.split(' | site_requests: ')[1].split('\n')[0]);
   if(packet.length!==4 || packet.some(s=>s.line_start!==7))throw Error('requests are not resolved');
-  return {validations:[{finding_id:'ISSUE',claim:'confirmed',consequence:'present_failure',reachability:'current',justification:'Inspected source',...(list===null?{}:{site_confirmations:list})},{finding_id:'CONSTITUENT',claim:'confirmed',consequence:'present_failure',reachability:'current',justification:'Inspected source'}]};
+  return {validations:[{finding_id:'ISSUE',claim:'confirmed',consequence:'present_failure',justification:'Inspected source',...(list===null?{}:{site_confirmations:list})},{finding_id:'CONSTITUENT',claim:'confirmed',consequence:'present_failure',justification:'Inspected source'}]};
  }},{findings:structuredClone(verified.findings)});
  const out=disposeFindings({...validated,findings:validated.findings.map(f=>evaluateAdmission({...f,challenge:'survived'}))});
  return writerPayload({findings:out.findings,postReview:selectDelivery(out.findings,1,'all'),checkpoints:{challenge:validated}});
 };
 const all = await persist(confirmations);
-const some = await persist([{...confirmations[0],confirmed:true},{...confirmations[1],confirmed:false},{...confirmations[3],confirmed:'true'},{file:'foreign.txt',line_start:7,line_end:7,confirmed:true}]);
+const some = await persist([{...confirmations[0],confirmed:true},{...confirmations[1],confirmed:false},{...confirmations[3],confirmed:false},{file:'foreign.txt',line_start:7,line_end:7,confirmed:true}]);
 const missing = await persist(null);
 const tampered = await verifyStage(context(true),input);
 process.stdout.write(JSON.stringify({all,some,missing,tampered,gaps:raw.gaps,resolved:verified.findings[0]}));

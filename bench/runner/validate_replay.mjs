@@ -111,7 +111,8 @@ export async function prepare(tree, payload, previous = []) {
   const { WORKFLOW_SCRIPT_CAP } = await moduleAt(tree, 'build.js');
   const input = { findings: payload.findings, limits: payload.limits, policy: payload.args.policy,
     python: payload.args.python, repoRoot: payload.args.repoRoot, pluginRoot: tree,
-    headShaShort: payload.args.headShaShort, targetKind: payload.args.verify.targetKind, diffPath: payload.args.diffPath,
+    headShaShort: payload.args.headShaShort, targetKind: payload.args.verify?.targetKind, diffPath: payload.args.diffPath,
+    incremental: payload.args.reviewScope?.kind === 'incremental', baseBranch: payload.args.baseBranch,
     contextLine: setupContext({ ...payload.args,
       contextPath: `${payload.args.outputDir}/code-gauntlet-context-${payload.args.headShaShort}.md` }).contextLine };
   const calls = await nextCalls(validateStage, input, previous);
@@ -154,7 +155,7 @@ export async function apply(tree, payload, dispatches) {
   const findings = stage.findings.map((finding) => {
     const outcome = outcomes.get(finding.id);
     if (!outcome) throw new Error(`missing filter outcome ${finding.id}`);
-    const rawRoute = outcome.filtered.verdict_route ?? (outcome.passes_filter ? 'posted' : 'eliminated');
+    const rawRoute = !outcome.passes_filter ? 'eliminated' : outcome.filtered.verdict_route ?? 'not-established';
     const route = rawRoute.startsWith('posted') && outcome.filtered.admission?.status !== 'admitted' ? 'report-only' : rawRoute;
     return { ...finding, ...outcome, verdict: finding.validator_verdict ?? null,
       route,

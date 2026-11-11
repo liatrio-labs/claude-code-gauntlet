@@ -6,7 +6,7 @@
         "core": false,
         "inline_eligible": true,
         "input_fields": [],
-        "input_proof": "fnv1a32:0x21cfe949",
+        "input_proof": "fnv1a32:0x77c909b5",
         "kind": "ordinary",
         "reasons": [
           {
@@ -24,8 +24,7 @@
       "challenge_verdict": {
         "claim": "confirmed",
         "consequence": "present_failure",
-        "justification": "Caller inspected",
-        "reachability": "current"
+        "justification": "Caller inspected"
       },
       "confidence": 90,
       "file": "src",
@@ -39,15 +38,12 @@
       "verdict": {
         "claim": "confirmed",
         "consequence": "present_failure",
-        "justification": "Caller inspected",
-        "reachability": "current"
+        "justification": "Caller inspected"
       },
       "verdict_route": "posted"
     }
   ],
   "stats": {
-    "challenge_contested": 0,
-    "challenge_downgraded": 0,
     "challenge_removed": 0,
     "challenge_survived": 1,
     "final_count": 1,

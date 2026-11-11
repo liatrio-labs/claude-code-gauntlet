@@ -86,13 +86,13 @@ The `all` policy is selected; `bounded` remains a diagnostic and is not applied 
 
 Confusion-table rows are validator answers and columns are independent-reader answers. Worth
 maps present failure, latent, and artifact defect to yes, no practical effect to no, independently of claim truth.
-Reader coverage is partial; `reader_matches` states the joined denominator. Baseline numeric
+Reader coverage is partial; `reader_matches` states the joined denominator. Refuted and not-established claims have no worth answer (`not_applicable`). Baseline numeric
 scores are never imputed as typed answers (`no_typed_verdict`). Baseline routes use the stored
 `passes_floor` observations; they do not reconstruct historical full delivery. Adjacent-pass
 route changes and findings that vary at all are reported separately for each arm and policy.
 
 With `SOURCE_RUN`, `SCORE_ID`, and `MIRRORS_DIR` set to the driving session's scored input and
-local mirrors, run these commands from the treatment tree. Use fresh output directories:
+local mirrors, and `PACK` containing the baseline passes and independent reader JSON, run these commands from the treatment tree. Use fresh output directories:
 
 ```bash
 python bench/runner/validate_replay.py \
@@ -107,7 +107,7 @@ python bench/runner/validate_replay.py \
   --replays 3 --out /tmp/verdict-followup-live \
   --child-auth subscription --child-model sonnet --child-effort low
 
-PACK=/private/tmp/claude-502/-Users-lee-personal-claude-deep-review/b6d8a8a7-f7c7-4b8f-8a8a-27c083fc5398/scratchpad/rounds/pack
+PACK=/path/to/baseline-evidence-pack
 python bench/analyze_verdicts.py \
   --replay-dir /tmp/verdict-followup-live --second-reader "$PACK/second_reader.json" \
   --baseline-pack "$PACK" --out /tmp/verdict-followup-analysis.json

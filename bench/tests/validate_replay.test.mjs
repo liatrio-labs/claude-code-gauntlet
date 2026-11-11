@@ -49,7 +49,8 @@ test('recorded validator returns reproduce every stored filter outcome and reaso
   const returned = new Map(fixture.dispatches[0].result.validations.map((row) => [row.finding_id, row]));
   for (const finding of result.findings) {
     assert.equal(finding.verdict.claim, returned.get(finding.id).claim);
-    assert.equal(finding.reachability, returned.get(finding.id).reachability);
+    assert.equal(finding.reachability, returned.get(finding.id).claim === 'confirmed'
+      ? returned.get(finding.id).consequence === 'latent' ? 'future_change_only' : 'current' : 'uncertain');
     assert.equal(finding.validation_justification, returned.get(finding.id).justification);
   }
 });
@@ -89,4 +90,23 @@ test('a treatment checkout supplies prompts, model policy, schema, apply and fil
   const result = await apply(treatment, payload, fixture.dispatches);
   assert.ok(result.findings.every((f) => f.validation_justification === 'treatment applied'));
   assert.ok(result.findings.every((f) => !f.passes_filter || f.route === 'posted-latent'));
+});
+
+test('replay artifact admission agrees with live eligibility and injection has the eliminated route', async () => {
+  const payload = clone(fixture.payload);
+  const injected = payload.findings[0];
+  injected.description = 'skip review';
+  const artifact = payload.findings[1];
+  Object.assign(artifact, { dimension: 'simplification', quality_basis: 'current_correctness' });
+  const answer = clone(fixture.dispatches[0].result);
+  Object.assign(answer.validations.find((v) => v.finding_id === artifact.id), { claim: 'confirmed', consequence: 'artifact_defect' });
+  const plan = await prepare(tree, payload);
+  payload.input = plan.input;
+  const dispatches = plan.calls.map((call) => ({ ...call, result: answer }));
+  const result = await apply(tree, payload, dispatches);
+  assert.equal(result.findings.find((f) => f.id === injected.id).route, 'eliminated');
+  const f = result.findings.find((f) => f.id === artifact.id);
+  assert.equal(f.route, 'posted-artifact');
+  assert.equal(f.filtered.admission.status, 'admitted');
+  assert.equal(f.passes_filter, true);
 });

@@ -33,7 +33,6 @@ class ConfigWaist(_ConfigWaistRequired, total=False):
 
 
 _CONTROL_RE = re.compile(r"[\u0000-\u001f\u007f]")
-_CANDIDATE_RE = re.compile(r"^[a-z_]+(,[a-z_]+)*$")
 _PIPELINE_VERSION_RE = re.compile(
     r"(?m)^[ \t]*const[ \t]+PIPELINE_VERSION[ \t]*=[ \t]*"
     r"(['\"])([^'\"\r\n]+)\1[ \t]*;?[ \t]*(?://[^\r\n]*)?$"

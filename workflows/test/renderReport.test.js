@@ -344,13 +344,7 @@ for (const row of SUMMARY_ROWS) test(`summary: ${row.name}`, () => {
   assert.deepEqual(surface(actual, row), row.expected);
 });
 
-test('contested finding stamp renders only for true', () => {
-  const contested = rendered({ findings: [finding('CONTESTED', { challenge_contested: true })] });
-  const uncontested = rendered({ findings: [finding('UNCONTESTED', { challenge_contested: false })] });
-  const bullet = '- **Contested:** the challenger could not confirm the cited location';
-  assert.ok(contested.includes(bullet));
-  assert.ok(!uncontested.includes(bullet));
-});
+
 
 test('spec text without a claude.md rule uses the fallback cited rule label', () => {
   const text = rendered({ findings: [finding('SPEC', { dimension: 'intent', spec_text: 'The specification text.',

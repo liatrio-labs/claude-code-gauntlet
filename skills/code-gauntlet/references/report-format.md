@@ -201,7 +201,6 @@ This summary describes the change context for the report.
 - **Location:** `{finding.file}:10-12`
 - **Dimension:** {finding.dimension}
 - **Origin:** surfaced — pre-existing, surfaced by this change
-- **Contested:** the challenger could not confirm the cited location
 
 {finding.description}
 

@@ -58,7 +58,7 @@ export function measurementScenario(mode = 'return', overrides = {}, options = {
       const ids = [...prompt.matchAll(/^- (\S+) \[/gm)].map((m) => m[1]);
       return { validations: ids.filter((id) => id !== 'SKIP').map((finding_id) => ({ finding_id,
         claim: 'confirmed', consequence: ['FILTER', 'REPORT'].includes(finding_id) ? 'no_practical_effect' : 'present_failure',
-        reachability: 'current', justification: 'Independent code inspection' })) };
+        justification: 'Independent code inspection' })) };
 
     }
     if (label === 'group-findings') {
@@ -69,8 +69,8 @@ export function measurementScenario(mode = 'return', overrides = {}, options = {
     }
     if (label.startsWith('challenge-')) {
       ctx.calls.push({ prompt, ...dispatch });
-      if (prompt.includes('finding SKIP')) return { claim: 'not_established', consequence: 'present_failure', reachability: 'uncertain', justification: 'Missing external caller', missing_fact: 'Which external caller supplies zero?' };
-      return { claim: 'confirmed', consequence: prompt.includes('finding REMOVE') ? 'no_practical_effect' : 'present_failure', reachability: 'current', justification: 'fixed independent check' };
+      if (prompt.includes('finding SKIP')) return { verdict: { claim: 'not_established', justification: 'Missing external caller', missing_fact: 'Which external caller supplies zero?' } };
+      return { verdict: { claim: 'confirmed', consequence: prompt.includes('finding REMOVE') ? 'no_practical_effect' : 'present_failure', justification: 'fixed independent check' } };
     }
     if (label === 'artifact-writer' || label === 'assemble-artifacts') {
       ctx.calls.push({ prompt, ...dispatch });

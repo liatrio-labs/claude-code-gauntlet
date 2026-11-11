@@ -146,7 +146,7 @@ test('challenge checkpoint persists grouping and resume never dispatches it agai
 test('group verdict statistics use actual challenge outcomes rather than the pass-through stamp', () => {
   const findings = members();
   const out = applyChallenges(findings, findings.map((f, i) => ({ id: f.id, claim: 'confirmed', consequence: i === 0 ? 'latent' : 'present_failure',
-    reachability: 'current', justification: 'Inspected caller', latent_condition: 'New caller' })));
+    justification: 'Inspected caller', latent_condition: 'New caller' })));
   assert.ok(out.findings.every((f) => f.challenge === 'survived'));
   const disposed = disposeFindings({ ...out, grouping_reply: reply, grouping_ids: findings.map((f) => f.id) });
   assert.equal(disposed.stats.grouping_verdicts[0].same_challenge_verdict, false);

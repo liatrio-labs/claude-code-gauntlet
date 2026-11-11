@@ -1,7 +1,8 @@
+import { defineAgentCall } from './agentCalls.js';
 import { locationAllows } from './location.js';
 // Validation, filtering, challenge, and delivery selection stages.
 import { effectiveBatchSize, effectiveChallengeCap, effectiveValidationRetrySize } from './capacity.js';
-import { modelFor, VALIDATION_RETURN_PROPERTIES, VERDICT_SCHEMA } from './registry.js';
+import { modelFor, VALIDATION_RETURN_PROPERTIES, VERDICT_SCHEMA, verdictSchema } from './registry.js';
 import { checkRefutations } from './refutations.js';
 import { verdictRejections } from './verdict.js';
 import { applyValidations } from './applyValidations.js';
@@ -13,13 +14,11 @@ import { deliveryGroups } from './dispose.js';
 import { hasAdmission } from './admission.js';
 
 // Both independent readers answer the same closed questions.
-const VALIDATE_SCHEMA = { type: 'object', properties: { validations: { type: 'array', items: {
-  ...VERDICT_SCHEMA, properties: { finding_id: { type: 'string' }, ...VERDICT_SCHEMA.properties,
-    site_confirmations: VALIDATION_RETURN_PROPERTIES.site_confirmations },
-  required: ['finding_id', ...VERDICT_SCHEMA.required],
-} } }, required: ['validations'], additionalProperties: false };
+const VALIDATE_SCHEMA = { type: 'object', properties: { validations: { type: 'array',
+  items: verdictSchema({ finding_id: { type: 'string' }, site_confirmations: VALIDATION_RETURN_PROPERTIES.site_confirmations }, ['finding_id']),
+} }, required: ['validations'], additionalProperties: false };
 
-function validateSchema() { return VALIDATE_SCHEMA; }
+const callValidator = defineAgentCall('validate', () => VALIDATE_SCHEMA);
 
 // Keep exact small returns and explicit truncation receipts without consuming the checkpoint budget.
 function validatorAudit(audit, label, result, rejections) {
@@ -54,8 +53,8 @@ export async function validateStage(ctx, input) {
   const terminalRejections = new Map();
   let completed = 0;
   let dispatched = 0;
-  const dispatch = (batch, label) => () => ctx.agent(validatePrompt(inp, batch, accepted), {
-    label, agentType: 'code-gauntlet:validator', model, schema: validateSchema(batch, accepted),
+  const dispatch = (batch, label) => () => callValidator(ctx, validatePrompt(inp, batch), {
+    label, agentType: 'code-gauntlet:validator', model,
   });
   const consume = (res, batch, label) => {
     const list = res === null || res === undefined
@@ -102,7 +101,7 @@ export async function validateStage(ctx, input) {
     }
   });
 
-  await checkRefutations(ctx, inp, [...accepted.values()], 'validate-refutations');
+  gaps.push(...await checkRefutations(ctx, inp, [...accepted.values()], 'validate-refutations'));
   const { adjustedCount } = applyValidations(findings, [...accepted.values()]);
 
   let skipped = 0;
@@ -126,7 +125,7 @@ export async function validateStage(ctx, input) {
 }
 
 function validatePrompt(inp, batch) {
-  const block = batch.map((f) => `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${f.line_start ?? '?'} — ${f.description || ''}${f.evidence ? ` | evidence: ${f.evidence}` : ''}${f.resolved_sites?.length ? ` | site_requests: ${JSON.stringify(f.resolved_sites)}` : ''}`).join('\n');
+  const block = batch.map((f) => `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${f.line_start ?? '?'}-${f.line_end ?? f.line_start ?? '?'} | location_status=${f.location_status ?? 'unconfirmed'} — ${f.description || ''}${f.evidence ? ` | evidence: ${f.evidence}` : ''}${f.resolved_sites?.length ? ` | site_requests: ${JSON.stringify(f.resolved_sites)}` : ''}`).join('\n');
   return `${inp.contextLine || ''}Return factual claim and consequence separately using the schema. Confirm additional sites only for the same correction.\nFindings:\n${block}`;
 }
 
@@ -137,7 +136,8 @@ export function filterStage(input) {
   return applyFilterPipeline(findings, inp.generatedAt);
 }
 
-const CHALLENGE_SCHEMA = VERDICT_SCHEMA;
+const CHALLENGE_SCHEMA = { type: 'object', properties: { verdict: VERDICT_SCHEMA }, required: ['verdict'], additionalProperties: false };
+const callChallenger = defineAgentCall('challenge', () => CHALLENGE_SCHEMA);
 
 // An explicit allowlist excludes confirming rationale even when new finding fields are added.
 // The location lets the challenger investigate the raw code independently.
@@ -181,7 +181,7 @@ export async function challengeStage(ctx, input) {
       findings: [], unverified: [], eliminated: [], gaps: [],
       stats: {
         total_input: 0, dispatched: 0, completed: 0, skipped: 0,
-        challenge_removed: 0, challenge_downgraded: 0, challenge_contested: 0,
+        challenge_removed: 0,
         challenge_survived: 0, unchallenged: 0, final_count: 0,
       },
       generated_at: inp.generatedAt,
@@ -198,11 +198,10 @@ export async function challengeStage(ctx, input) {
   const candidates = ranked.slice(0, cap);
   const overflow = ranked.slice(cap);
 
-  const thunks = candidates.map((finding, idx) => () => ctx.agent(challengePrompt(finding, inp.diffPath), {
+  const thunks = candidates.map((finding, idx) => () => callChallenger(ctx, challengePrompt(finding, inp.diffPath), {
     label: `challenge-${idx}`,
     agentType: 'code-gauntlet:challenger',
     model,
-    schema: CHALLENGE_SCHEMA,
   }));
 
   const results = thunks.length ? await ctx.parallel(thunks) : [];
@@ -212,7 +211,8 @@ export async function challengeStage(ctx, input) {
   const challenges = [];
   const skipped = [];
 
-  results.forEach((res, idx) => {
+  results.forEach((result, idx) => {
+    const res = result?.verdict;
     const finding = candidates[idx];
     if (verdictRejections(res).length) {
       gaps.push(`challenge-${idx}: challenger returned no typed verdict — finding ${finding.id} unchallenged`);
@@ -228,7 +228,7 @@ export async function challengeStage(ctx, input) {
     gaps.push(`challenge: ${overflow.length} finding(s) over challengeCap=${cap} left unchallenged (challenge=capped, pipeline-degraded)`);
   }
 
-  await checkRefutations(ctx, inp, challenges, 'challenge-refutations');
+  gaps.push(...await checkRefutations(ctx, inp, challenges, 'challenge-refutations'));
   const applied = applyChallenges(challenged, challenges);
   const unresolved = applied.findings.filter((f) => f.verdict_route === 'not-established');
   skipped.push(...unresolved);
@@ -248,11 +248,9 @@ export async function challengeStage(ctx, input) {
       completed: challenged.length,
       skipped: skipped.length,
       challenge_removed: applied.stats.challenge_removed,
-      challenge_downgraded: applied.stats.challenge_downgraded,
-      challenge_contested: applied.stats.challenge_contested,
       challenge_survived: applied.stats.challenge_survived,
       unchallenged: applied.stats.unchallenged,
-      final_count: applied.stats.final_count,
+      final_count: applied.findings.length + terminal.length,
     },
     generated_at: inp.generatedAt,
   };
@@ -261,15 +259,20 @@ export async function challengeStage(ctx, input) {
 // Delivery defaults to all survivors to avoid silently narrowing scope.
 // Persisting the selected set lets delivery consume the policy decision without independently filtering or ranking it.
 export function selectDelivery(survivors, cap, tier) {
-  const pool = deliveryGroups(survivors || []).filter(({ primary, corroborators }) => (
-    tier !== 'main_only' || groupDelivery(primary, corroborators).report_tag === 'main'
-  ));
-  // Rank a tolerant projection, preserving assessed findings and whole groups for persistence.
+  const pool = deliveryGroups(survivors || []).filter(({ primary, corroborators }) =>
+    tier !== 'main_only' || groupDelivery(primary, corroborators).report_tag === 'main');
   const rankable = pool.map(({ primary, corroborators }) => groupDelivery(
-    coerceReportFindings([primary])[0], coerceReportFindings(corroborators),
-  ));
-  const originalByRankable = new Map(rankable.map((finding, index) => [finding, pool[index]]));
-  let ranked = rankFindings(rankable).map((finding) => originalByRankable.get(finding));
+    coerceReportFindings([primary])[0], coerceReportFindings(corroborators)));
+  const originals = new Map(rankable.map((finding, index) => [finding, pool[index]]));
+  let ranked = rankFindings(rankable).map((finding) => originals.get(finding));
   if (cap !== undefined && cap !== null) ranked = ranked.slice(0, Math.max(0, cap));
   return ranked.flatMap(({ primary, corroborators }) => [primary, ...corroborators]);
+}
+
+export function deliveryOmissions(survivors, selected, tier) {
+  const posted = new Set(selected);
+  return deliveryGroups(survivors).filter(({ primary }) => !posted.has(primary)).map(({ primary, corroborators }) => ({
+    findings: [primary, ...corroborators],
+    reason: tier === 'main_only' && groupDelivery(primary, corroborators).report_tag !== 'main' ? 'delivery_tier' : 'delivery_cap',
+  }));
 }

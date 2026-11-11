@@ -169,3 +169,34 @@ def test_artifact_route_counts_released_bugs_other_places_and_reader_agreement()
         reader_worth_yes=1,
         reader_worth_no=1,
     )
+
+
+def test_nonconfirmed_claims_have_no_invented_worth_answer():
+    rows = (
+        dict(
+            id="r",
+            file="source",
+            line_start=1,
+            route="report-only",
+            verdict=dict(claim="refuted", justification="Existing guard"),
+        ),
+        dict(
+            id="u",
+            file="source",
+            line_start=20,
+            route="not-established",
+            verdict=dict(
+                claim="not_established",
+                missing_fact="Which caller?",
+                justification="Unavailable",
+            ),
+        ),
+    )
+    observations = Sample("treatment", "pass1", "pr", rows, frozenset(), 1)
+    reader = [
+        dict(pr="pr", id="r", claim="refuted", worth="no"),
+        dict(pr="pr", id="u", claim="unverified", worth="yes"),
+    ]
+    result = analyze([observations], reader, expected_bugs=0)
+    table = result["policies"]["all"]["treatment"]["average"]["worth_confusion"]
+    assert table == {"not_applicable": {"no": 1, "yes": 1}}

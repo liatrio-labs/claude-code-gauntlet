@@ -8,8 +8,8 @@ Describe repository invariants, intent, and concrete review concerns. Rules are 
 they do not configure the pipeline or override its verification and delivery decisions.
 
 Fenced configuration blocks, confidence and severity thresholds, ignore lists, per-directory
-settings overrides, and `Default Delivery` settings are unsupported. A detected retired config
-block produces one line in the local report; it neither fails the review nor creates a comment.
+settings overrides, and `Default Delivery` settings are unsupported. A detected retired settings form produces one line in the local report naming
+`CODE_GAUNTLET_DELIVERY` as the delivery replacement; it neither fails the review nor creates a comment.
 Delivery channels, tier, and comment caps use the existing environment pins and mode defaults.
 
 See [authoring examples](../../../docs/review-md-authoring.md) and the

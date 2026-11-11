@@ -173,10 +173,10 @@ export function makeCtx(args, opts = {}) {
     }
     if (label.startsWith('validate-batch-')) {
       const ids = [...prompt.matchAll(/^- (\S+) \[/gm)].map((m) => m[1]);
-      return { validations: ids.map((finding_id) => ({ finding_id, claim: 'confirmed', consequence: 'present_failure', reachability: 'current', justification: 'Present failing input inspected' })) };
+      return { validations: ids.map((finding_id) => ({ finding_id, claim: 'confirmed', consequence: 'present_failure', justification: 'Present failing input inspected' })) };
     }
     if (label === 'group-findings') return { groups: [] };
-    if (label.startsWith('challenge-')) return { claim: 'confirmed', consequence: 'present_failure', reachability: 'current', justification: 'claim holds' };
+    if (label.startsWith('challenge-')) return { verdict: { claim: 'confirmed', consequence: 'present_failure', justification: 'claim holds' } };
     if (label === 'artifact-writer') {
       if (opts.onPersist) opts.onPersist(parseWriterPayload(prompt));
       // Faithful writer: echo the exact planned paths so writeArtifacts' write-proof gate

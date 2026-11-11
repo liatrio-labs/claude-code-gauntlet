@@ -19,7 +19,7 @@ test('retired settings cannot gate findings and the notice is local only', async
   const out = await runWith(ctx,args);
   assert.equal(out.ok,true);
   assert.deepEqual(payload.postReview.map(f=>f.id),['F1','F2']);
-  const notice='REVIEW.md settings are no longer supported; its prose is read as project rules.';
+  const notice='REVIEW.md settings are no longer supported; use CODE_GAUNTLET_DELIVERY for delivery; its prose is read as project rules.';
   assert.equal(payload.report.split(notice).length-1,1);
   assert.equal(JSON.stringify(payload.postReview).includes(notice),false);
   assert.equal(out.gaps.some(g=>g.includes('REVIEW.md')),false);

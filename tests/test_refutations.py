@@ -1,226 +1,262 @@
-"""The command boundary checks real source, resolved quotes and added-line ownership."""
+"""Refutation checks at the command boundary use captured source and change ownership."""
 
 import json
+import os
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+SOURCE = "#include <stdbool.h>\nint use(int value) {\n  if (!value) return 0;\n  // intentional: ignore this failure\n  return added_guard(value);\n}\n"
+PATCH = "diff --git a/source b/source\n--- a/source\n+++ b/source\n@@ -1,5 +1,6 @@\n #include <stdbool.h>\n int use(int value) {\n   if (!value) return 0;\n   // intentional: ignore this failure\n+  return added_guard(value);\n }\n"
 
 
-@pytest.mark.parametrize(
-    "line,anchor,verified,reason",
-    [
-        (1, "if (!value) return;", True, "resolved_preexisting_code"),
-        (2, "// intentional: ignore this failure", False, "comment_only"),
-        (3, "return added_guard(value);", False, "added_evidence"),
-        (1, "a fictional guard", False, "quote_mismatch"),
-        (20, "missing", False, "unavailable_source"),
-    ],
-)
-def test_refutation_command_resolves_existing_code_only(
-    tmp_path, line, anchor, verified, reason
+def citation(start=3, end=3, anchor="if (!value) return 0;", file="source"):
+    return dict(file=file, line_start=start, line_end=end, anchor=anchor)
+
+
+def check(
+    tmp_path,
+    citations,
+    *,
+    text=SOURCE,
+    diff=PATCH,
+    file="source",
+    head="abc1234",
+    kind="local",
+    extra=(),
+    env=None,
 ):
-    (tmp_path / "source").write_text(
-        "if (!value) return;\n// intentional: ignore this failure\nreturn added_guard(value);\n",
-        encoding="utf-8",
-    )
-    diff = tmp_path / "diff.patch"
-    diff.write_text(
-        "diff --git a/source b/source\n--- a/source\n+++ b/source\n@@ -1,2 +1,3 @@\n if (!value) return;\n // intentional: ignore this failure\n+return added_guard(value);\n",
-        encoding="utf-8",
-    )
+    path = tmp_path / file
+    if text is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    patch = tmp_path / "diff.patch"
+    patch.write_text(diff, encoding="utf-8")
     request = json.dumps(
         {
             "citations": [
-                {
-                    "id": "f",
-                    "refutation": {
-                        "file": "source",
-                        "line_start": line,
-                        "line_end": line,
-                        "anchor": anchor,
-                    },
-                }
+                dict(id=str(i), refutation=value) for i, value in enumerate(citations)
             ]
         }
     )
     result = subprocess.run(
         [
-            "python3",
+            sys.executable,
             str(ROOT / "scripts/check_refutations.py"),
             "--request",
             request,
             "--repo-root",
             str(tmp_path),
             "--head-sha",
-            "abc1234",
+            head,
             "--target-kind",
-            "local",
+            kind,
             "--diff-file",
-            str(diff),
+            str(patch),
+            *extra,
         ],
         check=True,
+        env=env,
         capture_output=True,
         text=True,
         encoding="utf-8",
     )
-    assert json.loads(result.stdout) == {
-        "request": request,
-        "checks": [{"id": "f", "verified": verified, "reason": reason}],
-    }
+    output = json.loads(result.stdout)
+    assert output["request"] == request
+    return output["checks"]
 
 
-def test_refutation_uses_captured_head_and_rejects_escape_and_comment_padding(tmp_path):
-    def git(*args):
-        return subprocess.run(
-            ["git", "-C", str(tmp_path), *args],
-            check=True,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-        ).stdout.strip()
+@pytest.mark.parametrize(
+    "value,reason",
+    [
+        (citation(), "resolved_preexisting_code"),
+        (citation(2, 4), "resolved_preexisting_code"),
+        (citation(4, 4, "// intentional: ignore this failure"), "comment_only"),
+        (citation(3, 5, "return added_guard(value);"), "added_evidence"),
+        (citation(1, 2), "quote_mismatch"),
+        (citation(3, 3, "fictional guard"), "quote_mismatch"),
+        (citation(20, 20), "unavailable_source"),
+        (citation(1, 9), "invalid_span"),
+        (citation(3, 3, "return " + "x" * 401 + ";"), "quote_mismatch"),
+        (citation(file="../source"), "unavailable_source"),
+    ],
+)
+def test_refutation_resolves_real_preexisting_executable_lines(tmp_path, value, reason):
+    text, diff = SOURCE, PATCH
+    if value["line_end"] == 9:
+        text += "int unchanged;\n" * 4
+    if len(value["anchor"]) > 400:
+        text = text.replace("if (!value) return 0;", value["anchor"])
+        diff = diff.replace("if (!value) return 0;", value["anchor"])
+    assert check(tmp_path, [value], text=text, diff=diff) == [
+        dict(id="0", verified=reason == "resolved_preexisting_code", reason=reason)
+    ]
 
-    git("init", "-q")
-    (tmp_path / "source").write_text(
-        "/* intentional\nthis is safe\n*/\nreturn guarded;\n", encoding="utf-8"
+
+@pytest.mark.parametrize(
+    "file,text",
+    [
+        ("docs/source", "This return value is intentional.\n"),
+        ("README.md", "The system is intentionally designed this way.\n"),
+        ("data/record", '{"return": "guarded"}\n'),
+        ("vendor/source", SOURCE),
+    ],
+)
+def test_non_source_quotes_never_refute(tmp_path, file, text):
+    value = citation(1, 1, text.splitlines()[0], file)
+    assert (
+        check(tmp_path, [value], file=file, text=text)[0]["reason"]
+        == "non_source_evidence"
     )
-    git("add", "source")
+
+
+def git(root, *args):
+    return subprocess.run(
+        ["git", "-C", str(root), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    ).stdout.strip()
+
+
+def commit(root):
+    git(root, "add", ".")
     git(
+        root,
         "-c",
         "user.name=Test",
         "-c",
         "user.email=test@example.com",
         "commit",
         "-qm",
-        "base",
+        "fixture",
     )
-    sha = git("rev-parse", "HEAD")
-    (tmp_path / "source").write_text("return forged;\n", encoding="utf-8")
-    diff = tmp_path / "diff.patch"
-    diff.write_text(
-        "diff --git a/other b/other\n--- a/other\n+++ b/other\n@@ -1 +1 @@\n-old\n+new\n",
-        encoding="utf-8",
-    )
-    citations = [
-        dict(
-            id="old",
-            refutation=dict(
-                file="source", line_start=4, line_end=4, anchor="return guarded;"
-            ),
-        ),
-        dict(
-            id="comment",
-            refutation=dict(
-                file="source", line_start=2, line_end=2, anchor="this is safe"
-            ),
-        ),
-        dict(
-            id="escape",
-            refutation=dict(
-                file="../source", line_start=1, line_end=1, anchor="return forged;"
-            ),
-        ),
-    ]
-    result = subprocess.run(
-        [
-            "python3",
-            str(ROOT / "scripts/check_refutations.py"),
-            "--request",
-            json.dumps(dict(citations=citations)),
-            "--repo-root",
-            str(tmp_path),
-            "--head-sha",
-            sha,
-            "--target-kind",
-            "pr",
-            "--diff-file",
-            str(diff),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    )
-    assert [row["verified"] for row in json.loads(result.stdout)["checks"]] == [
-        True,
-        False,
-        False,
-    ]
+    return git(root, "rev-parse", "HEAD")
 
 
-@pytest.mark.parametrize(
-    "start,end,anchor,verified,reason",
-    [
-        (
-            1,
-            4,
-            "if (!value) return;\n    return existing(value);",
-            True,
-            "resolved_preexisting_code",
-        ),
-        (3, 5, "return added_guard(value);", False, "added_evidence"),
-        (1, 2, "return existing(value);", False, "quote_mismatch"),
-        (
-            1,
-            4,
-            "if (!value) return;\nreturn added_guard(value);",
-            False,
-            "quote_mismatch",
-        ),
-        (1, 4, "intentional", False, "quote_mismatch"),
-        (1, 6, "// intentional: ignore this failure", False, "comment_only"),
-        (1, 7, "}", False, "quote_mismatch"),
-    ],
-)
-def test_refutation_command_resolves_only_unique_contiguous_lines_in_cited_span(
-    tmp_path, start, end, anchor, verified, reason
+def test_captured_head_wins_over_worktree_and_incremental_uses_full_local_range(
+    tmp_path,
 ):
-    (tmp_path / "source").write_text(
-        "function f() {\n    if (!value) return;\n    return existing(value);\n}\nreturn added_guard(value);\n// intentional: ignore this failure\n}\n",
-        encoding="utf-8",
+    git(tmp_path, "init", "-q")
+    source = tmp_path / "source"
+    source.write_text(SOURCE.replace("  if (!value) return 0;\n", ""), encoding="utf-8")
+    base = commit(tmp_path)
+    source.write_text(SOURCE, encoding="utf-8")
+    first = commit(tmp_path)
+    (tmp_path / "other").write_text("unrelated\n", encoding="utf-8")
+    head = commit(tmp_path)
+    partial = git(tmp_path, "diff", first, head) + "\n"
+    source.write_text("forged guard\n", encoding="utf-8")
+    assert check(tmp_path, [citation()], text=None, diff=partial, head=head, kind="pr")[
+        0
+    ]["verified"]
+    assert (
+        check(
+            tmp_path,
+            [citation()],
+            text=None,
+            diff=partial,
+            head=head,
+            kind="pr",
+            extra=("--incremental", "--base-ref", base),
+        )[0]["reason"]
+        == "added_evidence"
     )
-    diff = tmp_path / "diff.patch"
-    diff.write_text(
-        "diff --git a/source b/source\n--- a/source\n+++ b/source\n@@ -1,6 +1,7 @@\n function f() {\n     if (!value) return;\n     return existing(value);\n }\n+return added_guard(value);\n // intentional: ignore this failure\n }\n",
-        encoding="utf-8",
+    assert (
+        check(
+            tmp_path,
+            [citation()],
+            text=None,
+            diff=partial,
+            head=head,
+            kind="pr",
+            extra=("--incremental", "--base-ref", "missing"),
+        )[0]["reason"]
+        == "full_pr_diff_unavailable"
     )
+
+
+def test_verbatim_gitlab_path_keeps_its_real_b_directory(tmp_path):
+    diff = PATCH.replace(
+        "diff --git a/source b/source", "diff --git b/source b/source"
+    ).replace("--- a/source", "--- b/source")
+    assert (
+        check(
+            tmp_path,
+            [citation(5, 5, "return added_guard(value);", "b/source")],
+            file="b/source",
+            diff=diff,
+        )[0]["reason"]
+        == "added_evidence"
+    )
+
+
+def test_command_builds_change_ownership_once_for_multiple_citations(
+    tmp_path, monkeypatch, capsys
+):
+    from gauntlet import refutations
+
+    (tmp_path / "source").write_text(SOURCE, encoding="utf-8")
+    patch = tmp_path / "diff.patch"
+    patch.write_text(PATCH, encoding="utf-8")
+    walks = []
+    original = refutations.walk_diff
+
+    def counted(*args, **kwargs):
+        walks.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(refutations, "walk_diff", counted)
     request = json.dumps(
-        {
-            "citations": [
-                {
-                    "id": "f",
-                    "refutation": {
-                        "file": "source",
-                        "line_start": start,
-                        "line_end": end,
-                        "anchor": anchor,
-                    },
-                }
+        {"citations": [dict(id=str(i), refutation=citation()) for i in range(2)]}
+    )
+    assert (
+        refutations.CLI.invoke(
+            [
+                "--request",
+                request,
+                "--repo-root",
+                str(tmp_path),
+                "--head-sha",
+                "abc1234",
+                "--target-kind",
+                "local",
+                "--diff-file",
+                str(patch),
             ]
-        }
+        )
+        == 0
     )
-    result = subprocess.run(
-        [
-            "python3",
-            str(ROOT / "scripts/check_refutations.py"),
-            "--request",
-            request,
-            "--repo-root",
-            str(tmp_path),
-            "--head-sha",
-            "abc1234",
-            "--target-kind",
-            "local",
-            "--diff-file",
-            str(diff),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
+    checks = json.loads(capsys.readouterr().out)["checks"]
+    assert all(row["verified"] for row in checks)
+    assert len(walks) == 1
+
+
+def test_refutations_need_no_content_classifier_binary(tmp_path):
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    (tools / "git").symlink_to(shutil.which("git"))
+    env = {**os.environ, "PATH": str(tools)}
+    assert check(tmp_path, [citation()], env=env)[0]["verified"]
+    assert check(
+        tmp_path,
+        [citation(1, 1, "return value;", "src/unfamiliar.language")],
+        file="src/unfamiliar.language",
+        text="return value;\n",
+        env=env,
+    )[0]["verified"]
+    assert (
+        check(
+            tmp_path,
+            [citation(1, 1, "return value;", "docs/unfamiliar.language")],
+            file="docs/unfamiliar.language",
+            text="return value;\n",
+            env=env,
+        )[0]["reason"]
+        == "non_source_evidence"
     )
-    assert json.loads(result.stdout)["checks"] == [
-        {"id": "f", "verified": verified, "reason": reason}
-    ]

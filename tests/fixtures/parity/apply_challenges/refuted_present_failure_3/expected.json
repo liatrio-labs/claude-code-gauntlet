@@ -6,7 +6,7 @@
         "core": false,
         "inline_eligible": true,
         "input_fields": [],
-        "input_proof": "fnv1a32:0x70d2a321",
+        "input_proof": "fnv1a32:0xdb48324c",
         "kind": "ordinary",
         "reasons": [
           {
@@ -23,16 +23,20 @@
       "challenge_justification": "Guard exists",
       "challenge_verdict": {
         "claim": "refuted",
-        "consequence": "present_failure",
         "justification": "Guard exists",
-        "reachability": "current",
+        "refutation": {
+          "anchor": "return safe;",
+          "file": "guard",
+          "line_end": 1,
+          "line_start": 1
+        },
         "refutation_kind": "guard_exists"
       },
       "confidence": 90,
       "file": "src",
       "id": "f",
       "line_start": 10,
-      "reachability": "current",
+      "reachability": "uncertain",
       "refutation_check": {
         "verified": false
       },
@@ -42,19 +46,21 @@
       "validation": "validated",
       "verdict": {
         "claim": "refuted",
-        "consequence": "present_failure",
         "justification": "Guard exists",
-        "reachability": "current",
+        "refutation": {
+          "anchor": "return safe;",
+          "file": "guard",
+          "line_end": 1,
+          "line_start": 1
+        },
         "refutation_kind": "guard_exists"
       },
       "verdict_route": "not-established"
     }
   ],
   "stats": {
-    "challenge_contested": 0,
-    "challenge_downgraded": 0,
     "challenge_removed": 0,
-    "challenge_survived": 1,
+    "challenge_survived": 0,
     "final_count": 1,
     "total_input": 1,
     "unchallenged": 0

@@ -4,28 +4,27 @@ import json
 import re
 import subprocess
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from gauntlet import config as resolver
+from gauntlet.registry import KNOB_REGISTRY
 
 ROOT = Path(__file__).resolve().parents[1]
 
-INTERACTIVE_ECHO = {
-    "model_tier": {"value": "optimized", "source": "fixed"},
-    "pr_comment_cap": {"value": "null", "source": "default"},
-    "delivery_tier": {"value": "all", "source": "default"},
+DEFAULT_ECHO = {
+    mode: {
+        row["key"]: {
+            "value": row["defaults"][mode][0],
+            "source": row["defaults"][mode][1],
+        }
+        for row in cast(tuple[dict[str, Any], ...], KNOB_REGISTRY)
+        if mode in row["modes"]
+    }
+    for mode in ("interactive", "headless")
 }
-HEADLESS_ECHO = {
-    "model_tier": {"value": "optimized", "source": "default"},
-    "delivery": {"value": "markdown", "source": "default"},
-    "post_mode": {"value": "dry-run", "source": "default"},
-    "pr_comment_cap": {"value": "6", "source": "default"},
-    "delivery_tier": {"value": "all", "source": "default"},
-    "draft_policy": {"value": "review", "source": "default"},
-    "reviewed_policy": {"value": "full", "source": "default"},
-    "pr_not_found_policy": {"value": "error", "source": "default"},
-    "trivial_scope": {"value": "full", "source": "default"},
-}
+INTERACTIVE_ECHO = DEFAULT_ECHO["interactive"]
+HEADLESS_ECHO = DEFAULT_ECHO["headless"]
 HEADLESS_RESOLVED = {
     "model_tier": "optimized",
     "delivery": ["markdown"],
@@ -152,22 +151,14 @@ def test_cli_shape_identity_and_stderr_block(config_cli, mode):
     }
     echo = HEADLESS_ECHO if mode == "headless" else INTERACTIVE_ECHO
     resolved = HEADLESS_RESOLVED if mode == "headless" else {"model_tier": "optimized"}
-    prefix = (
-        "Headless config:\n"
-        "  model_tier=optimized (default)\n"
-        "  delivery=markdown (default)\n"
-        "  post_mode=dry-run (default)\n"
-        "  pr_comment_cap=6 (default)\n"
-        "  delivery_tier=all (default)\n"
-        "  draft_policy=review (default)\n"
-        "  reviewed_policy=full (default)\n"
-        "  pr_not_found_policy=error (default)\n"
-        "  trivial_scope=full (default)\n"
-        if mode == "headless"
-        else "Resolved config:\n"
-        "  model_tier=optimized (fixed)\n"
-        "  pr_comment_cap=null (default)\n"
-        "  delivery_tier=all (default)\n"
+    if mode == "headless":
+        assert payload["waist"]["configEcho"]["pr_comment_cap"] == {
+            "value": "25",
+            "source": "default",
+        }
+    label = "Headless" if mode == "headless" else "Resolved"
+    prefix = f"{label} config:\n" + "".join(
+        f"  {key}={entry['value']} ({entry['source']})\n" for key, entry in echo.items()
     )
     block = (
         prefix + f"  pipeline_version={manifest['version']} (bundle)\n"

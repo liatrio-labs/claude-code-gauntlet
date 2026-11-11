@@ -14,14 +14,12 @@
       "validator_verdict": {
         "claim": "confirmed",
         "consequence": "no_practical_effect",
-        "justification": "Caller inspected",
-        "reachability": "current"
+        "justification": "Caller inspected"
       },
       "verdict": {
         "claim": "confirmed",
         "consequence": "no_practical_effect",
-        "justification": "Caller inspected",
-        "reachability": "current"
+        "justification": "Caller inspected"
       },
       "verdict_route": "report-only"
     }

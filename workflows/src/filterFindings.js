@@ -111,8 +111,7 @@ export function tagFindings(findings) {
   for (const finding of findings) {
     delete finding.consolidation_key;
     delete finding.consolidation_primary;
-    const tier = finding.verdict_route === 'posted' || finding.verdict_route === 'not-established' ? 'main' : 'suggestion';
-    finding.report_destination = finding.report_tag = tier;
+    const tier = finding.report_tag;
     if (tier === 'main') mainCount += 1;
     else suggestionCount += 1;
   }
@@ -150,10 +149,8 @@ export function applyFilterPipeline(findings, generatedAt) {
     const { row, kind } = findingPolicy(finding);
     return kind?.dimension && kind.dimension === finding.dimension && row.dimension !== finding.dimension;
   }).length;
-  const dimensionRouted = tagged.filter((f) => f.routed_by === 'dimension').length;
   const reachabilityDemoted = [...tagged, ...allEliminated]
-    .filter((f) => f.demoted_by === 'reachability').length;
-  const singletonPenalized = [...tagged, ...allEliminated].filter((f) => f.singleton_penalty).length;
+    .filter((f) => f.verdict?.consequence === 'latent').length;
 
   return {
     filtered: tagged,
@@ -164,9 +161,6 @@ export function applyFilterPipeline(findings, generatedAt) {
       // Derive prose-removal stats from the field list so extending it needs no second declaration.
       ...proseFieldsRemoved,
       suggested_fix_codes_removed: suggestedFixCodesRemoved,
-      consensus_boosted: 0,
-      singleton_penalized: singletonPenalized,
-      dimension_routed: dimensionRouted,
       reachability_demoted: reachabilityDemoted,
       test_analyzer_promoted: promotedCount,
       tagged_main: mainCount,

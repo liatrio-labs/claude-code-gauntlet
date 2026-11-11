@@ -83,7 +83,7 @@ Independent factual checking follows the [shared investigation contract](investi
 using fresh agents defaulting to Sonnet subject to the resolved override.
 
 Validators return `claim` (`confirmed`, `refuted`, `not_established`), `consequence`
-(`present_failure`, `latent`, `artifact_defect`, `no_practical_effect`), `reachability`, and `justification`.
+(`present_failure`, `latent`, `artifact_defect`, `no_practical_effect`) only when confirmed, and `justification`. Reachability is derived from the consequence.
 A latent consequence names its future change or unusual precondition in `latent_condition`;
 `not_established` names one missing fact in `missing_fact`. Refutations require a closed
 `refutation_kind` and a source reference (`file`, `line_start`, `line_end`, exact `anchor`).
@@ -95,6 +95,13 @@ Comment-only quotes and any span containing added lines fail closed. Requiring e
 to predate the PR prevents a new guard being padded with old context. Source resolution cannot
 prove a model's semantic inference, but an intent comment alone cannot authorize elimination.
 Unavailable or unverifiable evidence sends the finding onward.
+The checker compiles changed-line ownership once, follows the saved patch's path-prefix policy,
+and requires strictly decoded text outside the shared non-source directories and
+artifact paths (documentation, data and repository rules). No external classifier is required. Unavailable or
+undecodable source is reported as a gap. Incremental reviews use the full local base-to-captured-head range; an
+unavailable base prevents verification and produces a gap. Security findings go to blind
+challenge after a validator refutation. Only two independently verified refutations eliminate;
+a single refutation stays report-only at main tier, without asserting low impact.
 
 One smaller retry round repairs missing, duplicate or malformed typed returns. A persistent
 failure records `validation=skipped` and proceeds as not established. Unknown Verify origins
@@ -108,7 +115,7 @@ The registry routes truth and consequence independently:
 
 | Answer | Route |
 | --- | --- |
-| Refuted with a code-verified citation | `eliminated` |
+| Refuted with a code-verified citation | `eliminated`; security requires verified refutations from both readers |
 | Refuted without verified counter-evidence | `not-established` |
 | Confirmed present failure | `posted` at its severity |
 | Confirmed latent consequence | `posted-latent`, low severity, suggestion tier |
