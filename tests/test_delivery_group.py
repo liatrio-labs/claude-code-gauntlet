@@ -24,7 +24,7 @@ def members() -> tuple[list[Finding], dict[str, str]]:
     return date_override_members(), fixture
 
 
-def test_group_posts_lead_prose_sites_and_distinct_reviewer_count():
+def test_group_posts_lead_prose_and_compact_sites():
     rows, keys = members()
     lead, *others = rows
     lead["sites"] = [
@@ -68,11 +68,10 @@ def test_group_posts_lead_prose_sites_and_distinct_reviewer_count():
         + "\n\n**Suggested fix:**\n"
         + str(lead["suggestion"])
         + "\n\n**Additional sites:**\n"
-        "- `src/availability/slots.ts:125-127`\n"
-        "- `src/availability/slots.ts:114`\n"
-        "- `src/other.ts:2`\n"
-        "- `src/availability/slots.ts:141`\n\n"
-        "_Found independently by 3 reviewers._\n\n⚔️ *Code Gauntlet*"
+        "- `line 114`\n"
+        "- `lines 125-127`\n"
+        "- `line 141`\n"
+        "- `src/other.ts:2`\n\n⚔️ *Code Gauntlet*"
     )
     assert all(
         str(other["description"]) not in body and str(other["title"]) not in body
@@ -95,16 +94,14 @@ def test_group_posts_lead_prose_sites_and_distinct_reviewer_count():
     assert prior.legacy_group_keys == frozenset()
 
 
-def test_single_reviewer_and_unconfirmed_member_have_no_extra_claims():
+def test_unconfirmed_member_has_no_extra_sites():
     rows, _ = members()
     lead, *others = rows
-    for row in rows:
-        row["agent"] = lead["agent"]
     others[0]["location_status"] = "unconfirmed"
     body = compose.render_group_body(lead, others)
     assert "Found independently" not in body
-    assert ":114`" not in body
-    assert ":125-127`" in body
+    assert "line 114`" not in body
+    assert "lines 125-127`" in body
 
 
 def test_unanchored_group_is_one_issue_with_all_member_marker_coverage(
@@ -165,11 +162,10 @@ def test_local_report_keeps_every_member_description():
 CRITICAL_BUG_COMMENT = (
     "**🔴 [CRITICAL] finding BUG**\n\nOrdinary defect text."
     "\n\n**Security claim:** finding SEC"
-    "\n\n_Found independently by 2 reviewers._\n\n⚔️ *Code Gauntlet*"
+    "\n\n⚔️ *Code Gauntlet*"
 )
 CRITICAL_SUGGESTION_COMMENT = (
-    "**🔴 [CRITICAL] finding SEC**\n\nSecurity finding text."
-    "\n\n_Found independently by 2 reviewers._\n\n⚔️ *Code Gauntlet*"
+    "**🔴 [CRITICAL] finding SEC**\n\nSecurity finding text.\n\n⚔️ *Code Gauntlet*"
 )
 
 
@@ -269,3 +265,44 @@ def test_indivisible_group_posts_security_text_and_group_values(
     assert [line for line in lines if line.startswith("- **Corroborated by**")] == [
         expected_corroboration
     ]
+
+
+@pytest.mark.parametrize("validator_failed", [False, True])
+def test_selected_reader_text_survives_persistence_into_both_comment_surfaces(
+    validator_failed,
+):
+    output = run_node(
+        "import {makeFinding} from './workflows/test/helpers/pipelineMock.js';"
+        "import {applyValidations} from './workflows/src/applyValidations.js';"
+        "import {applyChallenges} from './workflows/src/applyChallenges.js';"
+        "import {writerPayload} from './workflows/src/persistPlan.js';"
+        "import {renderPublicSummary} from './workflows/src/renderReport.js';"
+        "let s='';for await(const c of process.stdin)s+=c;const failed=JSON.parse(s);"
+        "const f=makeFinding('F',{title:'Discovery overstates the problem',description:'Discovery stronger prose'});"
+        "const verdict={claim:'confirmed',consequence:'present_failure',justification:'Inspected caller',"
+        "comment:{title:'Only retries lose the update',body:'A failed retry discards the pending update.'}};"
+        "applyValidations([f],[failed?{id:'F',claim:'not_established',justification:'Reader failed',missing_fact:'caller'}:"
+        "{id:'F',...verdict,consequence:'artifact_defect',comment:{title:'Validator statement',body:'Validator statement body'}}]);"
+        "const rows=applyChallenges([f],[{id:'F',...verdict}]).findings;"
+        "rows[0].disposition='deliver';"
+        "process.stdout.write(JSON.stringify({...writerPayload({findings:rows,postReview:rows}),"
+        "summary:renderPublicSummary({findings:rows,delivered:rows}).body}));",
+        validator_failed,
+    )
+    payload = json.loads(output.stdout)
+    row = payload["postReview"][0]
+    assert row["description"] == "Discovery stronger prose"
+    expected = "**🟠 [HIGH] Only retries lose the update**\n\nA failed retry discards the pending update."
+    inline = compose.render_comment_body(row)
+    body = compose.compose_review_body(
+        "",
+        [[compose.SkippedEntry(row["file"], row["line"], row)]],
+        platform="github",
+        findings_count=1,
+        sha=SHA,
+    ).body
+    for rendered in (inline, body, payload["summary"]):
+        assert "Discovery" not in rendered
+        assert "Validator statement" not in rendered
+        assert "Only retries lose the update" in rendered
+    assert expected in inline and expected in body

@@ -1,3 +1,4 @@
+import { confirmedComment } from './verdict.js';
 import { canonicalRange } from './location.js';
 import { WS_TRIM_RE, asText, deepFreeze } from './wire.js';
 import { INJECTION_STRIPPED_PROSE_FIELDS } from './registry.js';
@@ -369,8 +370,10 @@ export function applyInjectionFilter(findings, rules = INJECTION_RULES) {
   const seenSignatures = new Map();
 
   for (const finding of findings) {
-    const title = asText(finding.title);
-    const description = asText(finding.description);
+    const comment = confirmedComment(finding);
+    const discoveryTitle = asText(finding.title);
+    const title = [discoveryTitle, comment?.title].filter(Boolean).join('\n');
+    const description = [asText(finding.description), comment?.body].filter(Boolean).join('\n');
     const filepath = asText(finding.file);
     const combined = `${title}\n${description}`;
     const combinedFolded = foldConfusables(combined);
@@ -390,11 +393,11 @@ export function applyInjectionFilter(findings, rules = INJECTION_RULES) {
         }
       } else if (row.kind === 'duplicate') {
         // Ordered tuple encoding keeps title and location boundaries unambiguous for duplicate detection.
-        const sig = JSON.stringify([title.toLowerCase().replace(WS_TRIM_RE, ''), filepath, canonicalRange(finding) ? ['resolved', finding.line_start] : ['unconfirmed', finding.id]]);
+        const sig = JSON.stringify([discoveryTitle.toLowerCase().replace(WS_TRIM_RE, ''), filepath, canonicalRange(finding) ? ['resolved', finding.line_start] : ['unconfirmed', finding.id]]);
         if (seenSignatures.has(sig)) {
           reasons.push(`${row.label} ${JSON.stringify(seenSignatures.get(sig))}`);
         } else {
-          seenSignatures.set(sig, finding.id !== undefined && finding.id !== null ? finding.id : title);
+          seenSignatures.set(sig, finding.id !== undefined && finding.id !== null ? finding.id : discoveryTitle);
         }
       }
     }

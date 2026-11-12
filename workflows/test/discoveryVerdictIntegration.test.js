@@ -8,6 +8,8 @@ import { validArgs } from './helpers/argsFixtures.js';
 import { makeCtx, makeFinding } from './helpers/pipelineMock.js';
 import { decodeMeasurement } from './helpers/decodeMeasurement.js';
 
+const comment = { title: 'The alternate input fails', body: 'The inspected input reaches an unsupported operation.' };
+
 for (const gateway of [false, true]) {
   for (const [consequence, route] of [['present_failure', 'posted'], ['latent', 'posted-latent'], ['artifact_defect', 'posted-artifact']]) {
     test(`hunter reaches ${route} without an extra origin taxonomy, gateway=${gateway}, and an inconclusive challenger`, async () => {
@@ -30,7 +32,7 @@ for (const gateway of [false, true]) {
         }
         if (options.agentType === 'code-gauntlet:validator') {
           validatorReads++;
-          for (const verdict of result.validations) Object.assign(verdict,{consequence,
+          for (const verdict of result.validations) Object.assign(verdict,{consequence,comment,
             ...(consequence === 'latent' ? {latent_condition:'Enable the other path'} : {})});
         }
         if (options.agentType === 'code-gauntlet:challenger') {
@@ -75,7 +77,7 @@ for (const gateway of [false, true]) {
 for (const field of ['change_origin','change_relevance']) test(`reader schemas reject retired metadata when a reader incorrectly echoes ${field}`, async () => {
   const finding = makeFinding('gap-hunter-1',{agent:'gap-hunter',change_origin:'pre_existing',change_relevance:'The changed caller now relies on this implementation.'});
   const ctx = {parallel:async (tasks) => Promise.all(tasks.map((task) => task())),
-    agent:async () => ({validations:[{finding_id:finding.id,claim:'confirmed',consequence:'present_failure',justification:'Inspected the failing input.',[field]:finding[field]}]})};
+    agent:async () => ({validations:[{finding_id:finding.id,claim:'confirmed',consequence:'present_failure',comment,justification:'Inspected the failing input.',[field]:finding[field]}]})};
   const out = await validateStage(ctx,{findings:[finding]});
   assert.equal(out.stats.skipped,1);
   assert.equal(out.findings[0].validation,'skipped');

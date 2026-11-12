@@ -276,9 +276,7 @@ GROUP_SECTIONS_CASES = {
                 "body": "Body C",
             },
         ],
-        (
-            "**🟠 [HIGH] A**\n\nBody A\n\n```suggestion\nreplacement\n```\n\n_Found independently by 2 reviewers._"
-        ),
+        ("**🟠 [HIGH] A**\n\nBody A\n\n```suggestion\nreplacement\n```"),
     ),
     "marker-contained": (
         {
@@ -706,3 +704,81 @@ def test_body_digest_omits_large_issues_without_dimension_headings() -> None:
         "#### `foo.py:99`",
         "#### `foo.py:99`",
     ]
+
+
+@pytest.mark.parametrize("surface", ["inline", "body"])
+def test_resolved_reader_text_is_the_posted_prose(surface):
+    row = finding(
+        title="Overstated discovery title",
+        body="Overstated discovery explanation",
+        suggestion="Keep the confirmed correction",
+        verdict={
+            "claim": "confirmed",
+            "comment": {
+                "title": "Only @author's retry fails",
+                "body": "Only <retry> loses the update.\n/close",
+            },
+        },
+    )
+    expected = (
+        "**🟠 [HIGH] Only \uff20author's retry fails**\n\n"
+        "Only &lt;retry> loses the update.\n\\/close\n\n"
+        "**Suggested fix:**\nKeep the confirmed correction"
+    )
+    if surface == "inline":
+        result = compose.render_comment_body(row)
+    else:
+        result = compose.compose_review_body(
+            "",
+            [[compose.SkippedEntry(row["file"], row["line"], row)]],
+            platform="github",
+            findings_count=1,
+            sha=SHA,
+        ).body
+    assert expected in result
+    assert "Overstated" not in result
+
+
+@pytest.mark.parametrize(
+    "comment",
+    [
+        None,
+        {},
+        "text",
+        {"title": "t", "body": "b" * 401},
+        {"title": "t" * 101, "body": "b"},
+        {"title": " ", "body": "b"},
+        {"title": "t", "body": 4},
+        {"title": "trailing\n", "body": "b"},
+        {"title": "t", "body": "b", "extra": 1},
+    ],
+)
+def test_invalid_reader_text_falls_back_as_a_whole(comment):
+    row = finding(verdict={"claim": "confirmed", "comment": comment})
+    assert compose.render_comment_body(row) == "**🟠 [HIGH] T**\n\nb" + TRAILER
+
+
+def test_additional_sites_merge_ranges_and_remove_inline_coverage():
+    row = finding(file="same", line=10, end_line=12)
+    row["sites"] = [
+        {
+            "file": path,
+            "line_start": start,
+            "line_end": end,
+            "location_status": "confirmed",
+        }
+        for path, start, end in [
+            ("same", 10, 11),
+            ("same", 11, 14),
+            ("same", 14, 18),
+            ("same", 19, 24),
+            ("other", 2, 4),
+            ("other", 4, 6),
+            ("other", 7, 9),
+            ("same", 8, 9),
+        ]
+    ]
+    assert compose.render_comment_body(row) == (
+        "**🟠 [HIGH] T**\n\nb\n\n**Additional sites:**\n"
+        "- `lines 8-9`\n- `lines 13-24`\n- `other:2-9`" + TRAILER
+    )

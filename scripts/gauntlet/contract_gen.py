@@ -105,7 +105,9 @@ VERIFICATION_SHARED = {
         "not_established (one fact is missing). Only confirmed claims have a consequence: "
         "present_failure (a present caller or input fails), latent (a named future change or "
         "unusual precondition is needed), artifact_defect (a verifiable, fixable defect in a "
-        "test, comment, documentation or unreachable code without runtime effect), or "
+        "test, standalone documentation or unreachable code without runtime effect), "
+        "comment_defect (an inaccurate or unclear code comment or docstring where code and tests "
+        "behave correctly; report only), or "
         "no_practical_effect (preference, style or equivalent behavior). For latent name the "
         "precondition; for not_established name the missing fact. Refute with premise_false "
         "(false assumption), guard_exists (an existing guard prevents it), or no_reachable_caller "
@@ -183,7 +185,10 @@ _REGISTRY_FIELDS = (
     "resolvedSiteSchema: m.RESOLVED_SITE_SCHEMA",
     "deliveryGroupSchema: m.DELIVERY_GROUP_SCHEMA",
     "validationReturnProperties: m.VALIDATION_RETURN_PROPERTIES",
+    "verdictFields: Object.keys(m.VERDICT_PROPERTIES)",
+    "confirmedVerdictRoutes: m.VERDICT_ROUTES.confirmed",
     "anchorLimits: m.ANCHOR_LIMITS",
+    "confirmedCommentSchema: m.CONFIRMED_COMMENT_SCHEMA",
     "verdictRoutes: [...new Set([...Object.values(m.VERDICT_ROUTES.confirmed), ...Object.values(m.VERDICT_ROUTES.refuted), m.VERDICT_ROUTES.not_established, ...m.VERDICT_ROUTES.overrides].map(row => row.route))]",
     "reportFoldLimits: m.REPORT_FOLD_LIMITS",
     "locationRights: m.LOCATION_RIGHTS",
@@ -830,6 +835,8 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
     values = {
         "SEVERITY_ORDER": tuple(identity["severityOrder"]),
         "VERDICT_ROUTES": tuple(identity["verdictRoutes"]),
+        "CONFIRMED_COMMENT_SCHEMA": identity["confirmedCommentSchema"],
+        "CONFIRMED_VERDICT_ROUTES": identity["confirmedVerdictRoutes"],
         "MODEL_ALIASES": tuple(identity["modelAliases"]),
         "POLICY_PROVIDERS": tuple(identity["policyProviders"]),
         "LOCATION_STATUSES": tuple(identity["locationStatuses"]),
@@ -854,6 +861,8 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
     annotations = {
         "SEVERITY_ORDER": "tuple[Severity, ...]",
         "VERDICT_ROUTES": "tuple[VerdictRoute, ...]",
+        "CONFIRMED_COMMENT_SCHEMA": "dict[str, Any]",
+        "CONFIRMED_VERDICT_ROUTES": "dict[str, dict[str, Any]]",
         "MODEL_ALIASES": "tuple[ModelAlias, ...]",
         "POLICY_PROVIDERS": "tuple[PolicyProvider, ...]",
         "LOCATION_STATUSES": "tuple[LocationStatus, ...]",
@@ -918,7 +927,15 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
             "    action: str",
             "",
             "",
+            "class Verdict(TypedDict, total=False):",
+            *(
+                field_annotation(field, validation_types[field])
+                for field in identity["verdictFields"]
+            ),
+            "",
+            "",
             "class FindingMetadata(FindingFacts, total=False):",
+            "    verdict: Verdict",
             *(field_annotation(field, kind) for field, kind in admission_types.items()),
             "    origin_dimension: Dimension",
             *(f"    {field}: {_pascal(field)}" for field in stamp_kinds),

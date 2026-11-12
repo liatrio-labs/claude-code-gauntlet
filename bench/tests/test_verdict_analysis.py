@@ -250,3 +250,26 @@ def test_inline_tables_use_projected_disposition_and_do_not_infer_old_observatio
         assert tables["passes"][0]["total"]["inline_posting"] == expected
         assert tables["average"]["inline_posting"] == expected
         assert tables["average"]["routes"]["posted-latent"]["known_bugs"] == 1
+
+
+@pytest.mark.parametrize("consequence", ["comment_defect", "no_practical_effect"])
+def test_confirmed_report_only_consequences_are_typed_no_answers(consequence):
+    finding = dict(
+        id="comment",
+        file="source",
+        line_start=10,
+        severity="low",
+        rank_index=0,
+        route="report-only",
+        matched_bug_ids=[],
+        verdict=dict(claim="confirmed", consequence=consequence),
+    )
+    observed = Sample("treatment", "1", "pr", (finding,), frozenset(), 1)
+    result = analyze(
+        [observed],
+        [dict(pr="pr", id="comment", claim="holds", worth="no")],
+        expected_bugs=0,
+    )
+    assert result["policies"]["all"]["treatment"]["average"]["worth_confusion"] == {
+        "no": {"no": 1}
+    }

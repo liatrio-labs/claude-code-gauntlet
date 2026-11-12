@@ -340,6 +340,7 @@ export const VERDICT_ROUTES = deepFreeze({
     present_failure: { route: 'posted', status: 'admitted', tier: 'main' },
     latent: { route: 'posted-latent', status: 'admitted', tier: 'suggestion', severity: 'low' },
     artifact_defect: { route: 'posted-artifact', status: 'admitted', tier: 'suggestion', severity: 'low' },
+    comment_defect: { route: 'report-only', status: 'report_only', tier: 'suggestion', severity: 'low', challenge: true },
     no_practical_effect: { route: 'report-only', status: 'report_only', tier: 'suggestion', challenge: true },
   },
   overrides: [
@@ -359,9 +360,23 @@ export const VERDICT_RESOLUTIONS = deepFreeze({
   not_established: { confirmed: 'challenger', refuted_verified: 'challenger', refuted_unverified: 'challenger', not_established: 'challenger' },
 });
 export const CONSEQUENCE_ORDER = deepFreeze(Object.keys(VERDICT_ROUTES.confirmed));
+// Length and blank checks stay local so prose quality cannot retry a whole reader answer.
+export const CONFIRMED_COMMENT_SCHEMA = deepFreeze({
+  type: 'object', properties: {
+    title: { type: 'string', minLength: 1, maxLength: 100, pattern: '^[^\\r\\n]*\\S[^\\r\\n]*$',
+      description: 'One line for the PR author: one confirmed issue, narrowed to what you verified; no trailing period needed, ceiling 100 characters.' },
+    body: { type: 'string', minLength: 1, maxLength: 400, pattern: '\\S',
+      description: 'One or two sentences for the PR author: one confirmed issue, what is wrong and what happens, narrowed to what you verified; ceiling 400 characters.' },
+  }, required: ['title', 'body'], additionalProperties: false,
+});
+const READER_COMMENT_SCHEMA = { type: 'object',
+  properties: Object.fromEntries(Object.entries(CONFIRMED_COMMENT_SCHEMA.properties)
+    .map(([key, { type, description }]) => [key, { type, description }])),
+  required: CONFIRMED_COMMENT_SCHEMA.required, additionalProperties: false };
 export const VERDICT_PROPERTIES = deepFreeze({
   claim: { type: 'string', enum: ['confirmed', 'refuted', 'not_established'] },
   consequence: { type: 'string', enum: CONSEQUENCE_ORDER },
+  comment: {},
   justification: { type: 'string', minLength: 1, pattern: '\\S' },
   refutation_kind: { type: 'string', enum: ['premise_false', 'guard_exists', 'no_reachable_caller'] },
   refutation: { ...SOURCE_REFERENCE, description: `Executable counter-evidence: at most ${ANCHOR_LIMITS.lines} inclusive source lines.`,
@@ -371,32 +386,37 @@ export const VERDICT_PROPERTIES = deepFreeze({
   latent_condition: { type: 'string', minLength: 1, pattern: '\\S' },
 });
 export const VERDICT_CASES = deepFreeze({
-  confirmed: ['consequence', 'latent_condition'],
+  confirmed: ['consequence', 'latent_condition', 'comment'],
   refuted: ['refutation_kind', 'refutation'],
   not_established: ['missing_fact'],
 });
-export function verdictSchema(extra = {}, requiredExtra = []) {
-  return { type: 'object', properties: { ...VERDICT_PROPERTIES, ...extra },
+export function verdictSchema(extra = {}, requiredExtra = [], reader = false) {
+  const properties = { ...VERDICT_PROPERTIES, ...(reader ? { comment: READER_COMMENT_SCHEMA } : {}), ...extra };
+  return { type: 'object', properties,
     required: ['claim', 'justification', ...requiredExtra], additionalProperties: false,
     oneOf: Object.entries(VERDICT_CASES).map(([claim, fields]) => ({ type: 'object',
       properties: { claim: { type: 'string', const: claim }, justification: VERDICT_PROPERTIES.justification,
-        ...Object.fromEntries(fields.map((key) => [key, VERDICT_PROPERTIES[key]])), ...extra },
-      required: ['claim', 'justification', ...fields.filter((key) => key !== 'latent_condition'), ...requiredExtra],
+        ...Object.fromEntries(fields.map((key) => [key, properties[key]])), ...extra },
+      required: ['claim', 'justification', ...fields.filter((key) => key !== 'latent_condition' && (key !== 'comment' || reader)), ...requiredExtra],
       additionalProperties: false,
       ...(claim === 'confirmed' ? { allOf: [{ if: { properties: { consequence: { const: 'latent' } }, required: ['consequence'] }, then: { required: ['latent_condition'] } }] } : {}),
     })),
   };
 }
+// Stored verdicts may lack reader prose; dispatch alone requires its structure.
 export const VERDICT_SCHEMA = deepFreeze(verdictSchema());
-export const VALIDATION_VERDICT_SCHEMA = deepFreeze(verdictSchema({
+export const READER_VERDICT_SCHEMA = deepFreeze(verdictSchema({}, [], true));
+const VALIDATION_IDENTITY = {
   finding_id: { type: 'string' }, site_confirmations: RECURRENCE_RETURN_PROPERTIES.site_confirmations,
-}, ['finding_id']));
+};
+export const VALIDATION_VERDICT_SCHEMA = deepFreeze(verdictSchema(VALIDATION_IDENTITY, ['finding_id']));
+export const READER_VALIDATION_VERDICT_SCHEMA = deepFreeze(verdictSchema(VALIDATION_IDENTITY, ['finding_id'], true));
 // Stage-owned identities and code-check receipts are not model verdict fields.
 export const VERDICT_ENTRY_SCHEMA = deepFreeze(verdictSchema({
   id: { type: 'string' }, finding_id: { type: 'string' }, site_confirmations: RECURRENCE_RETURN_PROPERTIES.site_confirmations,
   refutation_check: { type: 'object', properties: { verified: { type: 'boolean' }, reason: { type: 'string' } }, required: ['verified'], additionalProperties: false },
 }, ['id']));
-export const VALIDATION_RETURN_PROPERTIES = deepFreeze({ ...RECURRENCE_RETURN_PROPERTIES, ...VERDICT_PROPERTIES });
+export const VALIDATION_RETURN_PROPERTIES = deepFreeze({ ...RECURRENCE_RETURN_PROPERTIES, ...VERDICT_PROPERTIES, comment: CONFIRMED_COMMENT_SCHEMA });
 export const ADMISSION_STAMP_PROPERTIES = deepFreeze({
   policy_subject: { type: 'string', enum: Object.keys(POLICY_SUBJECTS) },
   admission_assessments: { type: 'array', items: ASSESSMENT },

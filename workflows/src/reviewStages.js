@@ -2,7 +2,7 @@ import { defineAgentCall } from './agentCalls.js';
 import { locationAllows } from './location.js';
 // Validation, filtering, challenge, and delivery selection stages.
 import { effectiveBatchSize, effectiveChallengeCap, effectiveValidationRetrySize } from './capacity.js';
-import { modelFor, VERDICT_SCHEMA, VALIDATION_VERDICT_SCHEMA } from './registry.js';
+import { modelFor, VERDICT_SCHEMA, VALIDATION_VERDICT_SCHEMA, READER_VERDICT_SCHEMA, READER_VALIDATION_VERDICT_SCHEMA } from './registry.js';
 import { checkRefutations } from './refutations.js';
 import { verdictRejections } from './verdict.js';
 import { applyValidations } from './applyValidations.js';
@@ -18,7 +18,9 @@ const VALIDATE_SCHEMA = { type: 'object', properties: { validations: { type: 'ar
   items: VALIDATION_VERDICT_SCHEMA,
 } }, required: ['validations'], additionalProperties: false };
 
-const callValidator = defineAgentCall('validate', () => VALIDATE_SCHEMA);
+const callValidator = defineAgentCall('validate', () => ({ ...VALIDATE_SCHEMA,
+  properties: { validations: { type: 'array', items: READER_VALIDATION_VERDICT_SCHEMA } },
+}));
 
 // Keep exact small returns and explicit truncation receipts without consuming the checkpoint budget.
 function validatorAudit(audit, label, result, rejections) {
@@ -136,7 +138,7 @@ export function filterStage(input) {
 }
 
 const CHALLENGE_SCHEMA = { type: 'object', properties: { verdict: VERDICT_SCHEMA }, required: ['verdict'], additionalProperties: false };
-const callChallenger = defineAgentCall('challenge', () => CHALLENGE_SCHEMA);
+const callChallenger = defineAgentCall('challenge', () => ({ ...CHALLENGE_SCHEMA, properties: { verdict: READER_VERDICT_SCHEMA } }));
 
 // An explicit allowlist excludes confirming rationale even when new finding fields are added.
 // The location lets the challenger investigate the raw code independently.

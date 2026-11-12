@@ -1,4 +1,4 @@
-import { VERDICT_ROUTES, VERDICT_CASES, CONSEQUENCE_ORDER, VERDICT_SCHEMA, VERDICT_RESOLUTIONS } from './registry.js';
+import { VERDICT_ROUTES, VERDICT_CASES, CONSEQUENCE_ORDER, VERDICT_SCHEMA, VERDICT_RESOLUTIONS, CONFIRMED_COMMENT_SCHEMA } from './registry.js';
 import { schemaErrors } from './schema.js';
 import { deepClone } from './wire.js';
 
@@ -6,9 +6,14 @@ export function verdictRejections(value, schema = VERDICT_SCHEMA) {
   return schemaErrors(value, schema);
 }
 
+export function confirmedComment(finding) {
+  const verdict = finding?.verdict;
+  return verdict?.claim === 'confirmed' && !schemaErrors(verdict.comment, CONFIRMED_COMMENT_SCHEMA).length ? verdict.comment : null;
+}
+
 export function buildVerdict(value) {
   return Object.fromEntries(['claim', 'justification', ...VERDICT_CASES[value.claim]]
-    .filter((key) => value[key] !== undefined).map((key) => [key, deepClone(value[key])]));
+    .filter((key) => value[key] !== undefined && (key !== 'comment' || confirmedComment({ verdict: value }))).map((key) => [key, deepClone(value[key])]));
 }
 
 export function verdictState(verdict, check) {

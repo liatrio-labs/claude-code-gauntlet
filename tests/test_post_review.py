@@ -1550,8 +1550,10 @@ def test_capture_gl_multibyte_boundary(posting, monkeypatch):
     assert "[folded:" in body
 
 
-def test_gitlab_group_site_addenda_count_all_reviewers_without_relisting_delivered_ranges(
+@pytest.mark.parametrize("reader_text", [False, True])
+def test_gitlab_group_site_addenda_do_not_relist_delivered_ranges(
     posting,
+    reader_text,
 ):
     stamp = {"issue_key": "group:P", "lead_id": "P", "finding_ids": ["P", "M", "N"]}
     rows = [
@@ -1566,6 +1568,15 @@ def test_gitlab_group_site_addenda_count_all_reviewers_without_relisting_deliver
         ),
         located(id="N", agent="three", line_start=8, line_end=8, delivery_group=stamp),
     ]
+    if reader_text:
+        for row in rows:
+            row["verdict"] = {
+                "claim": "confirmed",
+                "comment": {
+                    "title": "Confirmed title",
+                    "body": "Confirmed reader statement.",
+                },
+            }
     first = posting(review("gitlab", rows), diff=DIFF, dry_run=False)
     assert first.code == 0
     notes = [
@@ -1576,8 +1587,8 @@ def test_gitlab_group_site_addenda_count_all_reviewers_without_relisting_deliver
         }
         for i, request in enumerate(first.requests)
     ]
-    assert "- `foo.py:4`" in notes[1]["body"]
-    assert "- `foo.py:8`" in notes[1]["body"]
+    assert "- `line 4`" in notes[1]["body"]
+    assert "- `line 8`" in notes[1]["body"]
     sites = [
         {
             "file": f"new-{i}.txt",
@@ -1597,7 +1608,10 @@ def test_gitlab_group_site_addenda_count_all_reviewers_without_relisting_deliver
     )
     assert update.code == 0 and len(update.requests) == 1
     body = update.requests[0].payload["body"]
-    assert body.count("_Found independently by 3 reviewers._") == 1
+    if reader_text:
+        assert "Additional confirmed sites for this previously delivered issue." in body
+        assert "Confirmed reader statement." not in body
+    assert "Found independently" not in body
     assert [line for line in body.splitlines() if line.startswith("- `")] == [
         "- `new-0.txt:1`",
         "- `new-1.txt:1`",

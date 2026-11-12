@@ -189,7 +189,7 @@ test('main_only tier exclusions do not count as a delivery cap hit', async () =>
   const selected = trace.snapshots.find((s) => s.stage === 'select');
   assert.equal(selected.finding_version_ids.length, 1);
   assert.equal(selected.cap_hit, false);
-  assert.deepEqual(selected.decisions.map((d) => d.reason_code), ['delivery_tier']);
+  assert.deepEqual(selected.decisions.filter((d) => d.decision === 'not_selected').map((d) => d.reason_code), ['delivery_tier']);
 });
 
 test('mid-pipeline failure checkpoints are identical with tracing on and off', async () => {

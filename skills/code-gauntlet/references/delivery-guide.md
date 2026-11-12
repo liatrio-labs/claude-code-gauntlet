@@ -68,9 +68,12 @@ Product mark: ⚔️ (Code Gauntlet). Severity emojis: 🔴 critical, 🟠 high,
 Rule source labels: documented_rule -> Cited rule, code_comment -> Cited comment, repo_precedent -> Repo precedent, self_inconsistency -> Inconsistency; unknown values -> Cited rule.
 <!-- /generated-from-registry-identity:severity_legend -->
 
-Each issue posts its lead text and any folded security titles. Other members contribute confirmed locations and,
-when at least two distinct agents found it, an anonymous reviewer count. Unanchored issues appear
-once in the summary under their lead location. The local report retains every member description.
+Each issue posts the resolved reader's short title and body, plus any folded security titles.
+Missing or invalid reader text falls back to discovery prose. Other deliverable members contribute
+confirmed locations: overlapping or adjacent ranges merge, inline coverage is omitted, and same-file
+sites use line references. Code comment and docstring wording defects stay in the report.
+Unanchored issues appear once in the summary under their lead location. The local report retains
+every discovery description and confirmed statement.
 
 ### Using post_review.py
 

@@ -77,7 +77,11 @@ _ResolvedSitesItemLocationStatus_Literal = Literal[
 ]
 _Claim_Literal = Literal["confirmed", "refuted", "not_established"]
 _Consequence_Literal = Literal[
-    "present_failure", "latent", "artifact_defect", "no_practical_effect"
+    "present_failure",
+    "latent",
+    "artifact_defect",
+    "comment_defect",
+    "no_practical_effect",
 ]
 _RefutationKind_Literal = Literal[
     "premise_false", "guard_exists", "no_reachable_caller"
@@ -203,6 +207,61 @@ VERDICT_ROUTES: tuple[VerdictRoute, ...] = (
     "eliminated",
     "not-established",
 )
+
+CONFIRMED_COMMENT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$",
+            "description": "One line for the PR author: one confirmed issue, narrowed to what you verified; no trailing period needed, ceiling 100 characters.",
+        },
+        "body": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400,
+            "pattern": "\\S",
+            "description": "One or two sentences for the PR author: one confirmed issue, what is wrong and what happens, narrowed to what you verified; ceiling 400 characters.",
+        },
+    },
+    "required": ["title", "body"],
+    "additionalProperties": False,
+}
+
+CONFIRMED_VERDICT_ROUTES: dict[str, dict[str, Any]] = {
+    "present_failure": {
+        "route": "posted",
+        "status": "admitted",
+        "tier": "main",
+    },
+    "latent": {
+        "route": "posted-latent",
+        "status": "admitted",
+        "tier": "suggestion",
+        "severity": "low",
+    },
+    "artifact_defect": {
+        "route": "posted-artifact",
+        "status": "admitted",
+        "tier": "suggestion",
+        "severity": "low",
+    },
+    "comment_defect": {
+        "route": "report-only",
+        "status": "report_only",
+        "tier": "suggestion",
+        "severity": "low",
+        "challenge": True,
+    },
+    "no_practical_effect": {
+        "route": "report-only",
+        "status": "report_only",
+        "tier": "suggestion",
+        "challenge": True,
+    },
+}
 
 MODEL_ALIASES: tuple[ModelAlias, ...] = ("sonnet", "opus", "haiku")
 
@@ -1685,6 +1744,11 @@ class SiteConfirmationsItem(TypedDict):
     confirmed: bool
 
 
+class Comment(TypedDict):
+    title: str
+    body: str
+
+
 class Refutation(TypedDict):
     file: str
     line_start: int
@@ -1827,7 +1891,19 @@ class ReferenceDiagnostic(TypedDict):
     action: str
 
 
+class Verdict(TypedDict, total=False):
+    claim: _Claim_Literal
+    consequence: _Consequence_Literal
+    comment: Comment
+    justification: str
+    refutation_kind: _RefutationKind_Literal
+    refutation: Refutation
+    missing_fact: str
+    latent_condition: str
+
+
 class FindingMetadata(FindingFacts, total=False):
+    verdict: Verdict
     policy_subject: _PolicySubject_Literal
     admission_assessments: list[AdmissionAssessmentsItem]
     admission: Admission
