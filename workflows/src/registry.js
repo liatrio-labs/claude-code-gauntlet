@@ -392,7 +392,7 @@ export const VERDICT_CASES = deepFreeze({
   refuted: ['refutation_kind', 'refutation'],
   not_established: ['missing_fact'],
 });
-export function verdictSchema(extra = {}, requiredExtra = [], reader = false) {
+function verdictSchema(extra = {}, requiredExtra = [], reader = false) {
   const properties = { ...VERDICT_PROPERTIES, ...(reader ? { comment: READER_COMMENT_SCHEMA } : {}), ...extra };
   return { type: 'object', properties,
     required: ['claim', 'justification', ...requiredExtra], additionalProperties: false,

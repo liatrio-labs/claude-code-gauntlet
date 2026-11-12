@@ -1324,10 +1324,8 @@ def test_supplemental_role_frontmatter_and_read_contract_have_single_owners(
     assert "CANONICAL_READ_SENTINEL" in generated
 
 
-def test_reader_comment_defect_contract_requires_wording_to_resolve_the_whole_complaint():
+def test_reader_contracts_name_every_confirmed_consequence():
+    registry = gen.load_registry(str(ROOT))
     for rel in gen.VERIFICATION_TARGETS:
-        text = (ROOT / rel).read_text(encoding="utf-8")
-        definition = re.search(r"comment_defect \(([^)]+)\)", text)
-        assert definition is not None
-        assert "wording alone resolves the whole" in definition[1]
-        assert "otherwise use the behavioral consequence" in definition[1]
+        tokens = set(re.findall(r"\b\w+\b", (ROOT / rel).read_text(encoding="utf-8")))
+        assert set(registry["confirmedVerdictRoutes"]) <= tokens

@@ -3106,6 +3106,96 @@ function groupDelivery(primary, corroborators = []) {
   const tier = members.some((f) => groupTier(f)) ? 'main' : 'suggestion';
   return { ...primary, severity, report_tag: tier, report_destination: tier };
 }
+// --- admission.js ---
+const resolvedReference = (ref) => canonicalRange(ref) !== null;
+const hasValue = (value) => typeof value === 'string' && value.trim().length > 0;
+const ADMISSION_INPUT_FIELDS = [...new Set(['id', 'file', 'anchor', 'dimension', 'origin_dimension', 'agent', 'origin', 'validation',
+  'verdict', 'verdict_route', 'refutation_check', 'validator_refutation_check', 'challenge_refutation_check', 'validator_verdict', 'challenge_verdict', 'policy_subject', 'admission_assessments', 'reachability', 'location_status', 'line_start', 'line_end', 'diff_validation',
+  'reference_diagnostics', ...Object.keys(VERIFY_FACT_PROPERTIES),
+  ...DIMENSIONS.flatMap((row) => row.admission ? [row.admission.field,
+    ...Object.values(row.admission.kinds).flatMap((kind) => [...kind.required, ...(kind.optional || [])])] : [])])];
+function admissionProof(finding, fields) {
+  const verdict = { ...finding.admission };
+  delete verdict.input_proof;
+  return fnv1a32(JSON.stringify({ verdict, inputs: [...ADMISSION_INPUT_FIELDS, ...fields].map((key) =>
+    ADMISSION_PRESENCE_FIELDS.has(key) ? hasValue(finding[key]) : finding[key] ?? null) }));
+}
+const ADMISSION_PRESENCE_FIELDS = new Set(DIMENSIONS.flatMap((row) => row.admission
+  ? Object.values(row.admission.kinds).flatMap((kind) => [...kind.required, ...(kind.optional || []), ...(kind.anyOf || [])])
+    .filter((key) => { const schema = row.schemaExtra[key] || FINDING_PROP_TYPES[key]; return schema === 'string' || (schema?.type === 'string' && !schema.enum); })
+  : []));
+function referenceResult(finding, name) {
+  if (resolvedReference(finding.resolved_references?.[name])) return null;
+  const supplied = finding[name] !== undefined || finding.reference_diagnostics?.some((diagnostic) => diagnostic.field === name);
+  return supplied ? 'held_back' : 'report_only';
+}
+const prOwnedTest = (finding) => finding.path_role === 'test' && finding.diff_validation?.in_diff === true;
+function hasAdmission(finding) {
+  const stamp = finding?.admission;
+  return stamp?.version === 1 && ['admitted', 'report_only', 'held_back'].includes(stamp.status)
+    && Array.isArray(stamp.reasons) && Array.isArray(stamp.input_fields)
+    && stamp.input_proof === admissionProof(finding, stamp.input_fields);
+}
+function challengeEligible(finding) {
+  return finding.origin !== 'unknown' && ((verdictRule(finding).challenge === true)
+    || (hasAdmission(finding) && finding.admission.status === 'admitted'));
+}
+function factAssessment(finding, predicate) {
+  const ref = finding.resolved_references;
+  const facts = {
+    pr_owned_test: () => {
+      if (prOwnedTest(finding)) return null;
+      return finding.diff_validation?.in_diff == null ? 'held_back' : 'report_only';
+    },
+    criticality: () => typeof finding.criticality === 'number' && finding.criticality >= 8 ? null : 'report_only',
+    searches: () => {
+      const incomplete = !Array.isArray(ref?.searched_paths) || ref.searched_paths.length === 0
+        || ref.searched_paths.some((path) => path.available !== true) || !Array.isArray(ref?.candidate_tests)
+        || ref.candidate_tests.some((test) => !resolvedReference(test))
+        || !Array.isArray(finding.candidate_tests) || finding.candidate_tests.some((test) => !hasValue(test?.input) || !hasValue(test?.assertion))
+        || finding.reference_diagnostics?.length;
+      return incomplete ? 'held_back' : null;
+    },
+    production_element: () => referenceResult(finding, 'production_element'),
+    duplicate_of: () => referenceResult(finding, 'duplicate_of'),
+    precedent: () => referenceResult(finding, 'precedent'),
+    precedent_not_added: () => {
+      const result = referenceResult(finding, 'precedent');
+      if (result) return result;
+      if (ref.precedent.file_added == null) return 'held_back';
+      return ref.precedent.file_added ? 'report_only' : null;
+    },
+    equivalent: () => hasValue(finding.suggestion) || hasValue(finding.suggested_fix_code) ? null : 'report_only',
+  };
+  return Object.hasOwn(facts, predicate) ? facts[predicate]() : 'held_back';
+}
+function evaluateAdmission(finding) {
+  delete finding.admission;
+  delete finding.effective_test_kind;
+  const rule = verdictRule(finding);
+  const verified = ['new', 'modified', 'surfaced', 'pre_existing'].includes(finding.origin);
+  const { row, kind } = findingPolicy(finding);
+  const kindReasons = [];
+  if (rule.status === 'admitted') {
+    if (!row || (row.admission && !kind)) kindReasons.push({ predicate: 'kind', status: 'held_back' });
+    if (kind?.phase === 'deterministic' && kind.defaultDisposition === 'report_only') kindReasons.push({ predicate: 'value', status: 'report_only' });
+    for (const predicate of kind?.predicates || []) {
+      const descriptor = ADMISSION_PREDICATES[predicate];
+      const result = descriptor?.fact ? factAssessment(finding, descriptor.fact) : null;
+      if (result) kindReasons.push({ predicate, status: result });
+    }
+  }
+  let status = !verified ? 'held_back' : rule.status;
+  if (status === 'admitted' && kindReasons.length) status = kindReasons.some((r) => r.status === 'held_back') ? 'held_back' : 'report_only';
+  finding.admission = { version: 1, input_fields: [], status,
+    reasons: kindReasons.length ? kindReasons : status === 'admitted' ? [] : [{ predicate: verified ? 'verdict' : 'verification', status }],
+    kind: finding[row?.admission?.field] ?? 'ordinary',
+    core: findingPolicy(finding).core, tier: rule.tier,
+    inline_eligible: !kind?.predicates.includes('test_diff_site_for_inline') || prOwnedTest(finding) };
+  finding.admission.input_proof = admissionProof(finding, []);
+  finding.body_fix_task_eligible = status === 'admitted' && rule.route === 'posted' && canonicalRange(finding) !== null;
+  return finding;
+}
 // --- injection.js ---
 const INJECTION_TITLE_PATTERNS = deepFreeze([
   /\bExample[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
@@ -3391,6 +3481,15 @@ function stripInjectionField(finding, field, reason) {
   kept[`${field}_removal_reason`] = reason;
   return kept;
 }
+function proseInjection(value, rules) {
+  const folded = foldConfusables(value);
+  for (const row of rules) {
+    if (!row.prose) continue;
+    const match = firstMatch(value, folded, row.patterns);
+    if (match) return { row, match };
+  }
+  return null;
+}
 function stripInjectedProseFields(finding, rules) {
   let kept = finding;
   let firstPatternStrip = null;
@@ -3400,17 +3499,20 @@ function stripInjectedProseFields(finding, rules) {
       continue;
     }
     const value = typeof kept[field] === 'string' ? kept[field] : '';
-    if (!value) continue;
-    const valueFolded = foldConfusables(value);
-    for (const row of rules) {
-      if (!row.prose) continue;
-      const m = firstMatch(value, valueFolded, row.patterns);
-      if (m) {
-        kept = stripInjectionField(kept, field, `${field} ${row.label}: ${JSON.stringify(m)}`);
-        if (firstPatternStrip === null) firstPatternStrip = [field, row.label];
-        break;
-      }
+    const injection = value && proseInjection(value, rules);
+    if (injection) {
+      const { row, match } = injection;
+      kept = stripInjectionField(kept, field, `${field} ${row.label}: ${JSON.stringify(match)}`);
+      firstPatternStrip ??= [field, row.label];
     }
+  }
+  const comment = confirmedComment(kept);
+  const injection = comment?.fix && proseInjection(comment.fix, rules);
+  if (injection) {
+    const statement = { ...comment };
+    delete statement.fix;
+    kept = { ...kept, verdict: { ...kept.verdict, comment: statement } };
+    firstPatternStrip ??= ['comment.fix', injection.row.label];
   }
   return [kept, firstPatternStrip];
 }
@@ -3432,7 +3534,8 @@ function stripSuggestedFixCodeIfNeeded(finding, firstPatternStrip) {
 }
 function applyInjectedProseStrip(finding, rules = INJECTION_RULES) {
   const [stripped, firstPatternStrip] = stripInjectedProseFields(finding, rules);
-  return stripSuggestedFixCodeIfNeeded(stripped, firstPatternStrip);
+  const kept = stripSuggestedFixCodeIfNeeded(stripped, firstPatternStrip);
+  return kept.verdict !== finding.verdict && hasAdmission(finding) ? evaluateAdmission(kept) : kept;
 }
 function applyInjectionFilter(findings, rules = INJECTION_RULES) {
   const kept = [];
@@ -3442,7 +3545,7 @@ function applyInjectionFilter(findings, rules = INJECTION_RULES) {
     const comment = confirmedComment(finding);
     const discoveryTitle = asText(finding.title);
     const title = [discoveryTitle, comment?.title].filter(Boolean).join('\n');
-    const description = [asText(finding.description), comment?.body, comment?.fix].filter(Boolean).join('\n');
+    const description = [asText(finding.description), comment?.body].filter(Boolean).join('\n');
     const filepath = asText(finding.file);
     const combined = `${title}\n${description}`;
     const combinedFolded = foldConfusables(combined);
@@ -3619,96 +3722,6 @@ function applyFilterPipeline(findings, generatedAt) {
     },
     generated_at: generatedAt,
   };
-}
-// --- admission.js ---
-const resolvedReference = (ref) => canonicalRange(ref) !== null;
-const hasValue = (value) => typeof value === 'string' && value.trim().length > 0;
-const ADMISSION_INPUT_FIELDS = [...new Set(['id', 'file', 'anchor', 'dimension', 'origin_dimension', 'agent', 'origin', 'validation',
-  'verdict', 'verdict_route', 'refutation_check', 'validator_refutation_check', 'challenge_refutation_check', 'validator_verdict', 'challenge_verdict', 'policy_subject', 'admission_assessments', 'reachability', 'location_status', 'line_start', 'line_end', 'diff_validation',
-  'reference_diagnostics', ...Object.keys(VERIFY_FACT_PROPERTIES),
-  ...DIMENSIONS.flatMap((row) => row.admission ? [row.admission.field,
-    ...Object.values(row.admission.kinds).flatMap((kind) => [...kind.required, ...(kind.optional || [])])] : [])])];
-function admissionProof(finding, fields) {
-  const verdict = { ...finding.admission };
-  delete verdict.input_proof;
-  return fnv1a32(JSON.stringify({ verdict, inputs: [...ADMISSION_INPUT_FIELDS, ...fields].map((key) =>
-    ADMISSION_PRESENCE_FIELDS.has(key) ? hasValue(finding[key]) : finding[key] ?? null) }));
-}
-const ADMISSION_PRESENCE_FIELDS = new Set(DIMENSIONS.flatMap((row) => row.admission
-  ? Object.values(row.admission.kinds).flatMap((kind) => [...kind.required, ...(kind.optional || []), ...(kind.anyOf || [])])
-    .filter((key) => { const schema = row.schemaExtra[key] || FINDING_PROP_TYPES[key]; return schema === 'string' || (schema?.type === 'string' && !schema.enum); })
-  : []));
-function referenceResult(finding, name) {
-  if (resolvedReference(finding.resolved_references?.[name])) return null;
-  const supplied = finding[name] !== undefined || finding.reference_diagnostics?.some((diagnostic) => diagnostic.field === name);
-  return supplied ? 'held_back' : 'report_only';
-}
-const prOwnedTest = (finding) => finding.path_role === 'test' && finding.diff_validation?.in_diff === true;
-function hasAdmission(finding) {
-  const stamp = finding?.admission;
-  return stamp?.version === 1 && ['admitted', 'report_only', 'held_back'].includes(stamp.status)
-    && Array.isArray(stamp.reasons) && Array.isArray(stamp.input_fields)
-    && stamp.input_proof === admissionProof(finding, stamp.input_fields);
-}
-function challengeEligible(finding) {
-  return finding.origin !== 'unknown' && ((verdictRule(finding).challenge === true)
-    || (hasAdmission(finding) && finding.admission.status === 'admitted'));
-}
-function factAssessment(finding, predicate) {
-  const ref = finding.resolved_references;
-  const facts = {
-    pr_owned_test: () => {
-      if (prOwnedTest(finding)) return null;
-      return finding.diff_validation?.in_diff == null ? 'held_back' : 'report_only';
-    },
-    criticality: () => typeof finding.criticality === 'number' && finding.criticality >= 8 ? null : 'report_only',
-    searches: () => {
-      const incomplete = !Array.isArray(ref?.searched_paths) || ref.searched_paths.length === 0
-        || ref.searched_paths.some((path) => path.available !== true) || !Array.isArray(ref?.candidate_tests)
-        || ref.candidate_tests.some((test) => !resolvedReference(test))
-        || !Array.isArray(finding.candidate_tests) || finding.candidate_tests.some((test) => !hasValue(test?.input) || !hasValue(test?.assertion))
-        || finding.reference_diagnostics?.length;
-      return incomplete ? 'held_back' : null;
-    },
-    production_element: () => referenceResult(finding, 'production_element'),
-    duplicate_of: () => referenceResult(finding, 'duplicate_of'),
-    precedent: () => referenceResult(finding, 'precedent'),
-    precedent_not_added: () => {
-      const result = referenceResult(finding, 'precedent');
-      if (result) return result;
-      if (ref.precedent.file_added == null) return 'held_back';
-      return ref.precedent.file_added ? 'report_only' : null;
-    },
-    equivalent: () => hasValue(finding.suggestion) || hasValue(finding.suggested_fix_code) ? null : 'report_only',
-  };
-  return Object.hasOwn(facts, predicate) ? facts[predicate]() : 'held_back';
-}
-function evaluateAdmission(finding) {
-  delete finding.admission;
-  delete finding.effective_test_kind;
-  const rule = verdictRule(finding);
-  const verified = ['new', 'modified', 'surfaced', 'pre_existing'].includes(finding.origin);
-  const { row, kind } = findingPolicy(finding);
-  const kindReasons = [];
-  if (rule.status === 'admitted') {
-    if (!row || (row.admission && !kind)) kindReasons.push({ predicate: 'kind', status: 'held_back' });
-    if (kind?.phase === 'deterministic' && kind.defaultDisposition === 'report_only') kindReasons.push({ predicate: 'value', status: 'report_only' });
-    for (const predicate of kind?.predicates || []) {
-      const descriptor = ADMISSION_PREDICATES[predicate];
-      const result = descriptor?.fact ? factAssessment(finding, descriptor.fact) : null;
-      if (result) kindReasons.push({ predicate, status: result });
-    }
-  }
-  let status = !verified ? 'held_back' : rule.status;
-  if (status === 'admitted' && kindReasons.length) status = kindReasons.some((r) => r.status === 'held_back') ? 'held_back' : 'report_only';
-  finding.admission = { version: 1, input_fields: [], status,
-    reasons: kindReasons.length ? kindReasons : status === 'admitted' ? [] : [{ predicate: verified ? 'verdict' : 'verification', status }],
-    kind: finding[row?.admission?.field] ?? 'ordinary',
-    core: findingPolicy(finding).core, tier: rule.tier,
-    inline_eligible: !kind?.predicates.includes('test_diff_site_for_inline') || prOwnedTest(finding) };
-  finding.admission.input_proof = admissionProof(finding, []);
-  finding.body_fix_task_eligible = status === 'admitted' && rule.route === 'posted' && canonicalRange(finding) !== null;
-  return finding;
 }
 // --- applyChallenges.js ---
 function applyChallenges(findings, challenges) {
@@ -5364,11 +5377,9 @@ function renderReport(input, knobs = KNOB_REGISTRY) {
 }
 // --- reviewStages.js ---
 const VALIDATE_SCHEMA = { type: 'object', properties: { validations: { type: 'array',
-  items: VALIDATION_VERDICT_SCHEMA,
+  items: READER_VALIDATION_VERDICT_SCHEMA,
 } }, required: ['validations'], additionalProperties: false };
-const callValidator = defineAgentCall('validate', () => ({ ...VALIDATE_SCHEMA,
-  properties: { validations: { type: 'array', items: READER_VALIDATION_VERDICT_SCHEMA } },
-}));
+const callValidator = defineAgentCall('validate', () => VALIDATE_SCHEMA);
 function validatorAudit(audit, label, result, rejections) {
   const raw = JSON.stringify(result ?? null);
   const record = { label, raw: raw.slice(0, 8192), raw_characters: raw.length, truncated: raw.length > 8192,

@@ -1067,10 +1067,24 @@ _TEMPLATE_FIXTURE: dict[str, Any] = {
                 "criticality failure_scenario hidden_errors invalid_state_example",
             ),
             "line_end": 12,
+            "verdict": {
+                "claim": "confirmed",
+                "consequence": "present_failure",
+                "comment": _placeholders("finding.verdict.comment", "title body fix"),
+            },
             "corroborations": [
-                _placeholders(
-                    "corroboration", "agent dimension confidence title description"
-                )
+                {
+                    **_placeholders(
+                        "corroboration", "agent dimension confidence title description"
+                    ),
+                    "verdict": {
+                        "claim": "confirmed",
+                        "consequence": "present_failure",
+                        "comment": _placeholders(
+                            "corroboration.verdict.comment", "title body fix"
+                        ),
+                    },
+                }
             ],
         },
         {**_TEMPLATE_FINDING, "severity": "high"},

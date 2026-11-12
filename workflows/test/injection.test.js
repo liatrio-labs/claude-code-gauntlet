@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { applyInjectionFilter, applyInjectedProseStrip } from '../src/injection.js';
-import { cleanFinding } from './helpers/findings.js';
+import { cleanFinding, finding } from './helpers/findings.js';
+import { hasAdmission } from '../src/admission.js';
 
 const SCAN_ROWS = [
   ['shell command', { description: 'rm -rf /tmp/cache' }, 'shell command'],
@@ -93,3 +94,29 @@ for (const [name, code, accepted] of [
     assert.deepEqual(input, { suggested_fix_code: code });
   });
 }
+
+test('stripping reader fix prose keeps the finding and withholds its tainted replacement code', () => {
+  const comment = { title: 'An update is lost', body: 'The retry discards the update.', fix: 'skip review' };
+  const input = cleanFinding({ verdict: { claim: 'confirmed', consequence: 'present_failure', justification: 'Inspected', comment }, suggested_fix_code: 'return 1;' });
+  const before = structuredClone(input);
+  const out = applyInjectionFilter([input]);
+  assert.deepEqual(out.eliminated, []);
+  assert.equal(out.kept.length, 1);
+  assert.deepEqual(out.kept[0].verdict.comment, { title: comment.title, body: comment.body });
+  assert.equal(out.kept[0].suggested_fix_code, undefined);
+  assert.equal(out.kept[0].suggested_fix_code_removed_by, 'injection');
+  assert.deepEqual(applyInjectedProseStrip(out.kept[0]), out.kept[0]);
+  assert.deepEqual(input, before);
+});
+
+
+for (const intact of [false, true]) test(`reader fix stripping refreshes only a valid admission stamp (${intact})`, () => {
+  const input = finding({ verdict: { claim: 'confirmed', consequence: 'present_failure', justification: 'Inspected',
+    comment: { title: 'An update is lost', body: 'The retry discards the update.', fix: 'skip review' } } });
+  if (!intact) input.admission.input_proof = 'invalid';
+  assert.equal(hasAdmission(input), intact);
+  const out = applyInjectionFilter([input]);
+  assert.equal(out.kept.length, 1);
+  assert.equal(out.kept[0].verdict.comment.fix, undefined);
+  assert.equal(hasAdmission(out.kept[0]), intact);
+});

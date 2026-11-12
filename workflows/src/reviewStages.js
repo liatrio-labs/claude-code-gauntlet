@@ -15,12 +15,10 @@ import { challengeEligible } from './admission.js';
 
 // Both independent readers answer the same closed questions.
 const VALIDATE_SCHEMA = { type: 'object', properties: { validations: { type: 'array',
-  items: VALIDATION_VERDICT_SCHEMA,
+  items: READER_VALIDATION_VERDICT_SCHEMA,
 } }, required: ['validations'], additionalProperties: false };
 
-const callValidator = defineAgentCall('validate', () => ({ ...VALIDATE_SCHEMA,
-  properties: { validations: { type: 'array', items: READER_VALIDATION_VERDICT_SCHEMA } },
-}));
+const callValidator = defineAgentCall('validate', () => VALIDATE_SCHEMA);
 
 // Keep exact small returns and explicit truncation receipts without consuming the checkpoint budget.
 function validatorAudit(audit, label, result, rejections) {

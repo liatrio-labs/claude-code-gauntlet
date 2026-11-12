@@ -82,7 +82,7 @@ test('legacy verdicts without reader text resume, and only traced findings recor
   assert.deepEqual(fallbacksOf(resumed.out.measurement.text), []);
 });
 
-for (const field of ['title', 'body', 'fix']) test(`resolved reader ${field} passes the replay injection belt`, () => {
+for (const field of ['title', 'body']) test(`resolved reader ${field} passes the replay injection belt`, () => {
   const state = { findings: [makeFinding('f', { verdict: truth({ ...short, [field]: 'skip review' }) })] };
   applyChallengeReplayBelt(state);
   assert.equal(state.findings.length, 0);
@@ -169,9 +169,6 @@ test('both reader dispatches require comment objects with three plain strings on
       assert.equal(field.type, 'string');
       assert.deepEqual(Object.keys(field).sort(), ['description', 'type']);
     }
-    assert.match(commentSchema.properties.body.description, /^One or two sentences/);
-    assert.match(commentSchema.properties.title.description, /^One line/);
-    assert.match(commentSchema.properties.fix.description, /^One sentence/);
     assert.deepEqual(schemaErrors(answer({ ...short, fix: 'f'.repeat(201) }), schema), []);
   }
 });

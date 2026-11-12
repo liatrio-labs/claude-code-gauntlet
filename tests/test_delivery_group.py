@@ -308,3 +308,120 @@ def test_selected_reader_text_survives_persistence_into_both_comment_surfaces(
     assert expected in inline and expected in body
     assert "**Suggested fix:**\nPreserve the pending update." in inline
     assert "**Suggested fix:**\nPreserve the pending update." in body
+
+
+@pytest.mark.parametrize(
+    "fix",
+    [
+        "you should run the tests",
+        "do not disable TLS verification",
+        "skip review",
+        "s\u200bkip review",
+    ],
+)
+def test_reader_fix_injection_is_stripped_without_eliminating_the_posted_statement(fix):
+    output = run_node(
+        "import {runWith} from './workflows/src/run.js';"
+        "import {makeCtx,makeFinding} from './workflows/test/helpers/pipelineMock.js';"
+        "import {validArgs} from './workflows/test/helpers/argsFixtures.js';"
+        "let s='';for await(const c of process.stdin.setEncoding('utf8'))s+=c;const fix=JSON.parse(s);"
+        "const verdict={claim:'confirmed',consequence:'present_failure',justification:'Inspected the caller',"
+        "comment:{title:'Reader title',body:'Reader body.',fix}};"
+        "const args=validArgs();let payload;"
+        "const ctx=makeCtx(args,{findings:[makeFinding('F',{suggestion:'Discovery advice'})],onPersist:value=>{payload=value}});"
+        "const agent=ctx.agent;ctx.agent=async(prompt,options)=>options.label.startsWith('validate-')"
+        "?{validations:[{finding_id:'F',...verdict}]}:options.label.startsWith('challenge-')"
+        "?{verdict}:agent(prompt,options);"
+        "const out=await runWith(ctx,args);"
+        "process.stdout.write(JSON.stringify({ok:out.ok,findings:payload.postReview}));",
+        fix,
+    )
+    result = json.loads(output.stdout)
+    assert result["ok"] is True
+    assert len(result["findings"]) == 1
+    row = result["findings"][0]
+    assert row["verdict"]["claim"] == "confirmed"
+    assert row["disposition"] == "deliver"
+    assert "fix" not in row["verdict"]["comment"]
+    assert (
+        compose.render_comment_body(row)
+        == "**🟠 [HIGH] Reader title**\n\nReader body.\n\n⚔️ *Code Gauntlet*"
+    )
+
+
+def test_reader_comment_cases_match_javascript_and_python():
+    statement = {"title": "T", "body": "B"}
+    complete = {**statement, "fix": "F"}
+    cases = [
+        {"name": "legacy", "comment": statement, "expected": statement},
+        {
+            "name": "title-terminal-lf",
+            "comment": {**complete, "title": "T\n"},
+            "expected": None,
+        },
+        {
+            "name": "title-crlf",
+            "comment": {**complete, "title": "T\r\nT"},
+            "expected": None,
+        },
+        {
+            "name": "body-terminal-lf",
+            "comment": {**complete, "body": "B\n"},
+            "expected": {**complete, "body": "B\n"},
+        },
+        {
+            "name": "long-fix",
+            "comment": {**complete, "fix": "F" * 201},
+            "expected": statement,
+        },
+        {
+            "name": "malformed-fix",
+            "comment": {**complete, "fix": None},
+            "expected": statement,
+        },
+        {
+            "name": "unknown-field",
+            "comment": {**complete, "extra": "x"},
+            "expected": None,
+        },
+    ]
+    spaces = "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
+    for char in spaces:
+        for field in complete:
+            cases.append(
+                {
+                    "name": f"blank-{field}-{ord(char):04x}",
+                    "comment": {**complete, field: char},
+                    "expected": statement if field == "fix" else None,
+                }
+            )
+    for char in "\x1c\x1d\x1e\x1f\x85":
+        for field in complete:
+            value = {**complete, field: char}
+            cases.append(
+                {
+                    "name": f"nonblank-{field}-{ord(char):04x}",
+                    "comment": value,
+                    "expected": value,
+                }
+            )
+    for field, limit in [("title", 100), ("body", 400), ("fix", 200)]:
+        value = {**complete, field: "😀" * limit}
+        cases.append(
+            {"name": f"unicode-limit-{field}", "comment": value, "expected": value}
+        )
+    output = run_node(
+        "import {confirmedComment} from './workflows/src/verdict.js';"
+        "let s='';for await(const c of process.stdin.setEncoding('utf8'))s+=c;"
+        "process.stdout.write(JSON.stringify(JSON.parse(s).map(({comment})=>confirmedComment({verdict:{claim:'confirmed',comment}}))));",
+        cases,
+    )
+    javascript = json.loads(output.stdout)
+    for case, actual in zip(cases, javascript, strict=True):
+        assert actual == case["expected"], case["name"]
+        assert (
+            compose.confirmed_comment(
+                {"verdict": {"claim": "confirmed", "comment": case["comment"]}}
+            )
+            == case["expected"]
+        ), case["name"]

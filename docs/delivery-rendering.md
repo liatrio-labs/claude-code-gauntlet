@@ -71,7 +71,10 @@ is suppressed even if the reader fix is empty or invalid. A fallback comment kee
 suggestion prose. Validated replacement fences render independently of this prose selection.
 The report retains discovery descriptions and suggestions. It shows **Confirmed fix** beside the
 confirmed statement for the lead and each grouped member, when the reader supplied a valid fix.
-Reader text passes the same injection checks and outbound preparation as discovery prose.
+Reader titles and bodies pass the same elimination checks as discovery title and description.
+Reader fix prose uses the suggestion strip path: a matching fix is dropped without eliminating
+the finding, and its accompanying replacement code is withheld under the same taint rule as
+discovery suggestion prose. All surviving text passes outbound preparation.
 Traces retain the resolved verdict; replay and benchmark delivery reconstruction use the shared
 composer, preserving the actual posted text.
 

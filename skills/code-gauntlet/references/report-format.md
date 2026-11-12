@@ -202,8 +202,14 @@ This summary describes the change context for the report.
 #### {finding.title}
 
 - **Location:** `{finding.file}:10-12`
-- **Dimension:** {finding.dimension}
+- **Dimension:** {finding.dimension} · **Verdict:** confirmed / present_failure
 - **Origin:** surfaced — pre-existing, surfaced by this change
+
+**Confirmed statement:** {finding.verdict.comment.title}
+
+{finding.verdict.comment.body}
+
+**Confirmed fix:** {finding.verdict.comment.fix}
 
 {finding.description}
 
@@ -232,6 +238,9 @@ This summary describes the change context for the report.
 - **Cross-file refs:** {finding.cross_file_refs}
 
 - **Corroborated by** `{corroboration.agent}` (`{corroboration.dimension}`, severity low, tier main): {corroboration.title}
+  **Confirmed statement:** {corroboration.verdict.comment.title}
+  {corroboration.verdict.comment.body}
+  **Confirmed fix:** {corroboration.verdict.comment.fix}
   {corroboration.description}
 
 ### 🟠 High
