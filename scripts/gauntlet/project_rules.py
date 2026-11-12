@@ -412,19 +412,12 @@ def _gaps(collector: RuleCollector) -> list[str]:
     )
     gaps = []
     for family, reasons, message in families:
-        seen: set[str] = set()
         for entry in collector.skipped:
             if entry["reason"] not in reasons:
                 continue
-            detail = ""
-            if family == "unfollowed":
-                if not entry.get("detail") or entry["path"] in seen:
-                    continue
-                seen.add(entry["path"])
-                detail = entry["detail"] + "; "
             gaps.append(
                 f"project_rules_{family}: {entry['path']} ({entry['reason']}) \u2014 "
-                f"{detail}{message}"
+                f"{message}"
             )
     if not collector.sources:
         gaps.append(
