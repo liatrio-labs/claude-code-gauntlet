@@ -8,11 +8,11 @@
       "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
       "file": "src/handlers/c1.py",
       "id": "C1",
-      "line_start": 10,
-      "severity": "medium",
-      "title": "Null check missing in handler c1",
       "line_end": 10,
-      "location_status": "confirmed"
+      "line_start": 10,
+      "location_status": "confirmed",
+      "severity": "medium",
+      "title": "Null check missing in handler c1"
     },
     {
       "claude_md_rule_removal_reason": "claude_md_rule contains visit-URL pattern: \"\\\\bvisit[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+[a-z][a-z0-9+.\\\\-]{1,15}:\\\\/\\\\/\"",
@@ -21,11 +21,11 @@
       "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
       "file": "src/handlers/c2.py",
       "id": "C2",
-      "line_start": 10,
-      "severity": "medium",
-      "title": "Null check missing in handler c2",
       "line_end": 10,
-      "location_status": "confirmed"
+      "line_start": 10,
+      "location_status": "confirmed",
+      "severity": "medium",
+      "title": "Null check missing in handler c2"
     },
     {
       "claude_md_rule_removal_reason": "claude_md_rule contains encoded payload pattern: \"\\\\b(?:decode|base64|atob|b64decode)\\\\b[^\\\\x00]{0,40}[A-Za-z0-9+\\\\/]{40,}={0,2}\\\\b\"",
@@ -34,11 +34,11 @@
       "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
       "file": "src/handlers/c3.py",
       "id": "C3",
-      "line_start": 10,
-      "severity": "medium",
-      "title": "Null check missing in handler c3",
       "line_end": 10,
-      "location_status": "confirmed"
+      "line_start": 10,
+      "location_status": "confirmed",
+      "severity": "medium",
+      "title": "Null check missing in handler c3"
     },
     {
       "claude_md_rule_removal_reason": "claude_md_rule contains bypass/auto-approve instruction: \"\\\\bskip[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+review\\\\b\"",
@@ -47,11 +47,11 @@
       "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
       "file": "src/handlers/c4.py",
       "id": "C4",
-      "line_start": 10,
-      "severity": "medium",
-      "title": "Null check missing in handler c4",
       "line_end": 10,
-      "location_status": "confirmed"
+      "line_start": 10,
+      "location_status": "confirmed",
+      "severity": "medium",
+      "title": "Null check missing in handler c4"
     },
     {
       "claude_md_rule_removal_reason": "claude_md_rule uses instructional tone: \"\\\\byou[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+should[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+run\\\\b\"",
@@ -60,11 +60,11 @@
       "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
       "file": "src/handlers/c5.py",
       "id": "C5",
-      "line_start": 10,
-      "severity": "medium",
-      "title": "Null check missing in handler c5",
       "line_end": 10,
-      "location_status": "confirmed"
+      "line_start": 10,
+      "location_status": "confirmed",
+      "severity": "medium",
+      "title": "Null check missing in handler c5"
     },
     {
       "claude_md_rule_removal_reason": "claude_md_rule recommends introducing vulnerability: \"\\\\bdisable[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+(?:TLS|SSL|HTTPS)[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+(?:verification|validation)\\\\b\"",
@@ -73,11 +73,11 @@
       "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
       "file": "src/handlers/c6.py",
       "id": "C6",
-      "line_start": 10,
-      "severity": "medium",
-      "title": "Null check missing in handler c6",
       "line_end": 10,
-      "location_status": "confirmed"
+      "line_start": 10,
+      "location_status": "confirmed",
+      "severity": "medium",
+      "title": "Null check missing in handler c6"
     },
     {
       "claude_md_rule_removal_reason": "claude_md_rule matches injection marker: \"<finding(?:[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff][^>]*)?>\"",
@@ -86,11 +86,11 @@
       "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
       "file": "src/handlers/c7.py",
       "id": "C7",
-      "line_start": 10,
-      "severity": "medium",
-      "title": "Null check missing in handler c7",
       "line_end": 10,
-      "location_status": "confirmed"
+      "line_start": 10,
+      "location_status": "confirmed",
+      "severity": "medium",
+      "title": "Null check missing in handler c7"
     },
     {
       "claude_md_rule": "Every auth path must null-check the member before use (CLAUDE.md section 4).",
@@ -98,11 +98,11 @@
       "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
       "file": "src/handlers/c8.py",
       "id": "C8",
-      "line_start": 10,
-      "severity": "medium",
-      "title": "Null check missing in handler c8",
       "line_end": 10,
-      "location_status": "confirmed"
+      "line_start": 10,
+      "location_status": "confirmed",
+      "severity": "medium",
+      "title": "Null check missing in handler c8"
     }
   ]
 }

@@ -1,7 +1,0 @@
-{
-  "config": {
-    "confidence_threshold": 55,
-    "ignore": [],
-    "severity_threshold": "critical"
-  }
-}

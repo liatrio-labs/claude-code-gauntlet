@@ -32,7 +32,7 @@ test('ordinary findings retain admission across path roles', () => {
 });
 
 test('a rewritten report-only verdict cannot grant admission', () => {
-  const finding = evaluateAdmission(makeFinding('other', { dimension: 'simplification', quality_basis: 'other',
+  const finding = evaluateAdmission(makeFinding('other', { dimension: 'simplification', quality_basis: 'other', verdict: { claim: 'confirmed', consequence: 'no_practical_effect', justification: 'Preference' },
     admission_assessments: [{ predicate: 'present_defect', status: 'rejected', references: ['primary'] }] }));
   assert.equal(finding.admission.status, 'report_only');
   assert.ok(hasAdmission(finding));
@@ -70,7 +70,7 @@ test('admitted equivalent survives host path rewriting through delivery', async 
   const tampered = structuredClone(delivered);
   tampered.resolved_references = { production_element: { file: 'foreign' } };
   assert.equal(hasAdmission(tampered), false);
-  for (const [field, value] of [['status', 'held_back'], ['reasons', [{ predicate: 'validation', status: 'held_back' }]], ['tier', 'main']]) {
+  for (const [field, value] of [['status', 'held_back'], ['reasons', [{ predicate: 'validation', status: 'held_back' }]], ['tier', 'suggestion']]) {
     const rewritten = structuredClone(delivered);
     rewritten.admission[field] = value;
     assert.equal(hasAdmission(rewritten), false, field);
@@ -108,9 +108,9 @@ test('live and replay admission agree after filtering strips an oversized equiva
 
 test('reference diagnostics distinguish absent evidence from dropped evidence by field', () => {
   for (const [dimension, extra, field, predicates] of [
-    ['simplification', { quality_basis: 'duplication' }, 'duplicate_of', ['resolved_duplicate', 'confirmed_duplication']],
-    ['type_design', { quality_basis: 'stack_idiom' }, 'precedent', ['resolved_precedent', 'precedent_not_added', 'applicable']],
-    ['bug', { policy_subject: 'coverage', test_kind: 'critical_gap', criticality: 8 }, 'production_element', ['resolved_production_element', 'complete_behavioral_absence']],
+    ['simplification', { quality_basis: 'duplication' }, 'duplicate_of', ['resolved_duplicate']],
+    ['type_design', { quality_basis: 'stack_idiom' }, 'precedent', ['resolved_precedent', 'precedent_not_added']],
+    ['bug', { policy_subject: 'coverage', test_kind: 'critical_gap', criticality: 8 }, 'production_element', ['resolved_production_element']],
   ]) {
     const unrelated = { field: 'candidate_tests', reason: `invalid ${field} reference`, action: 'reference dropped' };
     const missing = evaluateAdmission(makeFinding('missing', { dimension, ...extra, reference_diagnostics: [unrelated] }));
@@ -126,7 +126,7 @@ test('reference diagnostics distinguish absent evidence from dropped evidence by
 
 test('admission precedes challenge and placement on fresh and resumed runs', async () => {
   const findings = [
-    makeFinding('off-diff', { file: 'shared.txt', agent: 'bug-detector', diff_validation: { in_diff: false }, reachability: 'current',
+    makeFinding('off-diff', { severity: 'critical', file: 'shared.txt', agent: 'bug-detector', diff_validation: { in_diff: false }, reachability: 'current',
       admission_assessments: [{ predicate: 'current_defect', status: 'confirmed', references: ['primary'] }] }),
     makeFinding('future', { reachability: 'future_change_only', confidence: 85 }),
     makeFinding('extra', { dimension: 'test_coverage', test_kind: 'additional_case', criticality: 9, failure_scenario: 'Extra case',
@@ -161,13 +161,16 @@ test('admission precedes challenge and placement on fresh and resumed runs', asy
   assert.equal(byId['off-diff'].body_fix_task_eligible, true);
   assert.equal(byId.future.disposition, 'held_back');
   assert.ok(byId.future.disposition_reasons.includes('challenge_cap'));
-  for (const id of ['extra', 'other', 'rejected', 'partial-gap']) {
+  for (const id of ['extra', 'partial-gap']) {
     assert.equal(byId[id].disposition, 'report_only', id);
     assert.equal(byId[id].challenge, 'admission_terminal');
     assert.equal(byId[id].delivery_group, undefined);
     assert.equal(byId[id].consolidation_key, undefined);
   }
-  assert.equal(byId.unresolved.disposition, 'held_back');
+  for (const id of ['other', 'rejected', 'unresolved']) {
+    assert.equal(byId[id].disposition, 'held_back');
+    assert.ok(byId[id].disposition_reasons.includes('challenge_cap'));
+  }
   assert.equal(byId['unsafe-precedent'].disposition, 'held_back');
   const raw = first.payload.checkpoints.phases.challenge;
   assert.equal(raw.findings[0].disposition, undefined);
@@ -190,97 +193,20 @@ test('admission precedes challenge and placement on fresh and resumed runs', asy
   assert.equal(fresh.payload.findings[0].admission.status, 'admitted');
   assert.equal(fresh.payload.findings[0].disposition, 'deliver');
   const convention = filterStage({ findings: [makeFinding('convention-tier', {
-    dimension: 'convention', agent: 'conventions-and-intent', claude_md_rule: 'Keep declarations ordered',
+    dimension: 'convention', agent: 'conventions-and-intent', verdict: undefined, claude_md_rule: 'Keep declarations ordered',
     title: 'Declaration order', description: 'This declaration conflicts with the cited repository rule for symbol placement.',
   })] });
-  assert.equal(convention.filtered[0].report_tag, 'suggestion');
+  assert.equal(convention.filtered[0].verdict_route, 'not-established');
   const mainOnly = await runAndCapture(validArgs({ checkpoints: { filter: convention }, delivery: { tier: 'main_only' } }));
-  assert.equal(mainOnly.payload.findings[0].report_tag, 'suggestion');
-  assert.deepEqual(mainOnly.payload.postReview, []);
+  assert.equal(mainOnly.payload.findings[0].report_tag, 'main');
+  assert.equal(mainOnly.payload.postReview.length, 1);
 });
 
-test('kind routing preserves origin and core ranking', async () => {
-  const raw = [
-    ['production', 'test_coverage', { test_kind: 'production_defect', criticality: 9, failure_scenario: 'Failure' }],
-    ['quality', 'type_design', { quality_basis: 'current_correctness' }],
-    ['simplify', 'simplification', { quality_basis: 'current_correctness', behavior_preserved: 'Unchanged' }],
-    ['other', 'type_design', { quality_basis: 'other', title: 'Runtime null pointer type error' }],
-    ['extra', 'test_coverage', { test_kind: 'additional_case', criticality: 9, failure_scenario: 'Failure', title: 'Race condition always passes' }],
-    ['convention', 'convention', { claude_md_rule: 'A rule', title: 'Incorrect result' }],
-    ['comment', 'documentation', {}],
-  ].map(([id, dimension, extra], index) => makeFinding(id, { dimension, file: `${id}.txt`, line_start: index + 1,
-    agent: dimension === 'test_coverage' ? 'test-analyzer' : dimension === 'simplification' ? 'code-simplifier'
-      : dimension === 'type_design' ? 'type-design-analyzer' : 'conventions-and-intent', confidence: 80,
-    title: 'A grounded observation', origin_dimension: 'security', effective_test_kind: 'defective_test', ...extra }));
-  const merged = mergeStage({ findings: raw }, {});
-  const out = filterStage({ findings: merged.findings, reviewConfig: { confidence_threshold: 70 } });
-  const byId = Object.fromEntries(out.filtered.map((f) => [f.id, f]));
-  for (const id of ['production', 'quality', 'simplify']) {
-    assert.ok(byId[id], `${id} must survive the configured threshold`);
-    assert.equal(byId[id].confidence, 80);
-    assert.equal(byId[id].singleton_penalty, undefined);
-    assert.equal(byId[id].report_destination, 'main');
-    assert.equal(byId[id].effective_test_kind, undefined);
-  }
-  assert.equal(byId.production.dimension, 'bug');
-  assert.equal(byId.production.origin_dimension, 'test_coverage');
-  assert.equal(byId.production.agent, 'test-analyzer');
-  assert.equal(byId.production.test_kind, 'production_defect');
-  assert.equal(byId.quality.dimension, 'type_design');
-  assert.equal(byId.simplify.dimension, 'simplification');
-  assert.deepEqual(out.eliminated, []);
-  assert.equal(byId.convention.confidence, 65);
-  assert.equal(byId.comment.confidence, 65);
-  const routed = filterStage({ findings: merged.findings.map((f) => ({ ...f, confidence: 95 })), reviewConfig: { confidence_threshold: 70 } });
-  assert.equal(routed.filtered.find((f) => f.id === 'other').report_destination, 'suggestion');
-  assert.equal(routed.filtered.find((f) => f.id === 'extra').report_destination, 'suggestion');
-  assert.equal(routed.filtered.find((f) => f.id === 'convention').report_destination, 'main');
-  assert.equal(routed.filtered.find((f) => f.id === 'comment').report_destination, 'suggestion');
-  assert.equal(out.stats.test_analyzer_promoted, 1);
-  const persisted = await runAndCapture(validArgs({ checkpoints: { challenge: challengeOutput({ findings: merged.findings }) } }));
-  const promotion = persisted.payload.findings.find((f) => f.id === 'production');
-  assert.equal(promotion.origin_dimension, 'test_coverage');
-  assert.equal(promotion.test_kind, 'production_defect');
-  assert.equal(promotion.agent, 'test-analyzer');
-  assert.equal(promotion.disposition, 'held_back');
-  const replayed = { findings: [{ ...promotion, effective_test_kind: 'defective_test' }] };
-  normalizePhaseFindings('challenge', replayed, true, { repoRoot: '/repo' });
-  assert.equal(replayed.findings[0].origin_dimension, 'test_coverage');
-  assert.equal(replayed.findings[0].effective_test_kind, undefined);
-  const forged = { findings: [{ ...promotion, origin_dimension: 'security', effective_test_kind: 'additional_case' }] };
-  normalizePhaseFindings('challenge', forged, true, { repoRoot: '/repo' });
-  assert.equal(forged.findings[0].origin_dimension, undefined);
-  assert.equal(forged.findings[0].effective_test_kind, undefined);
-  const reference = { file: '/repo/source', line_start: 1, line_end: 1, anchor: '@structural quote' };
-  const nested = normalizeFindingPaths([makeFinding('refs', { file: 'source', searched_paths: ['/repo/tests', '../escape'],
-    duplicate_of: reference, candidate_tests: [{ ...reference, input: 'input', assertion: 'assertion' }],
-    precedent: { ...reference, file: '../escape' }, production_element: reference })], '/repo');
-  assert.deepEqual(nested.valid[0].searched_paths, ['tests']);
-  assert.equal(nested.valid[0].duplicate_of.file, 'source');
-  assert.equal(nested.valid[0].candidate_tests[0].anchor, '@structural quote');
-  assert.equal(nested.valid[0].production_element.file, 'source');
-  assert.equal(nested.valid[0].precedent, undefined);
-  assert.equal(nested.valid[0].reference_diagnostics.length, 2);
-  const contested = filterStage({ findings: [70, 75].map((confidence) => makeFinding(`drop-${confidence}`, {
-    dimension: 'type_design', quality_basis: 'other', file: `drop-${confidence}.txt`, confidence, original_confidence: 100,
-  })), reviewConfig: { confidence_threshold: 70 } });
-  assert.deepEqual(contested.filtered.map((f) => [f.id, f.contested]), [['drop-70', true], ['drop-75', undefined]]);
-  assert.deepEqual(contested.eliminated, []);
-  assert.equal(contested.stats.contested_count, 1);
-  for (const witness of [{ confidence: 60 }, { confidence: 95, description: 'banned phrase' }]) {
-    const eligible = filterStage({ findings: [makeFinding('eligible', { file: 'witness.txt', confidence: 75 }),
-      makeFinding('witness', { file: 'witness.txt', agent: 'security-reviewer', ...witness })],
-    reviewConfig: { confidence_threshold: 70, ignore: ['banned phrase'] } });
-    assert.deepEqual(eligible.filtered.map((f) => [f.id, f.confidence]), [['eligible', 75]]);
-    assert.equal(eligible.stats.consensus_boosted, 0);
-  }
-});
-
-test('lone convention at 65 survives the default threshold before ranking', () => {
+test('discovery confidence does not determine a convention route', () => {
   const out = filterStage({ findings: [makeFinding('default-convention', {
     dimension: 'convention', agent: 'conventions-and-intent', confidence: 65,
   })] });
-  assert.deepEqual(out.filtered.map((f) => [f.id, f.confidence]), [['default-convention', 50]]);
+  assert.deepEqual(out.filtered.map((f) => [f.id, f.confidence]), [['default-convention', 65]]);
   assert.deepEqual(out.eliminated, []);
 });
 
@@ -309,7 +235,7 @@ test('missing admission stamps cannot deliver any test kind', async (t) => {
     makeFinding('type-intent', { agent: 'type-design-analyzer', dimension: 'intent' }),
     makeFinding('simplifier-convention', { agent: 'code-simplifier', dimension: 'convention' }),
     makeFinding('forged-security', { agent: 'test-analyzer', dimension: 'security', origin_dimension: 'security' }),
-  ] };
+  ].map((f) => { delete f.verdict; delete f.verdict_route; return evaluateAdmission(f); }) };
   normalizePhaseFindings('challenge', checkpoint, true, { repoRoot: '/repo' });
   const legacy = disposeFindings(checkpoint);
   for (const record of checkpoint.findings.slice(-4)) await t.test(record.id, () => {
@@ -368,7 +294,7 @@ test('whole issue groups reach every artifact', async (t) => {
   const first = await runAndCapture(args);
   assert.equal(first.out.ok, true, JSON.stringify(first.out));
   const post = first.payload.postReview.findings;
-  assert.deepEqual(post.map((f) => f.id), ['OFF', 'ANCHOR']);
+  assert.deepEqual(post.map((f) => f.id), ['CORE-LOW', 'SUGGESTION', 'CORE']);
   const grouped = await runAndCapture(validArgs({ ...args, checkpoints: { challenge: challengeOutput({ findings: raw.findings.slice(0, 3) }) } }));
   const groupPost = grouped.payload.postReview.findings;
   assert.deepEqual(groupPost.map((f) => f.id), ['CORE-LOW', 'SUGGESTION', 'CORE']);
@@ -402,7 +328,7 @@ test('whole issue groups reach every artifact', async (t) => {
   const orphan = applyChallenges([
     member('REMOVED', { file: 'orphan.txt', consolidation_key: 'old', consolidation_primary: true }),
     member('ORPHAN', { file: 'orphan.txt', agent: 'security-reviewer', consolidation_key: 'old' }),
-  ], [{ id: 'REMOVED', score: 0 }, { id: 'ORPHAN', score: 90 }]);
+  ], [{ id: 'REMOVED', claim: 'refuted', justification: 'Guard', refutation_kind: 'guard_exists', refutation: {file:'guard',line_start:1,line_end:1,anchor:'return safe;'}, refutation_check: { verified: true } }, { id: 'ORPHAN', claim: 'confirmed', consequence: 'present_failure', justification: 'Caller' }]);
   const orphanRun = await runAndCapture(validArgs({ checkpoints: { challenge: challengeOutput(orphan) } }));
   assert.deepEqual(orphanRun.payload.postReview.map((f) => f.delivery_group.finding_ids), [['ORPHAN']]);
   assert.equal(orphanRun.payload.postReview[0].consolidation_key, undefined);
@@ -421,7 +347,7 @@ test('whole issue groups reach every artifact', async (t) => {
       response.receipt.deltas_checksum = deltaContentProof(response.result.deltas.map((d) => d.id), response.result.deltas);
     }
     if (dispatch.label.startsWith('validate-batch-')) for (const validation of response.validations) {
-      validation.site_confirmations = [site(1), site(2)].map((s, i) => ({ ...s, confirmed: i === 0 }));
+      validation.site_confirmations = [site(1), site(2)].map(({ file, line_start, line_end }, i) => ({ file, line_start, line_end, confirmed: i === 0 }));
     }
     return response;
   };
@@ -444,9 +370,11 @@ test('final disposition survives replay and persistence', async () => {
   const byId = new Map(fresh.payload.findings.map((f) => [f.id, f]));
   assert.deepEqual(byId.get('BOTH').disposition_reasons, ['validation_skipped', 'verify_unproven', 'held_back']);
   assert.deepEqual(byId.get('VERIFY').disposition_reasons, ['verify_unproven', 'held_back']);
-  assert.deepEqual(byId.get('VALIDATE').disposition_reasons, ['validation_skipped', 'held_back']);
+  assert.deepEqual(byId.get('VALIDATE').disposition_reasons, []);
+  assert.equal(byId.get('VALIDATE').validation, 'skipped');
+  assert.equal(byId.get('VALIDATE').challenge_verdict.claim, 'confirmed');
   assert.equal(byId.get('CLEAN').disposition, 'deliver');
-  assert.deepEqual(fresh.payload.postReview.map((f) => f.id), ['CLEAN']);
+  assert.deepEqual(fresh.payload.postReview.map((f) => f.id), ['CLEAN', 'VALIDATE']);
   assert.ok(fresh.payload.checkpoints.phases.challenge.findings.every((f) => !Object.hasOwn(f, 'disposition') && !Object.hasOwn(f, 'disposition_reasons')));
   const limited = await runAndCapture(validArgs({ measurementTrace: true, limits: { challengeCap: 1 } }), {
     nullAgentLabels: ['challenge-0'],
@@ -467,9 +395,9 @@ test('final disposition survives replay and persistence', async () => {
   const badProof = await runWith(badCtx, badArgs);
   assert.equal(badProof.stats.verified, false);
   assert.equal(badProof.stats.unverified, 2);
-  const scored = applyChallenges([makeFinding('NUMERIC'), makeFinding('SECURITY', { dimension: 'security', risk_level: 4 })],
-    [{ id: 'NUMERIC', score: 0 }, { id: 'SECURITY', score: 0 }]);
-  assert.equal(scored.findings[0].severity, 'medium');
+  const scored = applyChallenges([makeFinding('NUMERIC'), makeFinding('SECURITY', { dimension: 'security', risk_level: 4, verdict: { claim: 'confirmed', consequence: 'latent', justification: 'Future', latent_condition: 'New caller' } })],
+    [{ id: 'NUMERIC', claim: 'refuted', justification: 'Guard', refutation_kind: 'guard_exists', refutation: {file:'guard',line_start:1,line_end:1,anchor:'return safe;'}, refutation_check: { verified: true } }, { id: 'SECURITY', claim: 'confirmed', consequence: 'latent', justification: 'Future', latent_condition: 'New caller' }]);
+  assert.equal(scored.findings[0].severity, 'low');
   const raw = challengeOutput({ findings: [...scored.findings,
     makeFinding('BODY', { report_tag: 'suggestion', diff_validation: { in_diff: false, reason: 'off diff' } }),
     makeFinding('UNKNOWN', { origin: 'surfaced', diff_validation: undefined }),
@@ -496,9 +424,9 @@ test('final disposition survives replay and persistence', async () => {
     const findings = resumed.payload.findings;
     assert.deepEqual(Object.fromEntries(findings.map((f) => [f.id, f.disposition])), expected);
     assert.equal(findings.find((f) => f.id === 'BODY').report_tag, 'suggestion');
-    assert.equal(findings.find((f) => f.id === 'SECURITY').challenge_score, 0);
+    assert.equal(findings.find((f) => f.id === 'SECURITY').verdict_route, 'posted-latent');
     assert.equal(findings.find((f) => f.id === 'SECURITY').risk_level, 4);
-    assert.equal(findings.find((f) => f.id === 'NUMERIC').challenge_score, 0);
+    assert.equal(findings.find((f) => f.id === 'NUMERIC').verdict_route, 'eliminated');
     assert.deepEqual(resumed.payload.postReview.map((f) => f.id), ['UNKNOWN']);
     if (!writerFails) assert.deepEqual(findings, result.payload.findings);
   }
@@ -550,12 +478,12 @@ test('challenge checkpoint owns upstream eliminations across resume', async () =
     eliminated: [makeFinding('VERIFY_OLD', { eliminated_by: 'verify', elimination_reason: 'disproved' })],
   } } }), { findings: [makeFinding('KEEP'), makeFinding('OLD', { confidence: 10 })] });
   const checkpoint = first.payload.checkpoints.phases.challenge;
-  assert.deepEqual(checkpoint.eliminated.map((f) => f.id), ['VERIFY_OLD', 'OLD']);
+  assert.deepEqual(checkpoint.eliminated.map((f) => f.id), ['VERIFY_OLD']);
   const resumed = await runAndCapture(validArgs({ checkpoints: { challenge: checkpoint } }), { findings: [
     makeFinding('FRESH', { confidence: 10 }),
   ] });
-  assert.deepEqual(resumed.payload.findings.map((f) => f.id), ['KEEP', 'VERIFY_OLD', 'OLD']);
-  assert.deepEqual(resumed.payload.checkpoints.phases.challenge.eliminated.map((f) => f.id), ['VERIFY_OLD', 'OLD']);
+  assert.deepEqual(resumed.payload.findings.map((f) => f.id), ['KEEP', 'OLD', 'VERIFY_OLD']);
+  assert.deepEqual(resumed.payload.checkpoints.phases.challenge.eliminated.map((f) => f.id), ['VERIFY_OLD']);
 });
 
 test('legacy verify facts need admission and skipped challenges cannot place', async () => {
@@ -1258,23 +1186,8 @@ for (const row of REFUSAL_ROWS) test(`refusal wiring: ${row.name}`, async () => 
   }
 });
 
-const NULL_CONFIG_GAP = 'null_arg: args.reviewConfig arrived as a literal null and was treated as ABSENT \u2014 '
-  + 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with no ignore list, '
-  + 'NOT your REVIEW.md configuration, so the delivered findings can differ. Omit reviewConfig entirely '
-  + '(or stamp a well-formed value); do not stamp null.';
 const NULL_ROWS = [
-  { name: 'reviewConfig disclosed without mutating waist', input: { reviewConfig: null }, gaps: [NULL_CONFIG_GAP], ok: true },
-  { name: 'each dropped key disclosed', input: { exclusionPatterns: null, delivery: null }, ok: true, gaps: [
-    'null_arg: args.exclusionPatterns arrived as a literal null and was treated as ABSENT \u2014 '
-      + 'no exclusion patterns are applied, so the delivered findings can differ. Omit exclusionPatterns entirely '
-      + '(or stamp a well-formed value); do not stamp null.',
-    'null_arg: args.delivery arrived as a literal null and was treated as ABSENT \u2014 '
-      + 'delivery falls back to tier "all" with no PR identity. Omit delivery entirely '
-      + '(or stamp a well-formed value); do not stamp null.',
-  ] },
   { name: 'null checkpoint was always accepted', input: { checkpoints: null }, ok: true, gaps: [] },
-  { name: 'null checkpoint does not mute config disclosure', input: { checkpoints: null, reviewConfig: null },
-    ok: true, gaps: [NULL_CONFIG_GAP] },
   { name: 'only nonderived nested key discloses', input: { delivery: { tier: null, prIdentity: null } }, ok: true, gaps: [
     'null_arg: args.delivery.prIdentity arrived as a literal null and was treated as ABSENT \u2014 '
       + 'the post-review artifact is persisted as a bare findings array instead of the post_review-ready wrapper. '
@@ -1288,11 +1201,9 @@ const NULL_ROWS = [
       + 'the artifact-writer takes the legacy full by-value persist path. Omit persist entirely '
       + '(or stamp a well-formed value); do not stamp null.',
   ] },
-  { name: 'disclosure survives invalid args exit', input: { reviewConfig: null, argsVersion: 2 },
-    ok: false, gaps: [NULL_CONFIG_GAP], invalid: 'unsupported argsVersion 2 (expected 1)' },
   { name: 'interactive printed null receipt', input: { mode: 'interactive', limits: { deliveryCap: null }, configEcho: {
     model_tier: { value: 'optimized', source: 'fixed' }, pr_comment_cap: { value: null, source: 'default' },
-    delivery_tier: { value: 'all', source: 'default' }, review_md: { value: 'absent', source: 'discovery' },
+    delivery_tier: { value: 'all', source: 'default' },
   } }, ok: true, gaps: [
     'null_receipt: args.configEcho.pr_comment_cap.value arrived as a literal null and was spelled as the printed token "null"; '
       + 'the receipt and the configuration are unchanged; stamp the string "null".',
@@ -1437,7 +1348,7 @@ for (const row of BODY_ROWS) test(`summary delivery modes: ${row.name}`, async (
   if (row.idless) for (const finding of findings) { delete finding.id; evaluateAdmission(finding); }
   const configEcho = row.mode === 'interactive' ? {
     model_tier: { value: 'optimized', source: 'fixed' }, pr_comment_cap: { value: String(row.cap), source: 'default' },
-    delivery_tier: { value: 'all', source: 'default' }, review_md: { value: 'absent', source: 'discovery' },
+    delivery_tier: { value: 'all', source: 'default' },
   } : { ...validArgs().configEcho, delivery: { value: row.receipt, source: 'default' },
     pr_comment_cap: { value: String(row.cap), source: 'default' } };
   const args = validArgs({ mode: row.mode, configEcho, limits: { deliveryCap: row.cap },
@@ -1460,69 +1371,6 @@ for (const row of BODY_ROWS) test(`summary delivery modes: ${row.name}`, async (
   if (row.suffix) assert.ok(body.endsWith(row.suffix));
   else assert.equal(body.includes('not listed here'), false);
   if (row.title) { assert.equal(delivered[0].title, row.title); assert.ok(body.includes(': critical choice')); }
-});
-
-const ROOT_REVIEW = '```yaml code-gauntlet\nconfidence_threshold: 90\n```';
-const CONFIG_ROWS = [
-  { name: 'raw root threshold with proof gaps on fresh and replay', proofGaps: true, fresh: true, input: { reviewMdSetChecksum: 'different-list', reviewMd: [{ path: 'REVIEW.md', text: ROOT_REVIEW, checksum: 'different-text' }], reviewConfigPath: '/repo/REVIEW.md' },
-    findings: [makeFinding('KEEP', { confidence: 95 }), makeFinding('DROP', { confidence: 65 })],
-    source: 'reviewMd', entries: 1, total: 2, passed: 1, subtrees: [] },
-  { name: 'legacy preParsed root threshold', input: { reviewConfig: { confidence_threshold: 90, ignore: [] } },
-    findings: [makeFinding('KEEP', { confidence: 95 }), makeFinding('DROP', { confidence: 65 })],
-    source: 'preParsed', entries: 0, total: 2, passed: 1, subtrees: [] },
-  { name: 'fresh raw child scope reaches challenge and delivery', fresh: true, input: {
-    changedFiles: ['api/x.py', 'legacy/y.py'], reviewMd: [{ path: 'REVIEW.md', text: '```yaml code-gauntlet\n```' },
-      { path: 'api/REVIEW.md', text: ROOT_REVIEW }], reviewConfigPath: '/repo/REVIEW.md',
-  }, findings: [makeFinding('api-x', { file: 'api/x.py', confidence: 80 }), makeFinding('legacy-y', { file: 'legacy/y.py',
-    confidence: 80 })], source: 'reviewMd', entries: 2, total: 2, passed: 1,
-    subtrees: [{ dir: 'api', matched: 1 }], ids: ['legacy-y'] },
-  { name: 'preParsed child scope', input: { reviewConfig: { ignore: [],
-    scopes: [{ dir: 'api', confidence_threshold: 90, ignore: [] }] } }, findings: [
-    makeFinding('API', { file: 'api/x.py', confidence: 80 }), makeFinding('LEGACY', { file: 'legacy/y.py', confidence: 80 }),
-  ], source: 'preParsed', entries: 0, total: 2, passed: 1, subtrees: [{ dir: 'api', matched: 1 }], ids: ['LEGACY'] },
-  { name: 'unmatched case and prefix scopes omit root', input: { reviewMd: [
-    { path: 'REVIEW.md', text: '```yaml code-gauntlet\n```' }, { path: 'docs/REVIEW.md', text: ROOT_REVIEW },
-    { path: 'API/REVIEW.md', text: ROOT_REVIEW }, { path: 'api/REVIEW.md', text: ROOT_REVIEW },
-  ], reviewConfigPath: '/repo/REVIEW.md' }, findings: [makeFinding('APIARY', { file: 'apiary/x.py', confidence: 80 })],
-    source: 'reviewMd', entries: 4, total: 1, passed: 1,
-    subtrees: [{ dir: 'docs', matched: 0 }, { dir: 'API', matched: 0 }, { dir: 'api', matched: 0 }] },
-  { name: 'absent review configuration', input: {}, findings: [makeFinding('KEEP')],
-    source: 'none', entries: 0, total: 1, passed: 1, subtrees: [] },
-  { name: 'exclusions provenance independent of config', input: { exclusionsText: '- foo.js\n' }, findings: [makeFinding('KEEP')],
-    source: 'none', exclusions: 'exclusionsText', entries: 0, total: 1, passed: 1, subtrees: [] },
-];
-for (const row of CONFIG_ROWS) test(`review configuration wiring: ${row.name}`, async () => {
-  const args = validArgs({ ...row.input, ...(row.fresh ? {} : { checkpoints: { validate: { findings: row.findings,
-    stats: { batches_dispatched: 0, batches_completed: 0, validated: row.total, skipped: 0, adjusted: 0 } } } }) });
-  const { out, payload } = await runAndCapture(args, { findings: row.findings });
-  assert.equal(out.ok, true);
-  assert.equal(out.stats.reviewConfigSource, row.source);
-  assert.equal(out.stats.reviewMdEntryCount, row.entries);
-  assert.equal(out.stats.filter.total, row.total);
-  assert.equal(out.stats.filter.passed_threshold, row.passed);
-  assert.deepEqual(out.stats.reviewMdSubtrees, row.subtrees);
-  const expectedProofGaps = row.proofGaps ? [
-    'review_md: REVIEW.md text differs from the collected file (checksum mismatch); its settings were applied as stamped',
-    'review_md: stamped entries differ from the collected list (omitted, extra or reordered REVIEW.md); settings were applied as stamped',
-  ] : [];
-  assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('review_md:')), expectedProofGaps);
-  if (row.proofGaps) {
-    const filterCheckpoint = { filtered: payload.findings, eliminated: [], stats: out.stats.filter,
-      gaps: ['filter checkpoint marker'] };
-    const resumed = await runAndCapture({ ...args, ...checkpointArgs({
-      ...payload.checkpoints.phases, filter: filterCheckpoint,
-    }) }, { findings: row.findings });
-    assert.equal(resumed.out.ok, true);
-    assert.deepEqual(resumed.out.gaps.filter((gap) => gap.startsWith('review_md:')), expectedProofGaps);
-    assert.deepEqual(resumed.out.stats.filter, out.stats.filter);
-    assert.ok(resumed.out.gaps.includes('filter checkpoint marker'));
-    assert.ok(resumed.payload.report.includes(`| Gaps | ${resumed.out.gaps.length} |`));
-  }
-  if (row.exclusions) assert.equal(out.stats.exclusionsSource, row.exclusions);
-  if (row.ids) {
-    assert.deepEqual(payload.findings.filter((finding) => finding.disposition !== 'eliminate').map((finding) => finding.id), row.ids);
-    assert.deepEqual(payload.postReview.map((finding) => finding.id), row.ids);
-  }
 });
 
 const REPORT_ROWS = [
@@ -1637,3 +1485,16 @@ test('producer-measured description context reaches every discovery agent', asyn
     rmSync(output, { recursive: true });
   }
 });
+
+for (const url of ['https://github.com/grafana/grafana', 'https://github.com/o/r/pull/9?files=1#diff']) {
+  test(`identity URL reaches report and post-review wrapper as an origin: ${url}`, async () => {
+    const identity = { ...prIdentity(), web_origin: url };
+    const args = validArgs({ delivery: { prIdentity: identity } });
+    const { out, payload } = await runAndCapture(args);
+    assert.equal(out.ok, true, JSON.stringify(out));
+    assert.equal(payload.postReview.web_origin, 'https://github.com');
+    assert.ok(payload.report.includes(`https://github.com/${identity.owner}/${identity.repo}/blob/`));
+    assert.equal(payload.report.includes(url + '/'), false);
+    assert.equal(args.delivery.prIdentity.web_origin, url);
+  });
+}

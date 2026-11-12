@@ -1,5 +1,5 @@
 import { canonicalRange } from './location.js';
-import { WS_TRIM_RE, asText, asConfidence, deepFreeze } from './wire.js';
+import { WS_TRIM_RE, asText, deepFreeze } from './wire.js';
 import { INJECTION_STRIPPED_PROSE_FIELDS } from './registry.js';
 
 export const INJECTION_TITLE_PATTERNS = deepFreeze([
@@ -72,15 +72,7 @@ const INJECTION_VULN_INTRO_PATTERNS = deepFreeze([
   /\bdisable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+security[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:check|feature|control)\b/i,
 ]);
 
-const MIN_BODY_WORDS = 10;
 
-const HIGH_CONFIDENCE_THRESHOLD = 85;
-
-export const WORD_SPLIT_RE = /[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+/;
-
-export function countWords(text) {
-  return (text || '').split(WORD_SPLIT_RE).filter(Boolean).length;
-}
 
 // Packed Unicode tables are decoded once; explicit mappings avoid runtime normalization drift.
 const CONFUSABLE_FOLD_PACKED =
@@ -294,8 +286,6 @@ export const INJECTION_RULES = deepFreeze([
     patterns: INJECTION_ENCODED_PATTERNS, prose: true },
   { kind: 'pattern', domain: 'combined', label: 'contains bypass/auto-approve instruction',
     patterns: INJECTION_BYPASS_PATTERNS, prose: true },
-  { kind: 'shortBody', minimumWords: MIN_BODY_WORDS, confidence: HIGH_CONFIDENCE_THRESHOLD,
-    label: 'suspiciously short description ({words} words) with high confidence ({confidence})' },
   { kind: 'pattern', domain: 'combined', label: 'uses instructional tone',
     patterns: INJECTION_INSTRUCTIONAL_PATTERNS, prose: true },
   { kind: 'pattern', domain: 'combined', label: 'recommends introducing vulnerability',
@@ -372,8 +362,8 @@ export function applyInjectedProseStrip(finding, rules = INJECTION_RULES) {
   return stripSuggestedFixCodeIfNeeded(stripped, firstPatternStrip);
 }
 
-// Rule order fixes diagnostic reason order; replay scans stage outputs without reapplying discovery's short-body heuristic.
-function injectionScanCore(findings, includeH4, rules) {
+// Rule order fixes diagnostic reason order.
+export function applyInjectionFilter(findings, rules = INJECTION_RULES) {
   const kept = [];
   const eliminated = [];
   const seenSignatures = new Map();
@@ -382,7 +372,6 @@ function injectionScanCore(findings, includeH4, rules) {
     const title = asText(finding.title);
     const description = asText(finding.description);
     const filepath = asText(finding.file);
-    const confidence = asConfidence(finding.confidence);
     const combined = `${title}\n${description}`;
     const combinedFolded = foldConfusables(combined);
     const titleFolded = foldConfusables(title);
@@ -395,11 +384,6 @@ function injectionScanCore(findings, includeH4, rules) {
         const folded = row.domain === 'title' ? titleFolded : combinedFolded;
         const m = firstMatch(raw, folded, row.patterns);
         if (m) reasons.push(`${row.label}: ${JSON.stringify(m)}`);
-      } else if (row.kind === 'shortBody' && includeH4) {
-        const wordCount = countWords(description);
-        if (wordCount < row.minimumWords && confidence >= row.confidence) {
-          reasons.push(row.label.replace('{words}', wordCount).replace('{confidence}', confidence));
-        }
       } else if (row.kind === 'path') {
         if (!filepath || row.pattern.test(filepath)) {
           reasons.push(`${row.label}: ${JSON.stringify(filepath)}`);
@@ -425,12 +409,4 @@ function injectionScanCore(findings, includeH4, rules) {
   }
 
   return { kept, eliminated };
-}
-
-export function applyInjectionFilter(findings, rules = INJECTION_RULES) {
-  return injectionScanCore(findings, true, rules);
-}
-
-export function applyReplayInjectionScan(findings, rules = INJECTION_RULES) {
-  return injectionScanCore(findings, false, rules);
 }

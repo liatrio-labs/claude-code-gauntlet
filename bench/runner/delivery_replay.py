@@ -9,13 +9,14 @@ import json
 import re
 import subprocess
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory, TemporaryFile
 from typing import Any, Literal, TypedDict
 
 from gauntlet.artifacts import assemble, plan_checksum
 from gauntlet.jsjson import js_stringify_pretty
+from gauntlet.measurement import measurement_text
 from gauntlet.registry import TRACE_FINDING_FIELDS, Admission, Disposition
 
 from bench.runner.decode import decode
@@ -59,8 +60,6 @@ class DeliveryStateWire(TypedDict):
     gaps: list[str]
     completed: list[str]
     phaseOutputs: dict[str, dict[str, Any]]
-    resolvedReview: dict[str, Any]
-    reviewMdSubtrees: list[dict[str, Any]]
     derivedAgentFlags: dict[str, Any]
     phaseReached: str
 
@@ -619,7 +618,7 @@ def replay_delivery(inputs, *, candidate=False):
     request = dict(
         record,
         checkpoint=json.loads(inputs.checkpoint),
-        trace=asdict(inputs.trace) if inputs.trace is not None else None,
+        trace=inputs.trace.wire() if inputs.trace is not None else None,
     )
     # A file cannot fill a pipe while the host waits for the next dispatch.
     with (
@@ -692,7 +691,10 @@ def replay_delivery(inputs, *, candidate=False):
         raise ValueError("rendered checkpoint differs from source evidence")
     artifacts["envelope.json"] = js_stringify_pretty(envelope)
     if envelope.get("measurement", {}).get("status") == "available":
-        artifacts["measurement-trace.json"] = envelope["measurement"]["text"]
+        measurement = envelope["measurement"]
+        artifacts["measurement-trace.json"] = measurement_text(
+            measurement["text"], measurement.get("encoding")
+        )
     if candidate:
         _candidate_artifacts(inputs, artifacts, paths, baseline, expected_checkpoint)
     result = tuple(

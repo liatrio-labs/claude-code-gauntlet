@@ -396,6 +396,7 @@ def test_detector_real_child_degradation(tmp_path, invoke, monkeypatch):
 PATCH = "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n"
 # argv strings split on spaces before placeholders expand, so paths may hold spaces.
 MAIN_FAILURE = {
+    "check_refutations": "--request invalid --repo-root {dir} --head-sha abcd --target-kind local --diff-file {missing}",
     "capture_policy_env": "",
     "check_eligibility": "--platform github --pr 7",
     "list_pr_files": "--platform github --pr 7",
@@ -450,6 +451,10 @@ BAD_INPUT = {
 POST = {"platform": "github", "owner": "o", "repo": "r", "pr_number": 5, "sha": FULL}
 # Each success row is (files written under the case directory, argv).
 SUCCESS = {
+    "check_refutations": (
+        {"diff.patch": "diff\n"},
+        '--request {{"citations":[]}} --repo-root {dir} --head-sha abcd --target-kind local --diff-file {dir}/diff.patch',
+    ),
     "capture_policy_env": ({}, ""),
     "check_eligibility": ({}, "--platform github --pr 7"),
     "list_pr_files": ({}, "--platform github --pr 7"),

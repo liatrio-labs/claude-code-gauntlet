@@ -847,14 +847,14 @@ def score_run(
                 inputs["diff_path"].read_text(encoding="utf-8"),
                 treatment_root=replay_root,
             )
+            bound = provenance.bind_candidates(
+                tuple(c for c in candidate_map if c.pr_url == url), mapped
+            )
             delivery_bindings[url] = {
                 key: str(Path("sources") / p.relative_to(run_dir))
                 for key, p in inputs.items()
             }
             traces[url] = path, bound_trace
-            bound = provenance.bind_candidates(
-                tuple(c for c in candidate_map if c.pr_url == url), mapped
-            )
             candidate_map = tuple(c for c in candidate_map if c.pr_url != url) + bound
         except (ValueError, KeyError, TypeError) as exc:
             trace_errors[url] = str(exc)
@@ -1063,6 +1063,14 @@ def score_run(
                 "trace_path": str(Path("sources") / path.relative_to(run_dir)),
                 "trace_sha256": source_hashes[str(path.relative_to(run_dir))],
                 "delivery": delivery_bindings.get(url),
+                "delivery_unavailable_reason": (
+                    None
+                    if url in delivery_bindings
+                    else "Workflow return budget omitted selection trace; dropped stages: "
+                    + ", ".join(trace.dropped_stages)
+                    if "select" in trace.dropped_stages
+                    else trace_errors.get(url, "delivery binding unavailable")
+                ),
             }
             for url, (path, trace) in traces.items()
         },

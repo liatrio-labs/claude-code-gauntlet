@@ -1,8 +1,10 @@
+import { hostResult } from './hostBoundary.js';
 // Shared host-contract assertions keep tests aligned with actual dispatch shapes.
 import { parseWriterPayload } from '../../src/persist.js';
 import { plannedArtifactPaths } from '../../src/outputPaths.js';
 import { AGENTS } from '../../src/registry.js';
 import { deltaEnvelope, sliceInputRecorder, dispatchedFindings } from './verifyDelta.js';
+import { routeVerdict } from '../../src/verdict.js';
 import { evaluateAdmission } from '../../src/admission.js';
 
 const DISCOVERY_AGENT_TYPES = new Set(AGENTS);
@@ -65,8 +67,9 @@ export function assertObjectRootSchema(schema) {
 // these) plus the fields downstream filter/challenge read. Fresh per call so stage
 // mutation never leaks across dispatches or tests.
 export function makeFinding(id, over = {}) {
-  const finding = evaluateAdmission({
+  const finding = evaluateAdmission(routeVerdict({
     id,
+    verdict: { claim: 'confirmed', consequence: 'present_failure', justification: 'Fixture caller fails' },
     path_role: 'source', policy_subject: 'ordinary', validation: 'validated', challenge: 'survived',
     file: `${id}.js`,
     location_status: 'confirmed',
@@ -84,7 +87,7 @@ export function makeFinding(id, over = {}) {
     cross_file_refs: [],
     code: `const ${id} = broken();`,
     ...over,
-  });
+  }));
   for (const key of ['report_tag', 'report_destination']) if (Object.hasOwn(over, key)) finding[key] = over[key];
   return finding;
 }
@@ -136,7 +139,7 @@ export function makeCtx(args, opts = {}) {
     return all.slice(i * size, i * size + size);
   };
 
-  const agent = async (prompt, dispatch = {}) => {
+  const dispatchAgent = async (prompt, dispatch = {}) => {
     try {
       assertPrompt(prompt);
       assertValidSchema(dispatch.schema);
@@ -173,10 +176,10 @@ export function makeCtx(args, opts = {}) {
     }
     if (label.startsWith('validate-batch-')) {
       const ids = [...prompt.matchAll(/^- (\S+) \[/gm)].map((m) => m[1]);
-      return { validations: ids.map((finding_id) => ({ finding_id, policy_subject: 'ordinary', confidence: seedFindings().find((f) => f.id === finding_id)?.confidence ?? 90 })) };
+      return { validations: ids.map((finding_id) => ({ finding_id, claim: 'confirmed', consequence: 'present_failure', justification: 'Present failing input inspected' })) };
     }
     if (label === 'group-findings') return { groups: [] };
-    if (label.startsWith('challenge-')) return { confidence_claim_is_correct: 80, justification: 'claim holds' };
+    if (label.startsWith('challenge-')) return { verdict: { claim: 'confirmed', consequence: 'present_failure', justification: 'claim holds' } };
     if (label === 'artifact-writer') {
       if (opts.onPersist) opts.onPersist(parseWriterPayload(prompt));
       // Faithful writer: echo the exact planned paths so writeArtifacts' write-proof gate
@@ -203,9 +206,9 @@ export function makeCtx(args, opts = {}) {
     }
     return Promise.all(thunks.map(async (thunk) => {
       if (typeof thunk !== 'function') { violations.push('parallel() member is not a zero-arg function'); return null; }
-      try { return await thunk(); } catch { return null; } // null-isolate a failed member (Phase 0)
+      try { return await hostResult(thunk()); } catch { return null; } // null-isolate a failed member (Phase 0)
     }));
   };
 
-  return { calls, violations, agent, parallel };
+  return { calls, violations, agent: (...args) => hostResult(dispatchAgent(...args)), parallel };
 }

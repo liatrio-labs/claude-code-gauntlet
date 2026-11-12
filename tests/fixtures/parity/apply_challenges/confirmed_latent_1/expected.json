@@ -1,0 +1,56 @@
+{
+  "eliminated": [],
+  "findings": [
+    {
+      "admission": {
+        "core": false,
+        "inline_eligible": true,
+        "input_fields": [],
+        "input_proof": "fnv1a32:0x76952e46",
+        "kind": "ordinary",
+        "reasons": [
+          {
+            "predicate": "kind",
+            "status": "held_back"
+          }
+        ],
+        "status": "held_back",
+        "tier": "suggestion",
+        "version": 1
+      },
+      "body_fix_task_eligible": false,
+      "challenge": "survived",
+      "challenge_justification": "Caller inspected",
+      "challenge_verdict": {
+        "claim": "confirmed",
+        "consequence": "latent",
+        "justification": "Caller inspected",
+        "latent_condition": "Add a caller"
+      },
+      "confidence": 90,
+      "demoted_by": "consequence",
+      "demotion_reason": "Add a caller",
+      "file": "src",
+      "id": "f",
+      "line_start": 10,
+      "original_severity": "high",
+      "report_destination": "suggestion",
+      "report_tag": "suggestion",
+      "severity": "low",
+      "verdict": {
+        "claim": "confirmed",
+        "consequence": "latent",
+        "justification": "Caller inspected",
+        "latent_condition": "Add a caller"
+      },
+      "verdict_route": "posted-latent"
+    }
+  ],
+  "stats": {
+    "challenge_removed": 0,
+    "challenge_survived": 1,
+    "final_count": 1,
+    "total_input": 1,
+    "unchallenged": 0
+  }
+}

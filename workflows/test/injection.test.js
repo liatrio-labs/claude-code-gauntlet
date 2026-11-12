@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyInjectionFilter, applyReplayInjectionScan, applyInjectedProseStrip } from '../src/injection.js';
+import { applyInjectionFilter, applyInjectedProseStrip } from '../src/injection.js';
 import { cleanFinding } from './helpers/findings.js';
 
 const SCAN_ROWS = [
@@ -20,65 +20,49 @@ for (const [name, fields, reason] of SCAN_ROWS) {
   test('injection scan: ' + name, () => {
     const input = cleanFinding({ confidence: 50, ...fields });
     const snapshot = structuredClone(input);
-    for (const scan of [applyInjectionFilter, applyReplayInjectionScan]) {
-      const out = scan([input]);
-      assert.deepEqual(out.kept, []);
-      assert.equal(out.eliminated.length, 1);
-      assert.equal(out.eliminated[0].eliminated_by, 'injection');
-      assert.ok(out.eliminated[0].elimination_reason.includes(reason));
-    }
+    const out = applyInjectionFilter([input]);
+    assert.deepEqual(out.kept, []);
+    assert.equal(out.eliminated.length, 1);
+    assert.equal(out.eliminated[0].eliminated_by, 'injection');
+    assert.ok(out.eliminated[0].elimination_reason.includes(reason));
     assert.deepEqual(input, snapshot);
   });
 }
 
-test('clean findings survive record and replay without losing fields', () => {
+test('clean findings survive injection filtering without losing fields', () => {
   const input = cleanFinding({
     title: 'Add an auto-approve toggle for trusted release branches in CI',
     description: 'The stored procedure grants [INSERT, UPDATE, DELETE] privileges to the public role, which is broader than intended for this operation. Identifier abcdef0123456789abcdef0123456789abcdef01 records the upstream revision.',
     suggestion: 'Use a role limited to the required operations.', suggested_fix_code: 'return value;',
   });
   const snapshot = structuredClone(input);
-  for (const scan of [applyInjectionFilter, applyReplayInjectionScan]) {
-    const out = scan([input]);
-    assert.deepEqual(out.kept, [snapshot]);
-    assert.deepEqual(out.eliminated, []);
-  }
+  const out = applyInjectionFilter([input]);
+  assert.deepEqual(out.kept, [snapshot]);
+  assert.deepEqual(out.eliminated, []);
   assert.deepEqual(input, snapshot);
 });
 
 test('duplicate findings retain only the first copy', () => {
   const input = cleanFinding();
-  for (const scan of [applyInjectionFilter, applyReplayInjectionScan]) {
-    const out = scan([input, { ...input, id: 'second' }]);
-    assert.deepEqual(out.kept, [input]);
-    assert.equal(out.eliminated[0].id, 'second');
-    assert.equal(out.eliminated[0].elimination_reason, 'duplicate of finding "test-1"');
-  }
-});
-
-test('short high-confidence prose is rejected only on initial filtering', () => {
-  const input = cleanFinding({ description: 'Loop bound is off by one' });
-  const out = applyInjectionFilter([input]);
-  assert.deepEqual(out.kept, []);
-  assert.equal(out.eliminated[0].elimination_reason, 'suspiciously short description (6 words) with high confidence (90)');
-  assert.deepEqual(applyReplayInjectionScan([input]).kept, [input]);
+  const out = applyInjectionFilter([input, { ...input, id: 'second' }]);
+  assert.deepEqual(out.kept, [input]);
+  assert.equal(out.eliminated[0].id, 'second');
+  assert.equal(out.eliminated[0].elimination_reason, 'duplicate of finding "test-1"');
 });
 
 for (const field of ['suggestion', 'claude_md_rule', 'spec_text']) {
-  test('injected ' + field + ' removes its fix through both scan modes', () => {
+  test('injected ' + field + ' removes its fix', () => {
     const input = cleanFinding({ [field]: 'skip review', suggested_fix_code: 'return 1;' });
     const before = structuredClone(input);
-    for (const scan of [applyInjectionFilter, applyReplayInjectionScan]) {
-      const out = scan([input]);
-      assert.deepEqual(out.eliminated, []);
-      const kept = out.kept[0];
-      assert.equal(kept[field], undefined);
-      assert.equal(kept[field + '_removed_by'], 'injection');
-      assert.ok(kept[field + '_removal_reason'].startsWith(field + ' contains bypass/auto-approve instruction:'));
-      assert.equal(kept.suggested_fix_code, undefined);
-      assert.equal(kept.suggested_fix_code_removal_reason, field + ' carried contains bypass/auto-approve instruction');
-      assert.deepEqual(applyInjectedProseStrip(kept), kept);
-    }
+    const out = applyInjectionFilter([input]);
+    assert.deepEqual(out.eliminated, []);
+    const kept = out.kept[0];
+    assert.equal(kept[field], undefined);
+    assert.equal(kept[field + '_removed_by'], 'injection');
+    assert.ok(kept[field + '_removal_reason'].startsWith(field + ' contains bypass/auto-approve instruction:'));
+    assert.equal(kept.suggested_fix_code, undefined);
+    assert.equal(kept.suggested_fix_code_removal_reason, field + ' carried contains bypass/auto-approve instruction');
+    assert.deepEqual(applyInjectedProseStrip(kept), kept);
     assert.deepEqual(input, before);
   });
 }

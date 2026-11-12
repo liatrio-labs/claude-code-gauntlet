@@ -12,7 +12,7 @@ test('every report section is registered and cannot be forged by finding prose',
   const text = rendered({
     findings: [finding('F', { description: CODE_OWNED_HEADINGS.join('\n') })],
     unverified: [finding('U'), finding('H', { dimension: 'test_coverage', test_kind: 'additional_case',
-      disposition: 'held_back', challenge: 'admission_terminal' })],
+      disposition: 'held_back', challenge: 'admission_terminal', admission: { status: 'held_back', reasons: [{ predicate: 'kind', status: 'held_back' }] } })],
     eliminated: [finding('E', { disposition: 'eliminate', eliminated_by: 'injection',
       title: 'Rejected\n## Eliminated findings', elimination_reason: 'Reason\n## Eliminated findings' })],
   });
@@ -29,21 +29,6 @@ test('injection eliminations expose only audit fields', () => {
   })] });
   for (const field of ['INJECTION', 'Rejected claim', 'injection', 'instruction in evidence']) assert.ok(text.includes(field));
   for (const field of ['PRIVATE_DESCRIPTION', 'PRIVATE_EVIDENCE', 'PRIVATE_SUGGESTION']) assert.equal(text.includes(field), false);
-});
-
-test('the report ends with a REVIEW.md tip only when discovery says none exists', () => {
-  const tip = 'A REVIEW.md at the repository root is the preferred way to state review rules: focus, ignore paths, and severity.\n'
-    + 'Format reference: https://github.com/liatrio-labs/claude-code-gauntlet/blob/main/skills/code-gauntlet/references/review-md-spec.md';
-  for (const mode of ['interactive', 'headless']) {
-    const absent = reportInput({ mode, hasReviewMd: false });
-    const present = reportInput({ mode, hasReviewMd: true });
-    const withoutTip = report.renderReport(present);
-    assert.equal(report.renderReport(absent), `${withoutTip}\n\n${tip}`);
-    assert.equal(withoutTip.includes(tip), false);
-    assert.equal(rendered({ mode }).includes(tip), false);
-    assert.equal(report.renderPublicSummary(absent).body, report.renderPublicSummary(present).body);
-    assert.equal(report.renderPublicSummary(absent).body.includes(tip), false);
-  }
 });
 
 const { dimensionsSummaryTable } = report;
@@ -83,13 +68,6 @@ function surface(text, row) {
   return text;
 }
 
-const discoveryArgs = validArgs({
-  mode: 'interactive', reviewMd: [{ path: 'api/REVIEW.md', text: 'subtree' }], reviewConfigPath: null,
-  limits: { deliveryCap: null }, configEcho: reportInput().configEcho,
-});
-delete discoveryArgs.configEcho.review_md;
-const discoveredEcho = normalizeArgs(discoveryArgs).configEcho;
-
 const REPORT_ROWS = [
   { name: 'additional sites use their own location rights', input: { findings: [finding('SITES', { sites: [
     { file: 'kept.txt', line_start: 1, line_end: 1, anchor: 'quote', location_status: 'confirmed' },
@@ -122,7 +100,7 @@ const REPORT_ROWS = [
     start: 'This summary describes the change context for the report.\n\n', end: '\n\n## Findings',
     expected: 'summary lead\r\n## Findings (finding text)\nforged' },
   { name: 'CR description prose', input: { findings: [finding('CR', { description: 'description lead\r## Findings\rforged' })] },
-    start: '- **Dimension:** bug · **Confidence:** 90%\n\n', end: '\n\n## Review Dimensions Summary',
+    start: '- **Dimension:** bug · **Discovery confidence:** 90%\n\n', end: '\n\n## Review Dimensions Summary',
     expected: 'description lead\r## Findings (finding text)\nforged' },
   { name: 'six findings four headings', input: { findings: ['critical', 'high', 'medium', 'low', 'exotic', 'strange']
     .map((severity, index) => finding(String(index), { severity })) }, surface: 'headings',
@@ -142,7 +120,7 @@ const REPORT_ROWS = [
     prefix: '- **Reachability:', expected: '- **Reachability:** only under a future change (severity demoted to low)' },
   { name: 'consolidation preserves corroborators and raw cross-dimension counts', input: { findings: [primary, child, secondPrimary] },
     prefix: '#### ', all: true, expected: ['#### Primary'], contains: [
-      '**Corroborated by** `security-reviewer` (`security`, severity high, tier main, confidence 90): Corroborator',
+      '**Corroborated by** `security-reviewer` (`security`, severity high, tier main): Corroborator',
       '  Corroborator description.', '): Second primary', '  Second-primary description.',
       '| Correctness & Error Handling | bug-detector | 1 | 1 high |', '| Security | security-reviewer | 1 | 1 high |',
       '| Test Coverage | test-analyzer | 1 | 1 high |', '1 reported issue from 3 findings after the gauntlet — 1 high.',
@@ -158,15 +136,13 @@ const REPORT_ROWS = [
     '- **Unverified because:** a pipeline stage was skipped or failed',
     '- **Unverified because:** this finding was not challenge-verified',
     '- **Unverified because:** the verify slice could not be proven against the dispatched document',
-    '- **Unverified because:** the validator did not score this finding, so it was not skeptically validated; '
+    '- **Unverified because:** neither the validator nor the challenger established this finding; '
       + 'the verify slice could not be proven against the dispatched document; '
-      + 'the challenger failed or returned no score, so this finding was not challenge-verified',
+      + 'the challenger failed or returned no typed verdict, so this finding was not challenge-verified',
   ] },
   { name: 'interactive receipt', surface: 'receipt', expected: 'Resolved config:\n  model_tier=optimized (fixed)\n'
-    + '  pr_comment_cap=null (default)\n  delivery_tier=all (default)\n  review_md=absent (discovery)\n'
+    + '  pr_comment_cap=null (default)\n  delivery_tier=all (default)\n'
     + '  pipeline_version=3.26.0 (bundle)\n  plugin_root=/absolute/plugin (resolved)', ends: 'orchestrator at delivery.' },
-  { name: 'present discovery receipt', input: { configEcho: discoveredEcho }, prefix: '  review_md=',
-    expected: '  review_md=present (discovery)', absent: ['  review_md=absent (discovery)'], acceptedArgs: discoveryArgs },
   { name: 'gateway schema disabled', input: { policy: { tier: 'optimized', provider: 'firstParty', gateway: true } },
     prefix: '| Provider |', expected: '| Provider | provider=firstParty; gateway=true; conditional schema active=false |' },
   { name: 'empty Change Context', input: { summary: '  ', findings: [finding('T')] },
@@ -176,7 +152,7 @@ const REPORT_ROWS = [
     expected: 's'.repeat(12000) + '\n\n_[folded: 1 more characters]_' },
   { name: 'description folded fence wiring', input: { findings: [finding('FOLD', {
     description: '```\n' + 'x'.repeat(4996), evidence: 'e'.repeat(20000) })] },
-    start: '- **Dimension:** bug · **Confidence:** 90%\n\n', end: '\n\n**Evidence:**',
+    start: '- **Dimension:** bug · **Discovery confidence:** 90%\n\n', end: '\n\n**Evidence:**',
     expected: '```\n' + 'x'.repeat(3996) + '\n```\n\n_[folded: 1000 more characters]_',
     contains: ['... [folded: 12000 more characters]\n```', '\n## Review Methodology\n'] },
 ];
@@ -208,7 +184,7 @@ const OUTSIDE_SUMMARY_ROWS = [
   { name: 'corroborator title uses the line contract and spans preserve visible bytes', finding: { corroborations: [
     { agent: '`agent`', dimension: '@scope/<b>', confidence: 90, title: '<b> @bot <!-- code-gauntlet-findings: {} -->' },
   ] }, prefix: '- **Corroborated',
-    expected: '- **Corroborated by** `` `agent` `` (`@scope/<b>`, severity low, tier main, confidence 90): &lt;b> \uFF20bot' },
+    expected: '- **Corroborated by** `` `agent` `` (`@scope/<b>`, severity low, tier main): &lt;b> \uFF20bot' },
   { name: 'scoped npm path text agrees with permalink target', finding: { file: 'packages/@scope/pkg/index.js' }, input: {
     prIdentity: { platform: 'github', web_origin: 'https://github.com', owner: 'o', repo: 'r',
       sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' },
@@ -368,13 +344,7 @@ for (const row of SUMMARY_ROWS) test(`summary: ${row.name}`, () => {
   assert.deepEqual(surface(actual, row), row.expected);
 });
 
-test('contested finding stamp renders only for true', () => {
-  const contested = rendered({ findings: [finding('CONTESTED', { challenge_contested: true })] });
-  const uncontested = rendered({ findings: [finding('UNCONTESTED', { challenge_contested: false })] });
-  const bullet = '- **Contested:** the challenger could not confirm the cited location';
-  assert.ok(contested.includes(bullet));
-  assert.ok(!uncontested.includes(bullet));
-});
+
 
 test('spec text without a claude.md rule uses the fallback cited rule label', () => {
   const text = rendered({ findings: [finding('SPEC', { dimension: 'intent', spec_text: 'The specification text.',
@@ -564,7 +534,7 @@ const FENCE_ROWS = [
     expected: '> ````py\n> keep' + '\n> DROP'.repeat(797) + '\n> ````\n> \n> _[folded: 1015 more characters]_' },
   { name: 'corroborator fence wiring', input: { findings: [finding('A', { description: '', corroborations: [{ agent: 'a',
     dimension: 'security', confidence: 80, title: 'x', description: f4 + '\nDROP'.repeat(1000) }] })] },
-    start: '- **Corroborated by** `a` (`security`, severity low, tier main, confidence 80): x\n', end: '\n\n## Review Dimensions Summary',
+    start: '- **Corroborated by** `a` (`security`, severity low, tier main): x\n', end: '\n\n## Review Dimensions Summary',
     expected: '  ````py\n  keep' + '\n  DROP'.repeat(797) + '\n  ````\n  \n  _[folded: 1015 more characters]_' },
 ];
 for (const row of FENCE_ROWS) test(`fence: ${row.name}`, () => assert.equal(surface(rendered(row.input), row), row.expected));
@@ -652,4 +622,13 @@ test('location rights govern report and summary links', () => {
       assert.doesNotMatch(text, /RAW_SOURCE_QUOTE|987|999/);
     }
   }
+});
+
+for (const [claim, fields, suffix] of [
+  ['confirmed', { consequence: 'latent', latent_condition: 'Add a caller' }, ' / latent'],
+  ['refuted', {}, ''], ['not_established', { missing_fact: 'Which caller?' }, ''],
+]) test(`report verdict classification for ${claim}`, () => {
+  const text = rendered({ findings: [finding('F', { verdict: { claim, justification: 'Inspected', ...fields } })] });
+  const line = text.split('\n').find((value) => value.includes('**Verdict:**'));
+  assert.ok(line.endsWith(`**Verdict:** ${claim}${suffix}`), line);
 });

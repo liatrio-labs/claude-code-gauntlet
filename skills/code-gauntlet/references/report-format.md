@@ -130,6 +130,7 @@ Unconfirmed findings remain in the review body, labelled `location unconfirmed`.
 ## Final Disposition and Rights
 
 Missing or unknown disposition or admission is held back. Delivery intersects admission, disposition and location rights. Body fix tasks additionally require the persisted current-defect eligibility stamp; patches and fences remain denied.
+Typed posting verdicts supersede semantic kind defaults; deterministic kind defaults and factual gates still apply.
 
 | Disposition | inline | body | report | fixTask | patch | fence | sourceLink |
 |---|---|---|---|---|---|---|---|
@@ -152,7 +153,7 @@ Missing or unknown disposition or admission is held back. Delivery intersects ad
 - `quality_basis: duplication`: {"description": "Duplicated behavior identified by duplicate_of.", "phase": "semantic", "predicates": ["resolved_duplicate", "confirmed_duplication"], "required": ["duplicate_of"], "tier": "suggestion"}; default disposition `held_back`.
 - `quality_basis: simpler_equivalent`: {"anyOf": ["suggestion", "suggested_fix_code"], "description": "Simpler replacement preserving observable behavior.", "phase": "semantic", "predicates": ["concrete_equivalent", "behavior_preserved"], "required": ["behavior_preserved"], "tier": "suggestion"}; default disposition `held_back`.
 - `quality_basis: stack_idiom`: {"description": "Behavior-preserving replacement grounded in existing repository precedent.", "phase": "semantic", "predicates": ["resolved_precedent", "precedent_not_added", "applicable"], "required": ["precedent"], "tier": "suggestion"}; default disposition `held_back`.
-- `quality_basis: other`: {"defaultDisposition": "report_only", "description": "No demonstrated defect, duplication, simpler equivalent or applicable precedent.", "phase": "deterministic", "predicates": [], "required": [], "tier": "suggestion"}; default disposition `report_only`.
+- `quality_basis: other`: {"description": "No demonstrated defect, duplication, simpler equivalent or applicable precedent.", "phase": "semantic", "predicates": [], "required": [], "tier": "suggestion"}; default disposition `held_back`.
 
 ### simplification admission
 
@@ -160,7 +161,7 @@ Missing or unknown disposition or admission is held back. Delivery intersects ad
 - `quality_basis: duplication`: {"description": "Duplicated behavior identified by duplicate_of.", "phase": "semantic", "predicates": ["resolved_duplicate", "confirmed_duplication"], "required": ["duplicate_of"], "tier": "suggestion"}; default disposition `held_back`.
 - `quality_basis: simpler_equivalent`: {"anyOf": ["suggestion", "suggested_fix_code"], "description": "Simpler replacement preserving observable behavior.", "phase": "semantic", "predicates": ["concrete_equivalent", "behavior_preserved"], "required": ["behavior_preserved"], "tier": "suggestion"}; default disposition `held_back`.
 - `quality_basis: stack_idiom`: {"description": "Behavior-preserving replacement grounded in existing repository precedent.", "phase": "semantic", "predicates": ["resolved_precedent", "precedent_not_added", "applicable"], "required": ["precedent"], "tier": "suggestion"}; default disposition `held_back`.
-- `quality_basis: other`: {"defaultDisposition": "report_only", "description": "No demonstrated defect, duplication, simpler equivalent or applicable precedent.", "phase": "deterministic", "predicates": [], "required": [], "tier": "suggestion"}; default disposition `report_only`.
+- `quality_basis: other`: {"description": "No demonstrated defect, duplication, simpler equivalent or applicable precedent.", "phase": "semantic", "predicates": [], "required": [], "tier": "suggestion"}; default disposition `held_back`.
 <!-- /generated-from-registry-location -->
 
 ---
@@ -201,7 +202,6 @@ This summary describes the change context for the report.
 - **Location:** `{finding.file}:10-12`
 - **Dimension:** {finding.dimension}
 - **Origin:** surfaced — pre-existing, surfaced by this change
-- **Contested:** the challenger could not confirm the cited location
 
 {finding.description}
 
@@ -229,7 +229,7 @@ This summary describes the change context for the report.
 
 - **Cross-file refs:** {finding.cross_file_refs}
 
-- **Corroborated by** `{corroboration.agent}` (`{corroboration.dimension}`, severity low, tier main, confidence ): {corroboration.title}
+- **Corroborated by** `{corroboration.agent}` (`{corroboration.dimension}`, severity low, tier main): {corroboration.title}
   {corroboration.description}
 
 ### 🟠 High
@@ -271,7 +271,7 @@ These did not clear the full pipeline (a stage was skipped or failed) and carry 
 
 - **Location:** `{finding.file}:10`
 - **Dimension:** {finding.dimension}
-- **Unverified because:** the validator did not score this finding, so it was not skeptically validated; the verify slice could not be proven against the dispatched document; the challenge cap was reached, so this finding was not challenge-verified
+- **Unverified because:** neither the validator nor the challenger established this finding; the verify slice could not be proven against the dispatched document; the challenge cap was reached, so this finding was not challenge-verified
 
 {finding.description}
 
@@ -287,7 +287,7 @@ These did not clear the full pipeline (a stage was skipped or failed) and carry 
 
 - **Location:** `{finding.file}:10`
 - **Dimension:** {finding.dimension}
-- **Unverified because:** the challenger failed or returned no score, so this finding was not challenge-verified
+- **Unverified because:** the challenger failed or returned no typed verdict, so this finding was not challenge-verified
 
 {finding.description}
 
@@ -310,7 +310,6 @@ Resolved config:
   model_tier=optimized (fixed)
   pr_comment_cap=null (default)
   delivery_tier=all (default)
-  review_md=absent (discovery)
   pipeline_version={pipeline_version} (bundle)
   plugin_root=/absolute/path/to/claude-code-gauntlet (resolved)
 ```

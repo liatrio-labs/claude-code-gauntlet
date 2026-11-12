@@ -10,11 +10,11 @@
       "dimension": "bug",
       "file": "f.py",
       "id": "C1",
-      "line_start": 10,
-      "severity": "medium",
-      "title": "t1",
       "line_end": 10,
-      "location_status": "confirmed"
+      "line_start": 10,
+      "location_status": "confirmed",
+      "severity": "medium",
+      "title": "t1"
     },
     {
       "agent": "code-simplifier",
@@ -25,11 +25,11 @@
       "dimension": "convention",
       "file": "f.py",
       "id": "C2",
-      "line_start": 12,
-      "severity": "low",
-      "title": "t2",
       "line_end": 12,
-      "location_status": "confirmed"
+      "line_start": 12,
+      "location_status": "confirmed",
+      "severity": "low",
+      "title": "t2"
     }
   ]
 }

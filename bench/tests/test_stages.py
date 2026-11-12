@@ -134,7 +134,8 @@ def test_workflow_trace_crosses_python_boundary_without_checkpoint_members(
     changed = [
         v
         for v in trace.versions
-        if v.trace_id == first.trace_id and v.projection()["confidence"] == 45
+        if v.trace_id == first.trace_id
+        and v.projection().get("verdict_route") == "report-only"
     ]
     assert changed
     report = next(v for v in trace.versions if v.finding.get("id") == "REPORT")
@@ -294,6 +295,7 @@ def test_score_to_dimension_credit_and_loss_funnel(
         tid = next(
             v.trace_id for v in trace.versions if v.finding.get("id") == "FILTER"
         )
+        version_traces = {v["version_id"]: v["trace_id"] for v in raw["versions"]}
         decision = stages.StageDecision(
             tid, "held_back", "validation_skipped", None, ()
         )
@@ -304,6 +306,11 @@ def test_score_to_dimension_credit_and_loss_funnel(
                 ]
                 snapshot["decisions"] = []
             if snapshot["stage"] == "dispose":
+                snapshot["finding_version_ids"] = [
+                    v
+                    for v in snapshot["finding_version_ids"]
+                    if version_traces[v] != tid
+                ]
                 snapshot["stage"] = "holdback"
                 snapshot["decisions"] = [asdict(decision)]
         path.write_text(json.dumps(raw), encoding="utf-8")
@@ -415,7 +422,7 @@ def test_score_to_dimension_credit_and_loss_funnel(
                 if trace_status == "holdback"
                 else "verify"
                 if trace_status == "audit_overlap"
-                else "filter"
+                else "delivery"
             ]
             == 1
         )
@@ -602,3 +609,37 @@ def test_collection_hashes_top_level_trace_and_persists_availability(tmp_path):
     assert stages.collect_trace(directory) == collected
     missing = stages.collect_trace(tmp_path / "missing")
     assert missing.status == "unavailable" and missing.reason
+
+
+@pytest.mark.parametrize(
+    "encoding,text,reason",
+    [
+        ("unknown", "{}", "unknown measurement encoding"),
+        ("json-pool-lzw16-base64-v1", "!", "base64"),
+        ("json-pool-lzw16-base64-v1", "AA==", "truncated compressed measurement"),
+        ("json-pool-lzw16-base64-v1", "AQA=", "invalid compressed measurement code"),
+    ],
+)
+def test_unreadable_compressed_transport_records_collection_gap(
+    tmp_path, encoding, text, reason
+):
+    workflows = tmp_path / "workflows"
+    workflows.mkdir()
+    (workflows / "wf_current.json").write_text(
+        json.dumps(
+            dict(
+                result=dict(
+                    ok=True,
+                    phaseReached="report",
+                    measurement=dict(status="available", encoding=encoding, text=text),
+                )
+            )
+        ),
+        encoding="utf-8",
+    )
+    receipt = stages.collect_trace(tmp_path)
+    assert receipt.status == "unavailable"
+    assert reason in receipt.reason.lower()
+    assert (
+        read_json(tmp_path / "measurement-collection.json")["reason"] == receipt.reason
+    )

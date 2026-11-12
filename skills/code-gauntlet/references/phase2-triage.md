@@ -123,13 +123,13 @@ For PR/MR server diffs, validate the saved diff before relying on it. Branch/loc
 
 ## 2d. Gather Project Context
 
-After 2c saves the changed-file list, follow [phase2-preparation.md: Discover REVIEW.md and stamp its raw text](phase2-preparation.md#discover-reviewmd-and-stamp-its-raw-text).
+After 2c saves the changed-file list, follow [phase2-preparation.md: Collect project rules](phase2-preparation.md#collect-project-rules).
 
 ### REVIEW.md Detection
 
 Complete 2d before 2e.
 
-A successful empty discovery never blocks or asks a question. Collector or raw Read failures stop the handoff.
+A successful empty discovery never blocks or asks a question. Collector failures stop the handoff.
 
 ---
 
@@ -212,7 +212,7 @@ Assemble the args waist the workflow consumes. It is a single JSON object passed
 - `pr_number` (required): a positive safe integer.
 - `sha_full` (required): a 40-character lowercase hex commit id.
 - `platform` (required): one of github, gitlab.
-- `web_origin` (required): an http(s) origin: scheme, host and optional port only.
+- `web_origin` (required): an http(s) URL without userinfo (normalized to its origin).
 - `title` (optional): a non-empty string when present.
 
 Producer commands:
@@ -225,8 +225,7 @@ The title and URL reach the script only through the pipe.
 <!-- /generated-from-registry-identity:pr_identity_fields -->
 
 **Omit optional fields you have no value for; never stamp an explicit `null`.**
-The waist treats `null` as absent for `reviewConfig`, `exclusionPatterns`, `delivery`, and `checkpoints`.
-Keep `reviewConfigPath: null` when the receipt has no root REVIEW.md, even if it lists subdirectory files; this field records root provenance.
+The waist treats `null` as absent for `delivery` and `checkpoints`.
 
 **Required fields (`validateArgs` fails loud without them):**
 
@@ -258,10 +257,6 @@ The workflow derives these waist fields from the copied `configEcho` receipt. Do
 - `delivery.tier` (headless and interactive runs): from `configEcho.delivery_tier`. Leave `tier` out of any stamped `delivery`.
 - `reviewScope.requested` (headless runs, when `reviewScope.detector` is an object): from `configEcho.reviewed_policy`; `skip` derives as `full`. Stamp `reviewScope` and leave `requested` out of it.
 - `scopeAnswer` (headless runs, when every changed file is low risk and fewer than 50 lines changed): from `configEcho.trivial_scope`. Leave it out.
-
-The workflow fills these receipt entries itself; never stamp them.
-
-- `configEcho.review_md` (interactive runs): `present` when the `reviewMd` array is nonempty, else `absent`; without `reviewMd`, `present` when `reviewConfigPath` is set, else `absent`.
 <!-- /generated-from-registry-identity:derived_waist_fields -->
 
 **`policy` (model policy the workflow runs under):**
@@ -282,10 +277,7 @@ Model dispatch, including user mappings and gateway naming, follows [model-polic
 - `contextLines` / `contextChars` / `contextMaxLineChars` — the shared context file's measured size and maximum line length (including LF) from `write_shared_context.py`'s receipt. **Not provenance — consumed** by the Read plan. Optional (absent ⇒ count-free read-to-end wording); character measurements require `contextLines`; all must be positive integers.
 - `changedFilesPath` — `{output_dir}/code-gauntlet-files-{head_sha_short}.json`, the on-disk companion to `changedFiles`. Optional provenance only — the workflow has no disk access and never opens it.
 - `baseBranch` — the base branch name (verify/blame).
-- `reviewMd` / `reviewMdSetChecksum` - `[{ path, text, checksum }, ...]` plus `receipt.review_md_checksum` in collector receipt order (2d), the raw text of every REVIEW.md listed by the receipt; never hand-parse it. An empty array is a legal, authoritative "discovered nothing."
-- `exclusionsText` — the raw text of whatever exclusions source was found (e.g. `.reviewignore`), parsed by `resolveReviewConfig` via `loadExclusions` (`workflows/src/reviewConfig.js`).
-- `reviewConfig` / `exclusionPatterns` — the legacy pre-parsed form; never stamp it alongside `reviewMd`/`exclusionsText` for the same axis.
-- `reviewConfigPath` - the root REVIEW.md path (or `null`), carried for provenance. When `reviewMd` is an array, this must be non-null iff an entry has path exactly "REVIEW.md"; legacy pre-parsed callers retain their existing path provenance.
+- `unsupportedReviewConfig` — copy `receipt.unsupported_review_config`; a boolean controlling only the local retired-settings notice.
 - `persist` - optional, `{ returnPrimaries: true }`. Stamp it to use the RETURN channel. The workflow derives the fallback assemble command from `pluginRoot`; omit both script-path fields. With `returnPrimaries: false`, the artifact-writer transcribes primaries and the executor derives post-review and checkpoint artifacts. Without `persist`, the legacy by-value writer remains available.
 
 **`verify` handoff (sha-scoped paths for the executor's pinned command):**
@@ -310,4 +302,4 @@ Announce triage results before proceeding: PR title, review mode, file counts by
 
 For 1000+ line PRs, add: 'This PR is [N] lines; consider splitting it into smaller PRs.'
 
-If the collector receipt (2d) has `gaps[]`, announce each as a one-line note. Also announce every `sources[]` and `review_md[]` entry with `modified_in_diff: true`; a change to rules governing this review is disclosed, not blocked.
+If the collector receipt (2d) has `gaps[]`, announce each as a one-line note. Also announce every `sources[]` entry with `modified_in_diff: true`; a change to rules governing this review is disclosed, not blocked.

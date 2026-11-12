@@ -169,7 +169,7 @@ assert.equal(findingPolicy(good).core,true);
             [],
             [],
             [],
-            "report_only",
+            "held_back",
         ),
     ],
     ids=["correctness", "duplication", "equivalent", "idiom", "unsupported"],
@@ -196,7 +196,7 @@ def test_quality_basis_contract(
         assert rule["predicates"] == predicates
         assert rule.get("anyOf", []) == any_of
         assert rule.get("defaultDisposition", "held_back") == disposition
-        assert rule["phase"] == ("deterministic" if basis == "other" else "semantic")
+        assert rule["phase"] == "semantic"
         assert rule["tier"] == (
             "main" if basis == "current_correctness" else "suggestion"
         )
@@ -555,12 +555,6 @@ KNOB_CASES: list[tuple[str, dict[str, list[str]], dict[str, Any], dict[str, Any]
         {"kind": "csv_subset", "values": ["a", "b"]},
         {"type": "csv_list", "waistPath": "delivery.items"},
     ),
-    (
-        "delta",
-        {"interactive": ["present", "discovery"]},
-        {"kind": "enum", "values": ["present"]},
-        {"derivedFrom": "delta"},
-    ),
 ]
 
 IDENTITY = {
@@ -574,7 +568,6 @@ IDENTITY = {
     },
     "ruleSourceLabelFallback": "RF",
     "deriveWhen": {"gamma": "the gamma condition holds"},
-    "derivedFrom": {"delta": "the delta source is present"},
     "waistRequired": ["nested", "limits"],
     "prIdentityFields": [
         {"name": name, "required": required, "describe": describe}
@@ -616,11 +609,9 @@ IDENTITY = {
             "defaults": defaults,
             "rule": rule,
             "env": None,
-            "reviewMdKey": None,
             "type": "string",
             "waistPath": None,
             "waistMap": None,
-            "derivedFrom": None,
             "deriveWhen": None,
             "nullReceipt": [],
             "resolvedKey": False,
@@ -757,12 +748,16 @@ def test_shared_guidance_updates_agent_contracts(monkeypatch, symbol):
 
 @pytest.mark.parametrize("symbol", gen.VERIFICATION_SHARED)
 def test_verification_guidance_updates_all_consumers(monkeypatch, symbol):
+    registry = gen.load_registry(str(ROOT))
     original = gen.VERIFICATION_SHARED[symbol]
+    if symbol == "confidence":
+        original = original.format(**registry["anchorLimits"])
     replacement = "Updated verification evidence contract."
     monkeypatch.setitem(gen.VERIFICATION_SHARED, symbol, replacement)
-    targets = gen.rendered_targets(str(ROOT), gen.load_registry(str(ROOT)), "")
+    targets = gen.rendered_targets(str(ROOT), registry, "")
     for rel in gen.VERIFICATION_TARGETS:
         text = (ROOT / rel).read_text(encoding="utf-8")
+        assert original in text
         rendered = targets[rel](text)
         assert original not in rendered
         assert rendered.count(replacement) == 1
@@ -981,8 +976,8 @@ def test_added_knob(registry_tree, invoke):
         "  { key: 'added', modes: ['headless'], allowedSources: { "
         "headless: ['default'] }, "
         "rule: { kind: 'enum', values: ['value'] }, env: null, "
-        "reviewMdKey: null, defaults: { headless: ['value', 'default'] }, "
-        "type: 'string', waistPath: 'nested.added', waistMap: null, derivedFrom: null, "
+        "defaults: { headless: ['value', 'default'] }, "
+        "type: 'string', waistPath: 'nested.added', waistMap: null, "
         "deriveWhen: null, nullReceipt: [], resolvedKey: false },\n"
     )
     path.write_text(source.replace("\n]);", "\n" + row + "]);", 1), encoding="utf-8")

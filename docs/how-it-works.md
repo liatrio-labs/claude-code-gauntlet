@@ -11,5 +11,7 @@ This diagram follows one finding through every stage, and shows what each stage 
 After blind challenge, a grouper identifies claims fixed by the same change. Delivery posts one
 lead comment per issue; grouping cannot change which findings survived.
 
-The thresholds shown are defaults, which a [`REVIEW.md`](../skills/code-gauntlet/references/review-md-spec.md) can change.
+Validation and challenge use [typed verdicts](../skills/code-gauntlet/references/validation-pipeline.md#validate-stage-validatestage).
+[`REVIEW.md`](../skills/code-gauntlet/references/review-md-spec.md) supplies prose project rules alongside CLAUDE.md, AGENTS.md and QODO.md;
+it does not configure filtering or delivery.
 [CONTRIBUTING.md](../CONTRIBUTING.md) maps the stages to the source files.

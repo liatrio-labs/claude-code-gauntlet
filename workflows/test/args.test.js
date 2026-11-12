@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeArgs, normalizeArgsReport, validateArgs, stripNullOptionalsReport, resolveRemovedTestsArgs } from '../src/args.js';
 import { fnv1a32 } from '../src/wire.js';
-import { nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys, resolveReviewConfig } from '../src/args.js';
-import { interactiveArgs, headlessArgs, priorReviewDetector, prIdentity, reviewMdArgs } from './helpers/argsFixtures.js';
+import { nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys } from '../src/args.js';
+import { interactiveArgs, headlessArgs, priorReviewDetector, prIdentity } from './helpers/argsFixtures.js';
 
 test('removed-test args treat every inventory path control character as unavailable', () => {
   const controls = [...Array.from({ length: 32 }, (_, i) => i),
@@ -22,25 +22,10 @@ const REJECTION_ROWS = [
   ...[['python', 'python3;id', 'python3, python, py -3']].map(([key, value, allowed]) => ({
     name: `${key} allowlist ${value}`, input: (a) => { a[key] = value; }, expected: [`${key} must be one of ${allowed}`],
   })),
-  ...[undefined, 1].map((checksum) => ({
-    name: `review checksum ${JSON.stringify(checksum)}`,
-    input: (a) => { Object.assign(a, reviewMdArgs([{ path: 'api/REVIEW.md', text: '' }]));
-      a.configEcho.review_md.value = 'present';
-      if (checksum === undefined) delete a.reviewMd[0].checksum;
-      else a.reviewMd[0].checksum = checksum; },
-    expected: ['reviewMd[0].checksum must be a string or null'],
-  })),
-  ...[undefined, null].map((checksum) => ({
-    name: `review set checksum ${JSON.stringify(checksum)}`,
-    input: (a) => { Object.assign(a, reviewMdArgs([]));
-      if (checksum === undefined) delete a.reviewMdSetChecksum;
-      else a.reviewMdSetChecksum = checksum; },
-    expected: ['reviewMdSetChecksum must be a string when reviewMd is present'],
-  })),
   { name: 'version', input: (a) => { a.argsVersion = 2; }, expected: [ "unsupported argsVersion 2 (expected 1)" ] },
   { name: 'mode', input: (a) => { a.mode = "bogus"; }, expected: [
     "invalid mode: bogus",
-    "configEcho has unexpected key(s): model_tier, delivery_tier, pr_comment_cap, review_md",
+    "configEcho has unexpected key(s): model_tier, delivery_tier, pr_comment_cap",
   ] },
   { name: 'nonce', input: (a) => { a.nonce = "n 1"; }, expected: [
     "invalid nonce: must match /^[A-Za-z0-9._-]+$/ (AST-safe, non-splitting \u2014 interpolated into the verify " +
@@ -108,37 +93,6 @@ const REJECTION_ROWS = [
   { name: 'max line width alone',
     input: (a) => { a.contextMaxLineChars = 1000; },
     expected: [ "contextMaxLineChars requires contextLines \u2014 line width alone cannot size a line-offset read plan" ] },
-  { name: 'scope layer extra',
-    input: (a) => { a.reviewConfig = { scopes: [{ dir: "api", extra: true }] }; },
-    expected: [ "reviewConfig.scopes[0] has unexpected key(s): extra" ] },
-  { name: 'duplicate scopes',
-    input: (a) => { a.reviewConfig = { scopes: [{ dir: "api" }, { dir: "api" }] }; },
-    expected: [ "reviewConfig.scopes[1].dir duplicates another scope dir: api" ] },
-  { name: 'exclusion shape',
-    input: (a) => { a.exclusionPatterns = {}; }, expected: [ "exclusionPatterns must be an array of flat pattern strings" ] },
-  { name: 'review md extra', input: (a) => {
-    a.reviewMdSetChecksum = ""; a.reviewMd = [{ checksum: null, path: "api/REVIEW.md", text: "", extra: 1 }]; a.configEcho.review_md.value = "present";
-  }, expected: [ "reviewMd[0] has unexpected key(s): extra (only path, text and checksum are allowed)" ] },
-  { name: 'review md receipt mismatch', input: (a) => {
-    a.reviewMdSetChecksum = ""; a.reviewMd = [{ checksum: null, path: 'api/REVIEW.md', text: '' }];
-  }, expected: ['configEcho.review_md does not match reviewMd'] },
-  { name: 'review md text type', input: (a) => {
-    a.reviewMdSetChecksum = ""; a.reviewMd = [{ checksum: null, path: "api/REVIEW.md", text: 1 }]; a.configEcho.review_md.value = "present";
-  }, expected: [ "reviewMd[0].text must be a string" ] },
-  { name: 'review path absolute', input: (a) => {
-    a.reviewMdSetChecksum = ""; a.reviewMd = [{ checksum: null, path: "/api/REVIEW.md", text: "" }]; a.configEcho.review_md.value = "present";
-  }, expected: [
-    "reviewMd[0].path must be repo-relative (must not start with /)",
-    "reviewMd[0].path must not contain an empty path segment",
-  ] },
-  { name: 'raw parsed review', input: (a) => { a.reviewMdSetChecksum = ""; a.reviewMd = []; a.reviewConfig = {}; }, expected: [
-    "reviewMd and reviewConfig are both present \u2014 pass raw reviewMd or pre-parsed reviewConfig, not both (single " +
-      "authority)",
-  ] },
-  { name: 'raw parsed exclusions', input: (a) => { a.exclusionsText = ""; a.exclusionPatterns = []; }, expected: [
-    "exclusionsText and exclusionPatterns are both present \u2014 pass raw exclusionsText or pre-parsed " +
-      "exclusionPatterns, not both (single authority)",
-  ] },
   { name: 'delivery tier', input: (a) => { a.delivery = { tier: "suggestions_only" }; }, expected: [
     "invalid delivery.tier: suggestions_only (expected one of all, main_only)",
     "delivery.tier does not match configEcho.delivery_tier",
@@ -154,7 +108,7 @@ const REJECTION_ROWS = [
   { name: 'identity web_origin', input: (a) => {
     a.delivery = { prIdentity: prIdentity() };
     a.delivery.prIdentity.web_origin = "github.com";
-  }, expected: [ "delivery.prIdentity.web_origin must be an http(s) origin: scheme, host and optional port only" ] },
+  }, expected: [ "delivery.prIdentity.web_origin must be an http(s) URL without userinfo (normalized to its origin)" ] },
   { name: 'identity repo slash',
     input: (a) => { a.delivery = { prIdentity: prIdentity() }; a.delivery.prIdentity.repo = "a/b"; },
     expected: [ "delivery.prIdentity.repo must not contain \"/\"" ] },
@@ -266,18 +220,11 @@ const ACCEPTANCE_ROWS = [
   { name: 'drive roots and host selections', input: () => interactiveArgs({
     repoRoot: 'D:/repo', outputDir: 'D:/repo/.code-gauntlet', pluginRoot: 'C:/plug in', python: 'py -3',
   }), expected: { ok: true, errors: [] } },
-  ...['fnv1a32:0x811c9dc5', null].map((checksum) => ({ name: `review checksum accepted ${checksum}`,
-    input: () => interactiveArgs({ ...reviewMdArgs([{ path: 'api/REVIEW.md', text: '', checksum }]),
-      configEcho: { ...interactiveArgs().configEcho, review_md: { value: 'present', source: 'discovery' } } }),
-    expected: { ok: true, errors: [] },
-  })),
   { name: 'local scope ignores policy lockstep', input: () => headlessArgs('incremental', { detector: null }),
     expected: { ok: true, errors: [] } },
   { name: 'optional domains', input: () => interactiveArgs({
     nonce: 'n-1.0_ab', policy: { tier: 'optimized', provider: null, gateway: null },
     contextLines: 5000000, contextChars: 500000000,
-    reviewConfig: { confidence_threshold: 0, security_min_confidence: 100, severity_threshold: 'low', ignore: ['a.js'] },
-    exclusionPatterns: ['*.js'], delivery: {}, persist: { returnPrimaries: false },
     limits: { challengeCap: 0, deliveryCap: null, discoveryCap: 1 },
   }), expected: { ok: true, errors: [] } },
   { name: 'incremental', input: () => interactiveArgs({
@@ -315,10 +262,9 @@ for (const { name, input, expected } of REQUIRED_ROWS) {
 
 const STRIP_ROWS = [
   { name: 'optional inventory', input: {
-    reviewConfig: null, exclusionPatterns: null, reviewMd: null, exclusionsText: null,
     delivery: null, checkpoints: null, persist: null, scopeAnswer: null,
   }, expected: { args: {}, dropped: [
-    'reviewConfig', 'exclusionPatterns', 'reviewMd', 'exclusionsText', 'delivery', 'checkpoints', 'persist', 'scopeAnswer',
+    'delivery', 'checkpoints', 'persist', 'scopeAnswer',
   ], respelled: [] } },
   { name: 'nested inventory', input: { delivery: { tier: null, prIdentity: null } },
     expected: { args: { delivery: {} }, dropped: ['delivery.prIdentity', 'delivery.tier'], respelled: [] } },
@@ -336,15 +282,15 @@ for (const { name, input, expected } of STRIP_ROWS) {
 }
 
 const NORMALIZE_ROWS = [
-  { name: 'JSON null', input: () => '{"reviewConfig":null}',
-    expected: { args: {}, dropped: ['reviewConfig'], respelled: [], derivedPaths: [] } },
+  { name: 'JSON null', input: () => '{"delivery":null}',
+    expected: { args: {}, dropped: ['delivery'], respelled: [], derivedPaths: [] } },
   { name: 'null cap derivation', input: () => ({
     mode: 'interactive', limits: {}, configEcho: { pr_comment_cap: { value: 'null', source: 'default' } },
   }), expected: { args: {
     mode: 'interactive', limits: {
       summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 25, maxLineSpan: 100, deliveryCap: null,
     }, configEcho: {
-      pr_comment_cap: { value: 'null', source: 'default' }, review_md: { value: 'absent', source: 'discovery' },
+      pr_comment_cap: { value: 'null', source: 'default' },
     },
   }, dropped: [], respelled: [], derivedPaths: ['limits.deliveryCap'] } },
 ];
@@ -355,18 +301,6 @@ for (const { name, input, expected } of NORMALIZE_ROWS) {
     assert.deepEqual(normalizeArgsReport(raw), expected);
     assert.deepEqual(normalizeArgs(raw), expected.args);
     assert.deepEqual(raw, before);
-  });
-}
-
-const PROVENANCE_ROWS = [
-  { name: 'empty raw overrides legacy', input: { reviewMd: [], reviewConfigPath: '/r/REVIEW.md' },
-    expected: { value: 'absent', source: 'discovery' } },
-];
-for (const { name, input, expected } of PROVENANCE_ROWS) {
-  test(`provenance: ${name}`, () => {
-    const args = interactiveArgs(input);
-    delete args.configEcho.review_md;
-    assert.deepEqual(normalizeArgs(args).configEcho.review_md, expected);
   });
 }
 
@@ -411,83 +345,7 @@ for (const { name, input, derived, expected } of NULL_PROBE_ROWS) {
   });
 }
 
-const RESOLVE_ROWS = [
-  { name: 'none', input: undefined, expected: {
-    reviewConfig: {}, exclusionPatterns: [], reviewConfigSource: 'none', exclusionsSource: 'none', reviewMdEntryCount: 0,
-  } },
-  { name: 'parsed axes', input: { reviewConfig: { ignore: ['a'] }, exclusionPatterns: ['b'] }, expected: {
-    reviewConfig: { ignore: ['a'] }, exclusionPatterns: ['b'],
-    reviewConfigSource: 'preParsed', exclusionsSource: 'preParsed', reviewMdEntryCount: 0,
-  } },
-  { name: 'empty raw axes override parsed', input: {
-    reviewMd: [], exclusionsText: '', reviewConfig: { confidence_threshold: 99 }, exclusionPatterns: ['old'],
-  }, expected: { reviewConfig: { ignore: [] }, exclusionPatterns: [],
-    reviewConfigSource: 'reviewMd', exclusionsSource: 'exclusionsText', reviewMdEntryCount: 0 } },
-  { name: 'raw root and child settings', input: { reviewMd: [
-    { path: 'src/deep/REVIEW.md', text: '```yaml code-gauntlet\nconfidence_threshold: 90\nsecurity_min_confidence: 85\n' +
-      'severity_threshold: high\nignore:\n  - c.js\n```' },
-    { path: 'REVIEW.md', text: '```yaml code-gauntlet\nconfidence_threshold: 70\nsecurity_min_confidence: 75\n' +
-      'severity_threshold: low\nignore:\n  - a.js\n  - b.js\n```' },
-  ], exclusionsText: '- foo.js\n- bar/*.js\n' }, expected: {
-    reviewConfig: { confidence_threshold: 70, security_min_confidence: 75, severity_threshold: 'low', ignore: ['a.js', 'b.js'],
-      scopes: [{ dir: 'src/deep', confidence_threshold: 90, security_min_confidence: 85, severity_threshold: 'high', ignore: ['c.js'] }] },
-    exclusionPatterns: ['foo.js', 'bar/*.js'], reviewConfigSource: 'reviewMd', exclusionsSource: 'exclusionsText', reviewMdEntryCount: 2,
-  } },
-];
-const PROOF_TEXT = '```yaml code-gauntlet\nconfidence_threshold: 90\nignore:\n  - one  two.js\n```';
-const TEXT_MISMATCH = 'review_md: api/REVIEW.md text differs from the collected file (checksum mismatch); its settings were applied as stamped';
-const SET_MISMATCH = 'review_md: stamped entries differ from the collected list (omitted, extra or reordered REVIEW.md); settings were applied as stamped';
-RESOLVE_ROWS.push({ name: 'whole array omitted', input: {
-  reviewMdSetChecksum: reviewMdArgs([{ path: 'api/REVIEW.md', text: '' }]).reviewMdSetChecksum,
-}, expected: { reviewConfig: {}, exclusionPatterns: [], reviewConfigSource: 'none', exclusionsSource: 'none',
-  reviewMdEntryCount: 0, gaps: [SET_MISMATCH] } });
-for (const row of [
-  { name: 'proven', text: PROOF_TEXT },
-  { name: 'CRLF equal', text: PROOF_TEXT.replaceAll('\n', '\r\n') },
-  { name: 'lone CR equal and parsed', text: PROOF_TEXT.replaceAll('\n', '\r') },
-  { name: 'BOM equal', text: '\uFEFF' + PROOF_TEXT },
-  { name: 'trailing newlines equal', text: PROOF_TEXT + '\n\n' },
-  { name: 'trailing spaces and tabs equal', text: PROOF_TEXT.replaceAll('\n', ' \t\n') + '\t ' },
-  { name: 'interior whitespace differs', text: PROOF_TEXT.replace('one  two.js', 'one two.js'),
-    gaps: [TEXT_MISMATCH], ignore: ['one two.js'] },
-  { name: 'null checksum', text: PROOF_TEXT, checksum: null,
-    gaps: ['review_md: api/REVIEW.md text is unproven (no collector checksum); its settings were applied as stamped'] },
-]) {
-  const input = reviewMdArgs([{ path: 'api/REVIEW.md', text: PROOF_TEXT,
-    ...(Object.hasOwn(row, 'checksum') ? { checksum: row.checksum } : {}) }]);
-  input.reviewMd[0].text = row.text;
-  RESOLVE_ROWS.push({ name: row.name, input, expected: {
-    reviewConfig: { ignore: [], scopes: [{ dir: 'api', confidence_threshold: 90, ignore: row.ignore || ['one  two.js'] }] },
-    exclusionPatterns: [], reviewConfigSource: 'reviewMd', exclusionsSource: 'none', reviewMdEntryCount: 1,
-    gaps: row.gaps || [],
-  } });
-}
-for (const kind of ['omitted', 'extra', 'reordered']) {
-  const input = reviewMdArgs([{ path: 'api/REVIEW.md', text: '' }, { path: 'docs/REVIEW.md', text: '' }]);
-  if (kind === 'omitted') input.reviewMd.pop();
-  if (kind === 'extra') input.reviewMd.push({ ...input.reviewMd[0], path: 'other/REVIEW.md' });
-  if (kind === 'reordered') input.reviewMd.reverse();
-  RESOLVE_ROWS.push({ name: kind, input, expected: {
-    reviewConfig: { ignore: [], scopes: input.reviewMd.map((entry) => ({ dir: entry.path.split('/')[0], ignore: [] })) },
-    exclusionPatterns: [], reviewConfigSource: 'reviewMd', exclusionsSource: 'none', reviewMdEntryCount: input.reviewMd.length,
-    gaps: [SET_MISMATCH],
-  } });
-}
-for (const { name, input, expected } of RESOLVE_ROWS) {
-  test(`resolve config: ${name}`, () => {
-    const stamped = input?.reviewMd && input.reviewMdSetChecksum === undefined ? { ...input, ...reviewMdArgs(input.reviewMd) } : input;
-    const before = structuredClone(stamped);
-    assert.deepEqual(resolveReviewConfig(stamped), { ...expected, gaps: expected.gaps || [] });
-    assert.deepEqual(stamped, before);
-  });
-}
-
 const GAP_ROWS = [
-  { name: 'reviewConfig', input: 'reviewConfig', expected:
-    "null_arg: args.reviewConfig arrived as a literal null and was treated as ABSENT \u2014 the review runs on " +
-    "the Filter stage built-in thresholds (non-security 55, security 70) with no ignore list, NOT your " +
-    "REVIEW.md configuration, so the delivered findings can differ. Omit reviewConfig entirely (or stamp a " +
-    "well-formed value); do not stamp null." },
   { name: 'respelling', input: 'pr_comment_cap', respell: true, expected:
     'null_receipt: args.pr_comment_cap arrived as a literal null and was spelled as the printed ' +
       'token "null"; the receipt and the configuration are unchanged; stamp the string "null".' },
@@ -507,10 +365,6 @@ const VALIDATION_BOUNDARY_ROWS = [
   { name: 'zero numeric receipt', input: () => {
     const a = interactiveArgs(); a.limits.deliveryCap = 0; a.configEcho.pr_comment_cap = { value: '0', source: 'env' }; return a;
   }, expected: { ok: true, errors: [] } },
-  { name: 'review path dot-dot', input: () => {
-    const a = interactiveArgs({ reviewMd: [{ path: 'api/../REVIEW.md', text: '' }] });
-    a.configEcho.review_md.value = 'present'; return a;
-  }, expected: { ok: false, errors: ['reviewMd[0].path must not contain . or .. path segments'] } },
   { name: 'PR comments complete identity', input: () => {
     const a = headlessArgs();
     a.configEcho.delivery.value = 'chat,pr_comments,markdown';
@@ -521,4 +375,29 @@ const VALIDATION_BOUNDARY_ROWS = [
 ];
 for (const { name, input, expected } of VALIDATION_BOUNDARY_ROWS) {
   test(`validate boundary: ${name}`, () => assert.deepEqual(validateArgs(input()), expected));
+}
+
+for (const [url, origin] of [
+  ['https://github.com/grafana/grafana', 'https://github.com'],
+  ['https://github.com/o/r/pull/9?view=files#diff', 'https://github.com'],
+  ['HTTP://Git.Example:8443?query#fragment', 'http://git.example:8443'],
+  ['https://[::1]:8443/o/r', 'https://[::1]:8443'],
+]) test(`identity URL normalizes before downstream use: ${url}`, () => {
+  const raw = interactiveArgs({ delivery: { prIdentity: { ...prIdentity(), web_origin: url } } });
+  assert.deepEqual(validateArgs(raw), { ok: true, errors: [] });
+  const normalized = normalizeArgs(raw);
+  assert.equal(normalized.delivery.prIdentity.web_origin, origin);
+  assert.equal(raw.delivery.prIdentity.web_origin, url);
+  assert.deepEqual(normalizeArgs(normalized), normalized);
+});
+
+for (const url of ['https://user:pass@github.com/o/r', 'https://user@github.com',
+  'ftp://github.com/o/r', '//github.com/o/r', 'https://github.com:65536/o/r',
+  'https://github.com\\@evil.com/o/r', 'https://github.com\n/o/r']) {
+  test(`identity URL refuses unsafe authority: ${JSON.stringify(url)}`, () => {
+    const args = normalizeArgs(interactiveArgs({ delivery: { prIdentity: { ...prIdentity(), web_origin: url } } }));
+    assert.deepEqual(validateArgs(args).errors, [
+      'delivery.prIdentity.web_origin must be an http(s) URL without userinfo (normalized to its origin)',
+    ]);
+  });
 }

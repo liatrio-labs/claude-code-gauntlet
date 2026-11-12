@@ -182,7 +182,7 @@ CRITICAL_SUGGESTION_COMMENT = (
             "BUG",
             CRITICAL_BUG_COMMENT,
             [],
-            "- **Corroborated by** `security-reviewer` (`security`, severity medium, tier main, confidence 90): finding SEC",
+            "- **Corroborated by** `security-reviewer` (`security`, severity medium, tier main): finding SEC",
             id="secondary-security-main",
         ),
         pytest.param(
@@ -191,7 +191,7 @@ CRITICAL_SUGGESTION_COMMENT = (
             "SEC",
             CRITICAL_SUGGESTION_COMMENT,
             ["- **Routing:** improvement suggestion"],
-            "- **Corroborated by** `bug-detector` (`bug`, severity low, tier main, confidence 90): finding BUG",
+            "- **Corroborated by** `bug-detector` (`bug`, severity low, tier main): finding BUG",
             id="suggestion-lead-main-group",
         ),
         pytest.param(
@@ -200,7 +200,7 @@ CRITICAL_SUGGESTION_COMMENT = (
             "BUG",
             CRITICAL_BUG_COMMENT,
             [],
-            "- **Corroborated by** `security-reviewer` (`security`, severity medium, tier suggestion, confidence 90): finding SEC",
+            "- **Corroborated by** `security-reviewer` (`security`, severity medium, tier suggestion): finding SEC",
             id="secondary-security-suggestion",
         ),
     ],

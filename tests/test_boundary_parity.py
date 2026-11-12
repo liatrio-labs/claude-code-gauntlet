@@ -14,6 +14,7 @@ from gauntlet import config as resolve_config
 from gauntlet import patches as report_patches
 from gauntlet.delivery import compose
 from gauntlet.delivery.input import Finding
+from gauntlet.registry import KNOB_REGISTRY
 from gauntlet.verify import wire as verify_wire
 
 from bench.runner import invoke
@@ -28,6 +29,14 @@ from tests.support.pipeline import (
 )
 from tests.support.posting import invoke_posting, review
 from tests.support.verify_parity import project_findings, run_verify_slice
+
+HEADLESS_COMMENT_CAP = int(
+    next(
+        row
+        for row in cast(tuple[dict[str, Any], ...], KNOB_REGISTRY)
+        if row["key"] == "pr_comment_cap"
+    )["defaults"]["headless"][0]
+)
 
 READ_INPUT = (
     "let source = ''; for await (const chunk of process.stdin) source += chunk;"
@@ -222,10 +231,9 @@ def test_withheld_primary_summary_cross_runtime() -> None:
     assert "The PR claims" not in body
 
 
-@pytest.mark.parametrize("body_primary", [False, True])
 @pytest.mark.parametrize("platform", ["github", "gitlab"])
 def test_mixed_disposition_group_cross_runtime(
-    body_primary, platform, tmp_path, monkeypatch, capsys, forge_factory
+    platform, tmp_path, monkeypatch, capsys, forge_factory
 ):
     findings = [
         {
@@ -239,7 +247,11 @@ def test_mixed_disposition_group_cross_runtime(
             "title": f"{stamp} claim",
             "description": f"Evidence from {stamp}",
             "severity": "high",
-            "confidence": 99 if (stamp == "body") == body_primary else 90,
+            "verdict": {
+                "claim": "confirmed",
+                "consequence": "present_failure",
+                "justification": "Inspected caller failure",
+            },
             "agent": agent,
             "dimension": "bug",
             "diff_validation": {"in_diff": stamp == "deliver", "reason": stamp},
@@ -452,13 +464,11 @@ def test_both_receipt_modes_cross_the_bench_parsers(mode: str) -> None:
             "model_tier": {"value": "optimized", "source": "fixed"},
             "pr_comment_cap": {"value": "null", "source": "default"},
             "delivery_tier": {"value": "all", "source": "default"},
-            "review_md": {"value": "absent", "source": "discovery"},
         }
         expected = {
             "model_tier": "optimized",
             "delivery_tier": "all",
             "pr_comment_cap": "null",
-            "review_md": "absent",
         }
     report = run_node(
         RENDER_REPORT,
@@ -488,10 +498,8 @@ def test_both_receipt_modes_cross_the_bench_parsers(mode: str) -> None:
 def test_receipt_rendering_parity(
     mode: str, carrier: str | None, value: str | None, token: str | None
 ) -> None:
-    resolved = resolve_config.resolve(mode, {}, None, "pr")
+    resolved = resolve_config.resolve(mode, {}, "pr")
     echo = resolved["configEcho"]
-    if mode == "interactive":
-        echo["review_md"] = {"value": "absent", "source": "discovery"}
     identity = {"pipeline_version": "version", "plugin_root": "/absolute/root"}
     if carrier in ("value", "source"):
         echo["model_tier"][carrier] = value
@@ -530,27 +538,29 @@ def test_receipt_rendering_parity(
 @pytest.mark.parametrize(
     ("mode", "env", "light_eligible", "with_detector", "cap", "tier"),
     [
-        pytest.param("headless", {}, False, False, 6, "all", id="headless"),
+        pytest.param(
+            "headless", {}, False, False, HEADLESS_COMMENT_CAP, "all", id="headless"
+        ),
         pytest.param(
             "headless",
             {"CODE_GAUNTLET_MEASUREMENT_TRACE": "1"},
             False,
             False,
-            6,
+            HEADLESS_COMMENT_CAP,
             "all",
             id="measurement-trace",
         ),
         pytest.param(
             "headless",
             {
-                "CODE_GAUNTLET_PR_COMMENT_CAP": "25",
+                "CODE_GAUNTLET_PR_COMMENT_CAP": "7",
                 "CODE_GAUNTLET_DELIVERY_TIER": "main_only",
                 "CODE_GAUNTLET_REVIEWED_POLICY": "skip",
                 "CODE_GAUNTLET_TRIVIAL_SCOPE": "light",
             },
             True,
             True,
-            25,
+            7,
             "main_only",
             id="combined-with-detector",
         ),
@@ -559,7 +569,7 @@ def test_receipt_rendering_parity(
             {"CODE_GAUNTLET_TRIVIAL_SCOPE": "light"},
             True,
             False,
-            6,
+            HEADLESS_COMMENT_CAP,
             "all",
             id="eligible-light",
         ),
@@ -595,7 +605,7 @@ def test_resolver_payload_crosses_args_waist(
     cap: int | None,
     tier: str,
 ) -> None:
-    payload = resolve_config.resolve(mode, env, None, "pr")
+    payload = resolve_config.resolve(mode, env, "pr")
     payload["mode"] = mode
     if with_detector:
         payload["reviewScope"] = {

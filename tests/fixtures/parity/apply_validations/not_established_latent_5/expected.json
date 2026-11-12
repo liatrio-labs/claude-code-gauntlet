@@ -1,0 +1,27 @@
+{
+  "adjusted_count": 1,
+  "findings": [
+    {
+      "confidence": 90,
+      "file": "src",
+      "id": "f",
+      "line_start": 10,
+      "report_destination": "main",
+      "report_tag": "main",
+      "severity": "high",
+      "validation_justification": "Need caller",
+      "validator_verdict": {
+        "claim": "not_established",
+        "justification": "Need caller",
+        "missing_fact": "Does a caller pass zero?"
+      },
+      "verdict": {
+        "claim": "not_established",
+        "justification": "Need caller",
+        "missing_fact": "Does a caller pass zero?"
+      },
+      "verdict_route": "not-established"
+    }
+  ],
+  "unmatched_ids": []
+}

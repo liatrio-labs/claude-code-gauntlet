@@ -99,9 +99,17 @@ VERIFICATION_SHARED = {
     ),
     "context": DISCOVERY_SHARED["context"],
     "confidence": (
-        "Score certainty that the claim is correct from 0 to 100: 0 means disproved; "
-        "25 probably false; 50 uncertain; 75 probably real with no meaningful "
-        "counter-evidence; 100 clearly present with no mitigating factors."
+        "Return claim: confirmed (the factual claim holds), refuted (code disproves it), or "
+        "not_established (one fact is missing). Only confirmed claims have a consequence: "
+        "present_failure (a present caller or input fails), latent (a named future change or "
+        "unusual precondition is needed), artifact_defect (a verifiable, fixable defect in a "
+        "test, comment, documentation or unreachable code without runtime effect), or "
+        "no_practical_effect (preference, style or equivalent behavior). For latent name the "
+        "precondition; for not_established name the missing fact. Refute with premise_false "
+        "(false assumption), guard_exists (an existing guard prevents it), or no_reachable_caller "
+        "(no caller reaches it), plus executable counter-evidence: an exact quote of at most "
+        "{lines} lines and {chars} characters with a source range of at most {lines} lines. Intent comments "
+        "and low impact do not refute. Include justification for every answer."
     ),
 }
 VERIFICATION_TARGETS = (
@@ -167,6 +175,7 @@ _REGISTRY_FIELDS = (
     "deliveryGroupSchema: m.DELIVERY_GROUP_SCHEMA",
     "validationReturnProperties: m.VALIDATION_RETURN_PROPERTIES",
     "anchorLimits: m.ANCHOR_LIMITS",
+    "verdictRoutes: [...new Set([...Object.values(m.VERDICT_ROUTES.confirmed), ...Object.values(m.VERDICT_ROUTES.refuted), m.VERDICT_ROUTES.not_established, ...m.VERDICT_ROUTES.overrides].map(row => row.route))]",
     "reportFoldLimits: m.REPORT_FOLD_LIMITS",
     "locationRights: m.LOCATION_RIGHTS",
     "locationStatuses: m.LOCATION_STATUSES",
@@ -188,7 +197,6 @@ _REGISTRY_FIELDS = (
     "publicSummary: m.PUBLIC_SUMMARY",
     "severityEmoji: m.SEVERITY_EMOJI",
     "severityOrder: m.SEVERITY_ORDER",
-    "reachability: v.REACHABILITY_VALUES",
     "deltaKeys: w.DELTA_KEYS",
     "verifySliceFields: w.VERIFY_SLICE_FIELDS",
     "traceFindingFields: t.TRACE_FINDING_FIELDS",
@@ -212,8 +220,6 @@ _REGISTRY_FIELDS = (
     "knobs: a.KNOB_REGISTRY.map(d => ({...d}))",
     "knobKeys: a.KNOB_REGISTRY.map(d => Object.keys(d))",
     "deriveWhen: Object.fromEntries(Object.entries(a.DERIVE_WHEN)"
-    ".map(([name, d]) => [name, d.describe]))",
-    "derivedFrom: Object.fromEntries(Object.entries(a.DERIVED_FROM)"
     ".map(([name, d]) => [name, d.describe]))",
 )
 
@@ -323,9 +329,13 @@ def fill_discovery_shared(text: str) -> str:
     return _fill_shared(text, "discovery", DISCOVERY_SHARED, skip_absent=True)
 
 
-def fill_verification_shared(text: str) -> str:
+def fill_verification_shared(text: str, *, limits: Mapping[str, int]) -> str:
     """Keep verification decisions grounded in one shared evidence contract."""
-    return _fill_shared(text, "verification", VERIFICATION_SHARED, skip_absent=False)
+    shared = {
+        **VERIFICATION_SHARED,
+        "confidence": VERIFICATION_SHARED["confidence"].format(**limits),
+    }
+    return _fill_shared(text, "verification", shared, skip_absent=False)
 
 
 def field_required_status(
@@ -458,6 +468,7 @@ def location_reference(registry: Mapping[str, Any]) -> str:
         "## Final Disposition and Rights",
         "",
         "Missing or unknown disposition or admission is held back. Delivery intersects admission, disposition and location rights. Body fix tasks additionally require the persisted current-defect eligibility stamp; patches and fences remain denied.",
+        "Typed posting verdicts supersede semantic kind defaults; deterministic kind defaults and factual gates still apply.",
         "",
         *_rights_table("Disposition", registry["dispositionRights"]),
     ]
@@ -556,9 +567,9 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
     delta_value_fields = delta_keys[2:]
     enum_types: dict[str, Sequence[object]] = {
         "Severity": identity["severityOrder"],
+        "VerdictRoute": identity["verdictRoutes"],
         "ModelAlias": identity["modelAliases"],
         "PolicyProvider": identity["policyProviders"],
-        "Reachability": identity["reachability"],
         "LocationStatus": identity["locationStatuses"],
         "Disposition": identity["dispositions"],
         "Dimension": [row["dimension"] for row in identity["dimensionRows"]],
@@ -802,9 +813,9 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
     ]
     values = {
         "SEVERITY_ORDER": tuple(identity["severityOrder"]),
+        "VERDICT_ROUTES": tuple(identity["verdictRoutes"]),
         "MODEL_ALIASES": tuple(identity["modelAliases"]),
         "POLICY_PROVIDERS": tuple(identity["policyProviders"]),
-        "REACHABILITY_VALUES": tuple(identity["reachability"]),
         "LOCATION_STATUSES": tuple(identity["locationStatuses"]),
         "DISPOSITIONS": tuple(identity["dispositions"]),
         "DELTA_KEYS": tuple(delta_keys),
@@ -826,9 +837,9 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
     }
     annotations = {
         "SEVERITY_ORDER": "tuple[Severity, ...]",
+        "VERDICT_ROUTES": "tuple[VerdictRoute, ...]",
         "MODEL_ALIASES": "tuple[ModelAlias, ...]",
         "POLICY_PROVIDERS": "tuple[PolicyProvider, ...]",
-        "REACHABILITY_VALUES": "tuple[Reachability, ...]",
         "LOCATION_STATUSES": "tuple[LocationStatus, ...]",
         "DISPOSITIONS": "tuple[Disposition, ...]",
         "DELTA_KEYS": "tuple[DeltaKey, ...]",
@@ -985,7 +996,6 @@ _TEMPLATE_FIXTURE: dict[str, Any] = {
         "model_tier": {"value": "optimized", "source": "fixed"},
         "pr_comment_cap": {"value": "null", "source": "default"},
         "delivery_tier": {"value": "all", "source": "default"},
-        "review_md": {"value": "absent", "source": "discovery"},
     },
     "pluginRoot": "/absolute/path/to/claude-code-gauntlet",
     "pipelineVersion": "{pipeline_version}",
@@ -1013,7 +1023,6 @@ _TEMPLATE_FIXTURE: dict[str, Any] = {
                 "criticality failure_scenario hidden_errors invalid_state_example",
             ),
             "line_end": 12,
-            "challenge_contested": True,
             "corroborations": [
                 _placeholders(
                     "corroboration", "agent dimension confidence title description"
@@ -1248,7 +1257,6 @@ def _derived_waist_instruction(
 def _derived_waist_body(identity: Mapping[str, Any]) -> list[str]:
     rows = identity["knobs"]
     waist_rows = [row for row in rows if row["waistPath"] is not None]
-    derived_rows = [row for row in rows if row["derivedFrom"] is not None]
     lines: list[str] = []
     if waist_rows:
         lines.extend(
@@ -1286,25 +1294,6 @@ def _derived_waist_body(identity: Mapping[str, Any]) -> list[str]:
                     line += f"; `{source}` derives as `{target}`"
             line += ". " + _derived_waist_instruction(row, identity["waistRequired"])
             lines.append(line)
-    if derived_rows:
-        if lines:
-            lines.extend(
-                [
-                    "",
-                    "The workflow fills these receipt entries itself; never stamp them.",
-                    "",
-                ]
-            )
-        else:
-            lines.append(
-                "The workflow fills these receipt entries itself; never stamp them."
-            )
-        for row in derived_rows:
-            description = identity["derivedFrom"][row["derivedFrom"]]
-            lines.append(
-                f"- `configEcho.{row['key']}` ({_modes_phrase(row['modes'])}): "
-                f"{description}."
-            )
     return lines
 
 
@@ -1490,7 +1479,9 @@ def rendered_targets(
             )
         )
     for rel_path in VERIFICATION_TARGETS:
-        steps.setdefault(rel_path, []).append(fill_verification_shared)
+        steps.setdefault(rel_path, []).append(
+            partial(fill_verification_shared, limits=registry["anchorLimits"])
+        )
     steps.setdefault(REPORT_FORMAT_REL, []).append(
         partial(rewrite_required_column, registry=registry)
     )

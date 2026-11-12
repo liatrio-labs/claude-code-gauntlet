@@ -1,3 +1,4 @@
+import { hostResult } from './hostBoundary.js';
 // Honest executor envelopes echo the dispatched token; fault rows override proofs explicitly.
 import { deltaContentProof, recordProof } from '../../src/verifyWire.js';
 import { fnv1a32 } from '../../src/wire.js';
@@ -126,14 +127,14 @@ export function verifyCtx(executorImpl) {
       const index = Number(match[1]);
       const attempt = match[3] !== undefined ? 3 : match[2] ? 2 : 1;
       if ((inParallel > 0) !== (attempt === 3)) throw new Error('only singleton retries must use parallel()');
-      return sliceInputRecorder(await executorImpl(index, attempt, call), prompt);
+      return hostResult(sliceInputRecorder(await executorImpl(index, attempt, call), prompt));
     },
     parallel: async (thunks) => {
       parallelCalls.push(thunks.length);
       inParallel += 1;
       try {
         return await Promise.all(thunks.map(async (thunk) => {
-          try { return await thunk(); } catch { return null; }
+          try { return await hostResult(thunk()); } catch { return null; }
         }));
       } finally { inParallel -= 1; }
     },

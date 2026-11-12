@@ -43,7 +43,6 @@ REQUIRED_FIELDS = (
     "title",
     "description",
     "severity",
-    "confidence",
     "dimension",
 )
 ALIASES = {"description": "body"}
@@ -369,7 +368,7 @@ def _task(
         "review_context": {
             "finding_id": finding["id"],
             "dimension": finding["dimension"],
-            "confidence": finding["confidence"],
+            **({"verdict": finding["verdict"]} if "verdict" in finding else {}),
             "evidence": finding.get("evidence") or "",
             "cross_file_refs": refs,
             "blame_classification": finding.get("origin", "unknown"),

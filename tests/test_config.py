@@ -4,28 +4,27 @@ import json
 import re
 import subprocess
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from gauntlet import config as resolver
+from gauntlet.registry import KNOB_REGISTRY
 
 ROOT = Path(__file__).resolve().parents[1]
 
-INTERACTIVE_ECHO = {
-    "model_tier": {"value": "optimized", "source": "fixed"},
-    "pr_comment_cap": {"value": "null", "source": "default"},
-    "delivery_tier": {"value": "all", "source": "default"},
+DEFAULT_ECHO = {
+    mode: {
+        row["key"]: {
+            "value": row["defaults"][mode][0],
+            "source": row["defaults"][mode][1],
+        }
+        for row in cast(tuple[dict[str, Any], ...], KNOB_REGISTRY)
+        if mode in row["modes"]
+    }
+    for mode in ("interactive", "headless")
 }
-HEADLESS_ECHO = {
-    "model_tier": {"value": "optimized", "source": "default"},
-    "delivery": {"value": "markdown", "source": "default"},
-    "post_mode": {"value": "dry-run", "source": "default"},
-    "pr_comment_cap": {"value": "6", "source": "default"},
-    "delivery_tier": {"value": "all", "source": "default"},
-    "draft_policy": {"value": "review", "source": "default"},
-    "reviewed_policy": {"value": "full", "source": "default"},
-    "pr_not_found_policy": {"value": "error", "source": "default"},
-    "trivial_scope": {"value": "full", "source": "default"},
-}
+INTERACTIVE_ECHO = DEFAULT_ECHO["interactive"]
+HEADLESS_ECHO = DEFAULT_ECHO["headless"]
 HEADLESS_RESOLVED = {
     "model_tier": "optimized",
     "delivery": ["markdown"],
@@ -72,85 +71,6 @@ _RULE_ROWS = [
 )
 def test_rules_are_exact_and_fail_closed(rule, value, mode, expected):
     assert resolver.matches_rule(rule, value, mode) is expected
-
-
-_DELIVERY_ROWS = [
-    ("next-heading", "chat,pr_comments\n## Ignore\nmarkdown", "chat,pr_comments"),
-    ("backtick-fence", "```yaml\nchat\n```", None),
-    ("multiline-comment", "<!-- chat,\npr_comments -->\nmarkdown", "markdown"),
-    ("prose", "prose about chat", None),
-]
-
-
-@pytest.mark.parametrize(
-    ("source", "expected"),
-    [
-        pytest.param("## Default Delivery\n" + body, expected, id=name)
-        for name, body, expected in _DELIVERY_ROWS
-    ]
-    + [
-        pytest.param(
-            "prefix\r\n## Default Delivery\r\n\r\n  chat  \r\n",
-            "chat",
-            id="crlf-preamble-indented-value",
-        ),
-    ],
-)
-def test_default_delivery_parser(source, expected):
-    assert resolver.parse_default_delivery(source) == expected
-
-
-@pytest.mark.parametrize(
-    ("mode", "environ", "review", "key", "expected"),
-    [
-        pytest.param(
-            "headless",
-            {"CODE_GAUNTLET_DELIVERY": "chat"},
-            "## Default Delivery\nchat,pr_comments\n",
-            "delivery",
-            {"value": "chat", "source": "env"},
-            id="env-over-review",
-        ),
-        pytest.param(
-            "interactive",
-            {"CODE_GAUNTLET_MODEL_TIER": "optimized"},
-            None,
-            "model_tier",
-            {"value": "optimized", "source": "fixed"},
-            id="validated-fixed-model",
-        ),
-    ],
-)
-def test_valid_pins_keep_their_allowed_source(mode, environ, review, key, expected):
-    assert resolver.resolve(mode, environ, review, "pr")["configEcho"][key] == expected
-
-
-@pytest.mark.parametrize("source", ["env", "review_md"])
-def test_local_delivery_rejects_pr_comments_from_env_or_review(source):
-    environ = {"CODE_GAUNTLET_DELIVERY": "chat,pr_comments"} if source == "env" else {}
-    review = "## Default Delivery\nchat,pr_comments" if source == "review_md" else None
-    name = "CODE_GAUNTLET_DELIVERY" if source == "env" else "REVIEW.md default_delivery"
-    with pytest.raises(resolver.ResolverError) as raised:
-        resolver.resolve("headless", environ, review, "local")
-    assert (
-        str(raised.value)
-        == f"HEADLESS CONFIG ERROR: {name}=chat,pr_comments not in {{chat,markdown}}"
-    )
-
-
-@pytest.mark.parametrize(
-    ("target", "source"),
-    [("pr", "env"), (None, "review_md")],
-    ids=["pr-env", "targetless-review"],
-)
-def test_pr_and_unset_targets_accept_pr_comments(target, source):
-    environ = {"CODE_GAUNTLET_DELIVERY": "chat,pr_comments"} if source == "env" else {}
-    review = "## Default Delivery\nchat,pr_comments" if source == "review_md" else None
-    result = resolver.resolve("headless", environ, review, target)
-    assert result["configEcho"]["delivery"] == {
-        "value": "chat,pr_comments",
-        "source": source,
-    }
 
 
 _INVALID_PIN_ROWS = [
@@ -231,22 +151,14 @@ def test_cli_shape_identity_and_stderr_block(config_cli, mode):
     }
     echo = HEADLESS_ECHO if mode == "headless" else INTERACTIVE_ECHO
     resolved = HEADLESS_RESOLVED if mode == "headless" else {"model_tier": "optimized"}
-    prefix = (
-        "Headless config:\n"
-        "  model_tier=optimized (default)\n"
-        "  delivery=markdown (default)\n"
-        "  post_mode=dry-run (default)\n"
-        "  pr_comment_cap=6 (default)\n"
-        "  delivery_tier=all (default)\n"
-        "  draft_policy=review (default)\n"
-        "  reviewed_policy=full (default)\n"
-        "  pr_not_found_policy=error (default)\n"
-        "  trivial_scope=full (default)\n"
-        if mode == "headless"
-        else "Resolved config:\n"
-        "  model_tier=optimized (fixed)\n"
-        "  pr_comment_cap=null (default)\n"
-        "  delivery_tier=all (default)\n"
+    if mode == "headless":
+        assert payload["waist"]["configEcho"]["pr_comment_cap"] == {
+            "value": "25",
+            "source": "default",
+        }
+    label = "Headless" if mode == "headless" else "Resolved"
+    prefix = f"{label} config:\n" + "".join(
+        f"  {key}={entry['value']} ({entry['source']})\n" for key, entry in echo.items()
     )
     block = (
         prefix + f"  pipeline_version={manifest['version']} (bundle)\n"
@@ -389,25 +301,3 @@ def test_caller_resolved_mentions(tmp_path):
     )
     with pytest.raises(AssertionError, match="pr_comment_cap"):
         assert_resolved_mentions(tmp_path)
-
-
-def test_caller_review_scaffold():
-    specification = (
-        ROOT / "skills/code-gauntlet/references/review-md-spec.md"
-    ).read_text(encoding="utf-8")
-    guide_link = re.search(r"\[authoring guide\]\(([^)]+)\)", specification)
-    assert guide_link is not None
-    authoring = (ROOT / "skills/code-gauntlet/references" / guide_link[1]).read_text(
-        encoding="utf-8"
-    )
-    match = re.search(
-        r"### Root REVIEW\.md template\n\n(````markdown\n.*?\n````)",
-        authoring,
-        re.DOTALL,
-    )
-    assert match is not None
-    result = resolver.resolve("headless", {}, match[1], "pr")
-    assert result["configEcho"]["delivery"] == {
-        "value": "markdown",
-        "source": "default",
-    }

@@ -25,7 +25,7 @@ Inspect the session tool definitions for `Workflow` before other work. `ToolSear
 - **Absent from your tool definitions** → print exactly the message below and STOP.
 
 ```
-code-gauntlet v3 requires Claude Code >= 2.1.154 with dynamic workflows. Install the pre-rename deep-review v2.x for older CLIs.
+code-gauntlet requires Claude Code >= 2.1.154 with dynamic workflows. Install the pre-rename deep-review v2.x for older CLIs.
 ```
 
 ---
@@ -304,10 +304,6 @@ The workflow derives these waist fields from the copied `configEcho` receipt. Do
 - `delivery.tier` (headless and interactive runs): from `configEcho.delivery_tier`. Leave `tier` out of any stamped `delivery`.
 - `reviewScope.requested` (headless runs, when `reviewScope.detector` is an object): from `configEcho.reviewed_policy`; `skip` derives as `full`. Stamp `reviewScope` and leave `requested` out of it.
 - `scopeAnswer` (headless runs, when every changed file is low risk and fewer than 50 lines changed): from `configEcho.trivial_scope`. Leave it out.
-
-The workflow fills these receipt entries itself; never stamp them.
-
-- `configEcho.review_md` (interactive runs): `present` when the `reviewMd` array is nonempty, else `absent`; without `reviewMd`, `present` when `reviewConfigPath` is set, else `absent`.
 <!-- /generated-from-registry-identity:derived_waist_fields -->
 
 ---
@@ -336,4 +332,4 @@ AskUserQuestion(
 )
 ```
 
-There is no REVIEW.md key that skips this question — dimension selection is not REVIEW.md-configurable (`references/review-md-spec.md` → "Rules and other prose"). In light mode, triage announcement shows `Review dimensions: bugs, security (light review mode)`.
+Project rule files do not configure dimension selection. In light mode, triage announcement shows `Review dimensions: bugs, security (light review mode)`.
