@@ -881,7 +881,11 @@ def post_gitlab(
                         if comment := compose.confirmed_comment(extra):
                             extra["verdict"] = {
                                 **extra["verdict"],
-                                "comment": {**comment, "body": addition_body},
+                                "comment": {
+                                    **comment,
+                                    "body": addition_body,
+                                    "fix": "",
+                                },
                             }
                     extra.pop("suggested_fix_code", None)
                     coverage_overrides[id(extra)] = (

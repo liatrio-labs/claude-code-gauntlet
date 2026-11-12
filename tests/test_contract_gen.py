@@ -1322,3 +1322,12 @@ def test_supplemental_role_frontmatter_and_read_contract_have_single_owners(
     assert fields["model"] == "haiku" and fields["tools"] == "Read, Grep"
     assert fields["name"] == "gap-hunter"
     assert "CANONICAL_READ_SENTINEL" in generated
+
+
+def test_reader_comment_defect_contract_requires_wording_to_resolve_the_whole_complaint():
+    for rel in gen.VERIFICATION_TARGETS:
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        definition = re.search(r"comment_defect \(([^)]+)\)", text)
+        assert definition is not None
+        assert "wording alone resolves the whole" in definition[1]
+        assert "otherwise use the behavioral consequence" in definition[1]

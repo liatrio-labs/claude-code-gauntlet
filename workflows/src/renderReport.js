@@ -477,6 +477,10 @@ function renderFinding(builder, finding, unverified, permalinks) {
     builder.add(`**Confirmed statement:** ${inline(finding.verdict.comment.title)}`);
     builder.add();
     builder.add(foldedProse(finding.verdict.comment.body));
+    if (finding.verdict.comment.fix) {
+      builder.add();
+      builder.add(`**Confirmed fix:** ${foldedProse(finding.verdict.comment.fix)}`);
+    }
   });
 
   if (isPresent(finding.description)) blocks.push(() => builder.add(foldedProse(finding.description)));
@@ -532,6 +536,7 @@ function renderFinding(builder, finding, unverified, permalinks) {
         if (comment) {
           builder.add(`  **Confirmed statement:** ${inline(comment.title)}`);
           builder.add(foldedProse(comment.body).split(/\r?\n/).map((line) => `  ${line}`).join('\n'));
+          if (comment.fix) builder.add(`  **Confirmed fix:** ${foldedProse(comment.fix)}`);
         }
         if (isPresent(corroboration.description)) {
           builder.add(foldedProse(corroboration.description).split(/\r?\n/).map((line) => `  ${line}`).join('\n'));

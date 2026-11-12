@@ -457,12 +457,14 @@ const CONFIRMED_COMMENT_SCHEMA = deepFreeze({
       description: 'One line for the PR author: one confirmed issue, narrowed to what you verified; no trailing period needed, ceiling 100 characters.' },
     body: { type: 'string', minLength: 1, maxLength: 400, pattern: '\\S',
       description: 'One or two sentences for the PR author: one confirmed issue, what is wrong and what happens, narrowed to what you verified; ceiling 400 characters.' },
+    fix: { type: 'string', maxLength: 200,
+      description: 'One sentence for the PR author naming the correction you verified, ceiling 200 characters; empty if no correction can be confirmed.' },
   }, required: ['title', 'body'], additionalProperties: false,
 });
 const READER_COMMENT_SCHEMA = { type: 'object',
   properties: Object.fromEntries(Object.entries(CONFIRMED_COMMENT_SCHEMA.properties)
     .map(([key, { type, description }]) => [key, { type, description }])),
-  required: CONFIRMED_COMMENT_SCHEMA.required, additionalProperties: false };
+  required: Object.keys(CONFIRMED_COMMENT_SCHEMA.properties), additionalProperties: false };
 const VERDICT_PROPERTIES = deepFreeze({
   claim: { type: 'string', enum: ['confirmed', 'refuted', 'not_established'] },
   consequence: { type: 'string', enum: CONSEQUENCE_ORDER },
@@ -814,11 +816,19 @@ function verdictRejections(value, schema = VERDICT_SCHEMA) {
 }
 function confirmedComment(finding) {
   const verdict = finding?.verdict;
-  return verdict?.claim === 'confirmed' && !schemaErrors(verdict.comment, CONFIRMED_COMMENT_SCHEMA).length ? verdict.comment : null;
+  if (verdict?.claim !== 'confirmed' || !verdict.comment || typeof verdict.comment !== 'object' || Array.isArray(verdict.comment)) return null;
+  const comment = { ...verdict.comment };
+  for (const [key, schema] of Object.entries(CONFIRMED_COMMENT_SCHEMA.properties)) {
+    if (!CONFIRMED_COMMENT_SCHEMA.required.includes(key)
+      && (schemaErrors(comment[key], schema).length || !comment[key].trim())) delete comment[key];
+  }
+  return schemaErrors(comment, CONFIRMED_COMMENT_SCHEMA).length ? null : comment;
 }
 function buildVerdict(value) {
+  const comment = confirmedComment({ verdict: value });
   return Object.fromEntries(['claim', 'justification', ...VERDICT_CASES[value.claim]]
-    .filter((key) => value[key] !== undefined && (key !== 'comment' || confirmedComment({ verdict: value }))).map((key) => [key, deepClone(value[key])]));
+    .filter((key) => value[key] !== undefined && (key !== 'comment' || comment))
+    .map((key) => [key, deepClone(key === 'comment' ? comment : value[key])]));
 }
 function verdictState(verdict, check) {
   if (verdictRejections(verdict).length) return 'not_established';
@@ -3432,7 +3442,7 @@ function applyInjectionFilter(findings, rules = INJECTION_RULES) {
     const comment = confirmedComment(finding);
     const discoveryTitle = asText(finding.title);
     const title = [discoveryTitle, comment?.title].filter(Boolean).join('\n');
-    const description = [asText(finding.description), comment?.body].filter(Boolean).join('\n');
+    const description = [asText(finding.description), comment?.body, comment?.fix].filter(Boolean).join('\n');
     const filepath = asText(finding.file);
     const combined = `${title}\n${description}`;
     const combinedFolded = foldConfusables(combined);
@@ -4868,6 +4878,10 @@ function renderFinding(builder, finding, unverified, permalinks) {
     builder.add(`**Confirmed statement:** ${inline(finding.verdict.comment.title)}`);
     builder.add();
     builder.add(foldedProse(finding.verdict.comment.body));
+    if (finding.verdict.comment.fix) {
+      builder.add();
+      builder.add(`**Confirmed fix:** ${foldedProse(finding.verdict.comment.fix)}`);
+    }
   });
   if (isPresent(finding.description)) blocks.push(() => builder.add(foldedProse(finding.description)));
   if (isPresent(finding.evidence)) {
@@ -4917,6 +4931,7 @@ function renderFinding(builder, finding, unverified, permalinks) {
         if (comment) {
           builder.add(`  **Confirmed statement:** ${inline(comment.title)}`);
           builder.add(foldedProse(comment.body).split(/\r?\n/).map((line) => `  ${line}`).join('\n'));
+          if (comment.fix) builder.add(`  **Confirmed fix:** ${foldedProse(comment.fix)}`);
         }
         if (isPresent(corroboration.description)) {
           builder.add(foldedProse(corroboration.description).split(/\r?\n/).map((line) => `  ${line}`).join('\n'));

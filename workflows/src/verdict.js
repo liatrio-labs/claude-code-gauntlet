@@ -8,12 +8,21 @@ export function verdictRejections(value, schema = VERDICT_SCHEMA) {
 
 export function confirmedComment(finding) {
   const verdict = finding?.verdict;
-  return verdict?.claim === 'confirmed' && !schemaErrors(verdict.comment, CONFIRMED_COMMENT_SCHEMA).length ? verdict.comment : null;
+  if (verdict?.claim !== 'confirmed' || !verdict.comment || typeof verdict.comment !== 'object' || Array.isArray(verdict.comment)) return null;
+  const comment = { ...verdict.comment };
+  // Optional prose cannot discard an established statement or revive discovery advice.
+  for (const [key, schema] of Object.entries(CONFIRMED_COMMENT_SCHEMA.properties)) {
+    if (!CONFIRMED_COMMENT_SCHEMA.required.includes(key)
+      && (schemaErrors(comment[key], schema).length || !comment[key].trim())) delete comment[key];
+  }
+  return schemaErrors(comment, CONFIRMED_COMMENT_SCHEMA).length ? null : comment;
 }
 
 export function buildVerdict(value) {
+  const comment = confirmedComment({ verdict: value });
   return Object.fromEntries(['claim', 'justification', ...VERDICT_CASES[value.claim]]
-    .filter((key) => value[key] !== undefined && (key !== 'comment' || confirmedComment({ verdict: value }))).map((key) => [key, deepClone(value[key])]));
+    .filter((key) => value[key] !== undefined && (key !== 'comment' || comment))
+    .map((key) => [key, deepClone(key === 'comment' ? comment : value[key])]));
 }
 
 export function verdictState(verdict, check) {

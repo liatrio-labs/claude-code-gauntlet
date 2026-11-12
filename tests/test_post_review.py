@@ -1575,6 +1575,7 @@ def test_gitlab_group_site_addenda_do_not_relist_delivered_ranges(
                 "comment": {
                     "title": "Confirmed title",
                     "body": "Confirmed reader statement.",
+                    "fix": "Confirmed reader fix.",
                 },
             }
     first = posting(review("gitlab", rows), diff=DIFF, dry_run=False)
@@ -1611,6 +1612,7 @@ def test_gitlab_group_site_addenda_do_not_relist_delivered_ranges(
     if reader_text:
         assert "Additional confirmed sites for this previously delivered issue." in body
         assert "Confirmed reader statement." not in body
+        assert "Confirmed reader fix." not in body
     assert "Found independently" not in body
     assert [line for line in body.splitlines() if line.startswith("- `")] == [
         "- `new-0.txt:1`",

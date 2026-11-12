@@ -280,7 +280,7 @@ def test_selected_reader_text_survives_persistence_into_both_comment_surfaces(
         "let s='';for await(const c of process.stdin)s+=c;const failed=JSON.parse(s);"
         "const f=makeFinding('F',{title:'Discovery overstates the problem',description:'Discovery stronger prose'});"
         "const verdict={claim:'confirmed',consequence:'present_failure',justification:'Inspected caller',"
-        "comment:{title:'Only retries lose the update',body:'A failed retry discards the pending update.'}};"
+        "comment:{title:'Only retries lose the update',body:'A failed retry discards the pending update.',fix:'Preserve the pending update.'}};"
         "applyValidations([f],[failed?{id:'F',claim:'not_established',justification:'Reader failed',missing_fact:'caller'}:"
         "{id:'F',...verdict,consequence:'artifact_defect',comment:{title:'Validator statement',body:'Validator statement body'}}]);"
         "const rows=applyChallenges([f],[{id:'F',...verdict}]).findings;"
@@ -306,3 +306,5 @@ def test_selected_reader_text_survives_persistence_into_both_comment_surfaces(
         assert "Validator statement" not in rendered
         assert "Only retries lose the update" in rendered
     assert expected in inline and expected in body
+    assert "**Suggested fix:**\nPreserve the pending update." in inline
+    assert "**Suggested fix:**\nPreserve the pending update." in body

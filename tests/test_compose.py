@@ -711,19 +711,21 @@ def test_resolved_reader_text_is_the_posted_prose(surface):
     row = finding(
         title="Overstated discovery title",
         body="Overstated discovery explanation",
-        suggestion="Keep the confirmed correction",
+        suggestion="Discovery advice with an unconfirmed filter",
+        suggested_fix_code="    return 2\n    # done",
         verdict={
             "claim": "confirmed",
             "comment": {
                 "title": "Only @author's retry fails",
                 "body": "Only <retry> loses the update.\n/close",
+                "fix": "Preserve @author's pending <update>.",
             },
         },
     )
     expected = (
         "**🟠 [HIGH] Only \uff20author's retry fails**\n\n"
         "Only &lt;retry> loses the update.\n\\/close\n\n"
-        "**Suggested fix:**\nKeep the confirmed correction"
+        "**Suggested fix:**\nPreserve \uff20author's pending &lt;update>."
     )
     if surface == "inline":
         result = compose.render_comment_body(row)
@@ -737,6 +739,8 @@ def test_resolved_reader_text_is_the_posted_prose(surface):
         ).body
     assert expected in result
     assert "Overstated" not in result
+    assert "unconfirmed filter" not in result
+    assert "```suggestion\n    return 2\n    # done\n```" in result
 
 
 @pytest.mark.parametrize(
@@ -781,4 +785,50 @@ def test_additional_sites_merge_ranges_and_remove_inline_coverage():
     assert compose.render_comment_body(row) == (
         "**🟠 [HIGH] T**\n\nb\n\n**Additional sites:**\n"
         "- `lines 8-9`\n- `lines 13-24`\n- `other:2-9`" + TRAILER
+    )
+
+
+@pytest.mark.parametrize("fix", [None, 1, "", " ", "f" * 201])
+def test_invalid_or_empty_reader_fix_suppresses_discovery_advice_without_losing_statement(
+    fix,
+):
+    row = finding(
+        suggestion="Unverified discovery correction",
+        verdict={
+            "claim": "confirmed",
+            "comment": {"title": "Reader title", "body": "Reader body.", "fix": fix},
+        },
+    )
+    assert (
+        compose.render_comment_body(row)
+        == "**🟠 [HIGH] Reader title**\n\nReader body." + TRAILER
+    )
+
+
+def test_fallback_keeps_discovery_fix_and_code():
+    row = finding(
+        suggestion="Discovery correction",
+        suggested_fix_code="replacement",
+        verdict={
+            "claim": "confirmed",
+            "comment": {"title": "t", "body": "b" * 401, "fix": "Reader correction"},
+        },
+    )
+    assert compose.render_comment_body(row) == (
+        "**🟠 [HIGH] T**\n\nb\n\n**Suggested fix:**\nDiscovery correction"
+        "\n\n```suggestion\nreplacement\n```" + TRAILER
+    )
+
+
+def test_legacy_reader_statement_without_fix_does_not_revive_discovery_advice():
+    row = finding(
+        suggestion="Discovery correction",
+        verdict={
+            "claim": "confirmed",
+            "comment": {"title": "Reader title", "body": "Reader body."},
+        },
+    )
+    assert (
+        compose.render_comment_body(row)
+        == "**🟠 [HIGH] Reader title**\n\nReader body." + TRAILER
     )

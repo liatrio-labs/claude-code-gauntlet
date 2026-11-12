@@ -225,6 +225,11 @@ CONFIRMED_COMMENT_SCHEMA: dict[str, Any] = {
             "pattern": "\\S",
             "description": "One or two sentences for the PR author: one confirmed issue, what is wrong and what happens, narrowed to what you verified; ceiling 400 characters.",
         },
+        "fix": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "One sentence for the PR author naming the correction you verified, ceiling 200 characters; empty if no correction can be confirmed.",
+        },
     },
     "required": ["title", "body"],
     "additionalProperties": False,
@@ -1744,9 +1749,10 @@ class SiteConfirmationsItem(TypedDict):
     confirmed: bool
 
 
-class Comment(TypedDict):
+class Comment(TypedDict, total=False):
     title: str
     body: str
+    fix: str
 
 
 class Refutation(TypedDict):

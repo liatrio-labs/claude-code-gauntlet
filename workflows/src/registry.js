@@ -367,12 +367,14 @@ export const CONFIRMED_COMMENT_SCHEMA = deepFreeze({
       description: 'One line for the PR author: one confirmed issue, narrowed to what you verified; no trailing period needed, ceiling 100 characters.' },
     body: { type: 'string', minLength: 1, maxLength: 400, pattern: '\\S',
       description: 'One or two sentences for the PR author: one confirmed issue, what is wrong and what happens, narrowed to what you verified; ceiling 400 characters.' },
+    fix: { type: 'string', maxLength: 200,
+      description: 'One sentence for the PR author naming the correction you verified, ceiling 200 characters; empty if no correction can be confirmed.' },
   }, required: ['title', 'body'], additionalProperties: false,
 });
 const READER_COMMENT_SCHEMA = { type: 'object',
   properties: Object.fromEntries(Object.entries(CONFIRMED_COMMENT_SCHEMA.properties)
     .map(([key, { type, description }]) => [key, { type, description }])),
-  required: CONFIRMED_COMMENT_SCHEMA.required, additionalProperties: false };
+  required: Object.keys(CONFIRMED_COMMENT_SCHEMA.properties), additionalProperties: false };
 export const VERDICT_PROPERTIES = deepFreeze({
   claim: { type: 'string', enum: ['confirmed', 'refuted', 'not_established'] },
   consequence: { type: 'string', enum: CONSEQUENCE_ORDER },

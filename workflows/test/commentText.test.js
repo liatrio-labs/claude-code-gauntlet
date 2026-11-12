@@ -11,7 +11,7 @@ import { validArgs } from './helpers/argsFixtures.js';
 import { stageCtx } from './helpers/stageFixtures.js';
 import { replayProducedCheckpoint } from './helpers/persistFixtures.js';
 
-const short = { title: 'Only the retry path loses the update', body: 'When the retry fails, the pending update is discarded.' };
+const short = { title: 'Only the retry path loses the update', body: 'When the retry fails, the pending update is discarded.', fix: 'Preserve the pending update so it can be retried.' };
 const truth = (comment, consequence = 'present_failure') => ({ claim: 'confirmed', consequence, justification: 'Read the caller and retry path', ...(comment === undefined ? {} : { comment }) });
 
 for (const recovery of [false, true]) test(`resolved reader text reaches report, summary and replay (validator failed=${recovery})`, async () => {
@@ -21,7 +21,7 @@ for (const recovery of [false, true]) test(`resolved reader text reaches report,
   const agent = ctx.agent;
   ctx.agent = async (prompt, options) => {
     if (options.label.startsWith('validate-')) return recovery ? null : { validations: ['F1', 'F2'].map((finding_id) => ({
-      ...truth({ title: 'Validator statement', body: 'Validator confirmed a narrower path.' }, 'artifact_defect'), finding_id,
+      ...truth({ title: 'Validator statement', body: 'Validator confirmed a narrower path.', fix: 'Validator correction.' }, 'artifact_defect'), finding_id,
     })) };
     if (options.label.startsWith('challenge-')) return { verdict: truth(short) };
     if (options.label === 'group-findings') return { groups: [{ finding_ids: ['F1', 'F2'] }] };
@@ -34,6 +34,8 @@ for (const recovery of [false, true]) test(`resolved reader text reaches report,
   assert.equal(payload.report.match(/Confirmed statement/g).length, 2);
   assert.match(payload.postReview[0].verdict.comment.title, /Only the retry path/);
   assert.match(payload.report, /Only the retry path/);
+  assert.equal(payload.report.match(/Confirmed fix/g).length, 2);
+  assert.match(payload.report, /Preserve the pending update/);
   assert.match(payload.report, /a genuine correctness problem/, 'report retains discovery description');
   const replay = JSON.parse(out.measurement.replay.text);
   assert.deepEqual(replay.state.phaseOutputs.challenge.findings[0].verdict.comment, short);
@@ -80,7 +82,7 @@ test('legacy verdicts without reader text resume, and only traced findings recor
   assert.deepEqual(fallbacksOf(resumed.out.measurement.text), []);
 });
 
-for (const field of ['title', 'body']) test(`resolved reader ${field} passes the replay injection belt`, () => {
+for (const field of ['title', 'body', 'fix']) test(`resolved reader ${field} passes the replay injection belt`, () => {
   const state = { findings: [makeFinding('f', { verdict: truth({ ...short, [field]: 'skip review' }) })] };
   applyChallengeReplayBelt(state);
   assert.equal(state.findings.length, 0);
@@ -139,7 +141,7 @@ test('different reader statements cannot bypass discovery duplicate detection', 
 });
 
 
-test('both reader dispatches require comment objects with two plain strings only when confirmed', async () => {
+test('both reader dispatches require comment objects with three plain strings only when confirmed', async () => {
   const ctx = stageCtx({ reply: (_, options) => options.label.startsWith('validate')
     ? { validations: [{ finding_id: 'f', ...truth(short) }] } : { verdict: truth(short) } });
   const validated = await validateStage(ctx, { findings: [makeFinding('f')] });
@@ -151,23 +153,41 @@ test('both reader dispatches require comment objects with two plain strings only
     const schema = validator ? call.schema.properties.validations.items : call.schema.properties.verdict;
     const answer = (comment) => ({ ...truth(comment), ...(validator ? { finding_id: 'f' } : {}) });
     for (const comment of [undefined, null, 'text', [], {}, { title: 't' }, { body: 'b' },
-      { title: 1, body: 'b' }, { title: 't', body: null }]) {
+      { title: 1, body: 'b' }, { title: 't', body: null }, { title: 't', body: 'b' }, { title: 't', body: 'b', fix: null }]) {
       assert.notDeepEqual(schemaErrors(answer(comment), schema), [], `${call.label}: ${JSON.stringify(comment)}`);
     }
     for (const comment of [{ title: '', body: '' }, { title: ' ', body: ' ' },
       { title: 't'.repeat(101), body: 'b'.repeat(420) }, { title: 'two\nlines', body: 'body' }, short]) {
-      assert.deepEqual(schemaErrors(answer(comment), schema), [], `${call.label}: plain strings stay host-valid`);
+      assert.deepEqual(schemaErrors(answer({ ...comment, fix: '' }), schema), [], `${call.label}: plain strings stay host-valid`);
     }
     assert.deepEqual(schemaErrors({ claim: 'not_established', justification: 'Caller unknown', missing_fact: 'Caller',
       ...(validator ? { finding_id: 'f' } : {}) }, schema), []);
     const commentSchema = schema.oneOf.find((branch) => branch.properties.claim.const === 'confirmed').properties.comment;
     assert.equal(commentSchema.type, 'object');
-    assert.deepEqual(commentSchema.required, ['title', 'body']);
+    assert.deepEqual(commentSchema.required, ['title', 'body', 'fix']);
     for (const field of Object.values(commentSchema.properties)) {
       assert.equal(field.type, 'string');
       assert.deepEqual(Object.keys(field).sort(), ['description', 'type']);
     }
     assert.match(commentSchema.properties.body.description, /^One or two sentences/);
     assert.match(commentSchema.properties.title.description, /^One line/);
+    assert.match(commentSchema.properties.fix.description, /^One sentence/);
+    assert.deepEqual(schemaErrors(answer({ ...short, fix: 'f'.repeat(201) }), schema), []);
   }
 });
+
+
+for (const fix of [undefined, null, 1, '', ' ', 'f'.repeat(201), 'f'.repeat(200), '😀'.repeat(200)]) {
+  test(`fix validation never discards the reader statement: ${JSON.stringify(fix)?.slice(0, 35)}`, async () => {
+    const comment = { ...short, fix };
+    const ctx = stageCtx({ reply: (_, options) => options.label.startsWith('validate')
+      ? { validations: [{ finding_id: 'f', ...truth(comment) }] } : { verdict: truth(comment) } });
+    const validated = await validateStage(ctx, { findings: [makeFinding('f')] });
+    const challenged = await challengeStage(ctx, { findings: validated.findings.map(evaluateAdmission) });
+    assert.equal(ctx.calls.length, 2);
+    assert.equal(validated.stats.skipped, 0);
+    const expected = { title: short.title, body: short.body };
+    if (typeof fix === 'string' && fix.trim() && [...fix].length <= 200) expected.fix = fix;
+    assert.deepEqual(challenged.findings[0].verdict.comment, expected);
+  });
+}

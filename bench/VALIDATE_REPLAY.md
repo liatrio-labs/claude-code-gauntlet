@@ -123,7 +123,8 @@ incomplete pass populations, changed finding IDs, duplicate IDs, and a denominat
 `artifact_defect` distinguishes verifiable defects in tests, standalone documentation and
 unreachable code from preferences. Its `posted-artifact` route is low severity and preserves
 finding-kind admission gates. `comment_defect` covers inaccurate or unclear code comments and
-docstrings where code and tests behave correctly; it is report-only and still challenged. Outcomes whose kind admission does not allow posting count as
+docstrings only when wording alone resolves the entire complaint; otherwise the behavioral
+consequence applies. It is report-only and still challenged. Outcomes whose kind admission does not allow posting count as
 `report-only`. Per-route reader match counts, claim agreements, and worth yes/no counts accompany
 the known-bug and place counts in every pass and average.
 

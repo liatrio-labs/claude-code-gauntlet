@@ -168,21 +168,30 @@ def confirmed_comment(finding: Mapping[str, object]) -> registry.Comment | None:
         return None
     comment = verdict.get("comment")
     schema = registry.CONFIRMED_COMMENT_SCHEMA
-    if not isinstance(comment, dict) or set(comment) != set(schema["required"]):
+    if (
+        not isinstance(comment, dict)
+        or not set(schema["required"]) <= set(comment)
+        or not set(comment) <= set(schema["properties"])
+    ):
         return None
+    comment = dict(comment)
     for key, field in schema["properties"].items():
-        value = comment[key]
+        value = comment.get(key)
         if (
             not isinstance(value, str)
-            or not field["minLength"] <= len(value) <= field["maxLength"]
+            or not field.get("minLength", 0) <= len(value) <= field["maxLength"]
             or not re.search(
-                field["pattern"]
+                field.get("pattern", "")
                 .replace(r"\S", f"[^{re.escape(JS_TRIM_CHARS)}]")
                 .replace("$", r"\Z"),
                 value,
             )
         ):
-            return None
+            if key in schema["required"]:
+                return None
+            comment.pop(key, None)
+        elif key not in schema["required"] and not value.strip(JS_TRIM_CHARS):
+            comment.pop(key, None)
     return cast(registry.Comment, comment)
 
 
@@ -209,7 +218,9 @@ def render_finding_sections(
 
     parts = [f"**{emoji} [{severity.upper()}] {title or 'Finding'}**", "", body]
 
-    suggestion_text = prepared_prose(finding.get("suggestion"))
+    suggestion_text = prepared_prose(
+        comment.get("fix") if comment else finding.get("suggestion")
+    )
     if suggestion_text:
         parts += ["", "**Suggested fix:**", suggestion_text]
 

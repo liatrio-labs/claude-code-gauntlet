@@ -124,7 +124,7 @@
   <text class="detail" x="92" y="1224">An independent validator tries to disprove each finding</text>
   <text class="detail" x="92" y="1249">Fresh context, the full finding and its evidence, codebase access</text>
   <line class="divider" x1="780" y1="1154" x2="780" y2="1251"/>
-  <text class="effect" x="802" y="1182">Verdict + confirmed statement</text>
+  <text class="effect" x="802" y="1182">Verdict + statement + fix</text>
   <text class="effect" x="802" y="1208">Refutation citations checked by code</text>
   <text class="effect" x="802" y="1234">Unresolved: sent to blind challenge</text>
   <path class="flow" d="M128 1273 V1301" marker-end="url(#arrow)"/>

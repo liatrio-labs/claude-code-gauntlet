@@ -8,7 +8,7 @@ import { validArgs } from './helpers/argsFixtures.js';
 import { makeCtx, makeFinding } from './helpers/pipelineMock.js';
 import { decodeMeasurement } from './helpers/decodeMeasurement.js';
 
-const comment = { title: 'The alternate input fails', body: 'The inspected input reaches an unsupported operation.' };
+const comment = { title: 'The alternate input fails', body: 'The inspected input reaches an unsupported operation.', fix: 'Handle the alternate input before the operation.' };
 
 for (const gateway of [false, true]) {
   for (const [consequence, route] of [['present_failure', 'posted'], ['latent', 'posted-latent'], ['artifact_defect', 'posted-artifact']]) {

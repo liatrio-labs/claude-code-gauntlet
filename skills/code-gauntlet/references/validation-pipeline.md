@@ -87,8 +87,9 @@ Validators return `claim` (`confirmed`, `refuted`, `not_established`), `conseque
 A latent consequence names its future change or unusual precondition in `latent_condition`;
 `not_established` names one missing fact in `missing_fact`. Refutations require a closed
 `refutation_kind` and a source reference (`file`, `line_start`, `line_end`, exact `anchor`).
-Reader dispatch schemas require confirmed answers to carry a `comment` object with string `title` and `body`.
-Descriptions ask for one title line and one or two body sentences, with ceilings of 100 and 400 characters.
+Reader dispatch schemas require confirmed answers to carry a `comment` object with string `title`, `body` and `fix`.
+Descriptions ask for one title line and one or two body sentences, with ceilings of 100 and 400 characters, plus a one-sentence fix capped at 200 characters.
+An empty or invalid fix omits only the fix line; it never revives discovery suggestion prose.
 Length and blank checks run in code; internal schemas tolerate absent text in older stored verdicts.
 The selected reader verdict supplies posted prose; invalid text falls back without retrying the verdict.
 The report keeps discovery prose and the confirmed statement.
