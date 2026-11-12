@@ -626,8 +626,6 @@ class SourceAdapter:
                 ):
                     excluded += 1
                     continue
-                if re.fullmatch(rb"[0-9a-f]{40,64}", oid) is None:
-                    continue
                 if self.target_kind == "local":
                     try:
                         if not stat.S_ISREG(_local_mode(self.root, parts)):
@@ -750,18 +748,12 @@ class SourceAdapter:
                 if sum(f.size for f in rules) > 256 * 1024:
                     raise ValueError("ignore rules exceed budget")
                 read = self.read_snapshot(rules, deadline=deadline)
-                if (
-                    read.unreadable
-                    or read.deadline_reached
-                    or len(read.files) != len(rules)
-                ):
+                if read.unreadable or read.deadline_reached:
                     raise ValueError("ignore snapshot unavailable")
                 with tempfile.TemporaryDirectory(
                     prefix="gauntlet-ignore-"
                 ) as directory:
                     for file, lines in read.files.items():
-                        if any("\ufffd" in line for line in lines):
-                            raise ValueError("unrepresentable ignore rule")
                         path = Path(directory).joinpath(*file.split("/"))
                         path.parent.mkdir(parents=True, exist_ok=True)
                         path.write_text(
@@ -934,10 +926,15 @@ class SourceAdapter:
         try:
             if self.target_kind == "local":
                 return _decode_source(_local_bytes(self.root, parts))
-            if self.captured_head is None:
-                return None
             tree = proc.run_bytes(
-                ["git", "ls-tree", "-z", self.captured_head, "--", f":(literal){file}"],
+                [
+                    "git",
+                    "ls-tree",
+                    "-z",
+                    cast(str, self.captured_head),
+                    "--",
+                    f":(literal){file}",
+                ],
                 cwd=str(self.root),
                 timeout=3,
             )
