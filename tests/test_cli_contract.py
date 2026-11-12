@@ -868,7 +868,11 @@ def _assert_recorded(name, case, returncode, stdout, tmp_path):
             wanted.pop(key)
         assert actual == wanted
         return
-    assert (returncode, normalize(stdout, tmp_path)) == (code, expected)
+    actual = normalize(stdout, tmp_path)
+    if case == "help":
+        # argparse wraps usage lines differently across Python versions.
+        actual, expected = " ".join(actual.split()), " ".join(expected.split())
+    assert (returncode, actual) == (code, expected)
 
 
 @pytest.mark.parametrize(("name", "case"), list(rows()))
