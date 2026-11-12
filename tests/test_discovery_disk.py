@@ -29,7 +29,7 @@ def planner(tmp_path):
     def prepare(plan, *, context_lines=100):
         context = "row\n" * context_lines
         (tmp_path / f"code-gauntlet-context-{SHA}.md").write_text(
-            context, encoding="utf-8"
+            context, encoding="utf-8", newline=""
         )
         digest = save(
             tmp_path / artifact_name("discovery-plan", SHA),
@@ -529,3 +529,244 @@ def test_a_bad_model_anchor_costs_only_that_record_not_the_final_ledger(
     assert ledger["remaining_uncovered"] == ["r0"]
     assert ledger["hunters"][0]["outside_assignment"] == ["outside"]
     assert final["summary"]["remaining_uncovered_count"] == 1
+
+
+def test_planner_artifacts_use_portable_names_and_exact_utf8_lf_bytes(
+    tmp_path, planner
+):
+    prepare, call = planner
+    ref = prepare(plan_with())
+    nonce = 'run:<>"|?*\\/\n雪'
+    value, _ = call(ref, selection(tmp_path), nonce=nonce)
+    assert value["available"]
+    for kind, checksum in (
+        ("gap-assignment", value["assignment_checksum"]),
+        ("discovery-state", value["state_checksum"]),
+        ("coverage-ledger", value["ledger_checksum"]),
+    ):
+        name = artifact_name(kind, SHA, nonce)
+        assert not set(name) & set('<>:"/\\|?*\r\n')
+        data = (tmp_path / name).read_bytes()
+        assert data.endswith(b"\n") and b"\r" not in data
+        assert hashlib.sha256(data).hexdigest() == checksum
+        assert data.decode("utf-8").encode("utf-8") == data
+    final, _ = call(
+        ref,
+        selection(tmp_path, state_checksum=value["state_checksum"], hunters=[]),
+        phase="finalize",
+        nonce=nonce,
+    )
+    assert final["available"]
+
+
+def test_large_region_can_use_the_fact_reserve_when_it_is_the_only_assignment(
+    tmp_path, planner
+):
+    prepare, call = planner
+    plan = plan_with(1)
+    plan["regions"][0]["reads"][0]["bytes"] = 18500
+    value, _ = call(prepare(plan), selection(tmp_path))
+    assert value["available"] and value["assigned_count"] == 1
+    assert 18000 < value["summary"]["assigned_bytes"] <= 24000
+
+
+@pytest.mark.parametrize("reason", ["scope", "primary_failure"])
+def test_disabled_hunting_keeps_uncovered_regions_in_the_ledger(
+    tmp_path, planner, reason
+):
+    prepare, call = planner
+    value, _ = call(
+        prepare(plan_with()), selection(tmp_path, enabled=False, disabled_reason=reason)
+    )
+    assert value["available"] and value["assigned_count"] == 0
+    assert value["assignment_prompt"] == ""
+    ledger = json.loads(
+        (tmp_path / artifact_name("coverage-ledger", SHA, "test")).read_bytes()
+    )
+    assert ledger["omitted"] == [{"id": f"r{i}", "reason": reason} for i in range(2)]
+    assert ledger["remaining_uncovered"] == ["r0", "r1"]
+
+
+@pytest.mark.parametrize("kind", ["discovery-plan", "context"])
+def test_planner_refuses_linked_input_artifacts(
+    tmp_path, planner, symlink_or_skip, kind
+):
+    prepare, call = planner
+    ref = prepare(plan_with())
+    name = (
+        ref["path"] if kind == "discovery-plan" else f"code-gauntlet-context-{SHA}.md"
+    )
+    path = tmp_path / name
+    original = tmp_path / "original"
+    path.rename(original)
+    path.symlink_to(original)
+    value, _ = call(ref, selection(tmp_path))
+    assert value["available"] is False
+    assert not (tmp_path / artifact_name("discovery-state", SHA, "test")).exists()
+
+
+def test_planner_caps_artifact_reads_before_parsing(tmp_path, planner):
+    from gauntlet.discovery_disk import MAX_FILE_BYTES
+
+    prepare, call = planner
+    ref = prepare(plan_with())
+    path = tmp_path / ref["path"]
+    with path.open("ab") as handle:
+        handle.write(b" " * MAX_FILE_BYTES)
+    value, _ = call(ref, selection(tmp_path))
+    assert value["available"] is False
+
+
+@pytest.mark.parametrize("offset", [0, 100])
+def test_plan_reads_must_stay_inside_the_bound_context(tmp_path, planner, offset):
+    prepare, call = planner
+    plan = plan_with(1)
+    plan["regions"][0]["reads"][0]["offset"] = offset
+    value, _ = call(prepare(plan), selection(tmp_path))
+    assert value["available"] is False
+
+
+def test_plan_read_cost_cannot_omit_the_line_prefix_charge(tmp_path, planner):
+    prepare, call = planner
+    plan = plan_with(1)
+    plan["regions"][0]["reads"][0]["bytes"] = 2
+    value, _ = call(prepare(plan), selection(tmp_path))
+    assert value["available"] is False
+
+
+def test_plan_region_ids_cannot_alias_two_assignments(tmp_path, planner):
+    prepare, call = planner
+    plan = plan_with()
+    plan["regions"][1]["id"] = plan["regions"][0]["id"]
+    value, _ = call(prepare(plan), selection(tmp_path))
+    assert value["available"] is False
+
+
+def test_plan_paths_cannot_escape_the_repository(tmp_path, planner):
+    prepare, call = planner
+    plan = plan_with(1)
+    plan["regions"][0]["file"] = "../outside"
+    value, _ = call(prepare(plan), selection(tmp_path))
+    assert value["available"] is False
+
+
+def test_plan_head_ranges_cannot_run_backwards(tmp_path, planner):
+    prepare, call = planner
+    plan = plan_with(1)
+    plan["regions"][0]["line_end"] = 0
+    value, _ = call(prepare(plan), selection(tmp_path))
+    assert value["available"] is False
+
+
+def test_unavailable_plan_cannot_smuggle_region_reads(tmp_path, planner):
+    prepare, call = planner
+    plan = plan_with()
+    plan["status"] = "unavailable"
+    value, _ = call(prepare(plan), selection(tmp_path))
+    assert value["available"] is False
+
+
+def test_plan_fact_reads_need_the_same_bounds_as_regions(tmp_path, planner):
+    prepare, call = planner
+    plan = plan_with()
+    plan["fact_packets"] = [{"related_files": ["src/0"], "reads": []}]
+    value, _ = call(prepare(plan), selection(tmp_path))
+    assert value["available"] is False
+
+
+def test_request_parts_must_agree_on_selection_mode(tmp_path, planner):
+    prepare, call = planner
+    ref = prepare(plan_with())
+    files = json.loads((tmp_path / ref["path"]).read_bytes())["files"]
+    base = plain_requests(selection(tmp_path), files, "select")[0]
+    value, _ = call(ref, {}, wire_parts=[base, {**base, "mode": "scope"}])
+    assert value["available"] is False
+
+
+def test_finalization_cannot_attribute_citations_to_an_undeclared_hunter(
+    tmp_path, planner
+):
+    prepare, call = planner
+    ref = prepare(plan_with())
+    selected, _ = call(ref, selection(tmp_path))
+    files = json.loads((tmp_path / ref["path"]).read_bytes())["files"]
+    part = plain_requests(
+        selection(tmp_path, state_checksum=selected["state_checksum"], hunters=[]),
+        files,
+        "finalize",
+    )[0]
+    part["citations"] = {"7": "0:1"}
+    final, _ = call(ref, {}, phase="finalize", wire_parts=[part])
+    assert final["available"] is False
+
+
+def test_ledger_artifact_names_can_be_checked_without_accepting_other_files():
+    from gauntlet.discovery_disk import valid_artifact_name
+
+    name = artifact_name("coverage-ledger", SHA, "run:1")
+    assert valid_artifact_name(name, "coverage-ledger")
+    assert not valid_artifact_name("../" + name, "coverage-ledger")
+    assert not valid_artifact_name(
+        artifact_name("discovery-state", SHA, "run:1"), "coverage-ledger"
+    )
+
+
+def test_planner_rejects_citation_rows_without_a_file_index(tmp_path, planner):
+    prepare, call = planner
+    ref = prepare(plan_with())
+    files = json.loads((tmp_path / ref["path"]).read_bytes())["files"]
+    part = plain_requests(selection(tmp_path), files, "select")[0]
+    part["citations"] = {"0": "1"}
+    value, _ = call(ref, {}, wire_parts=[part])
+    assert value["available"] is False
+
+
+def test_request_parts_cannot_repeat_a_risk_priority(tmp_path, planner):
+    prepare, call = planner
+    ref = prepare(plan_with())
+    files = json.loads((tmp_path / ref["path"]).read_bytes())["files"]
+    part = plain_requests(selection(tmp_path), files, "select")[0]
+    part["high"] = "0"
+    value, _ = call(ref, {}, wire_parts=[part, part])
+    assert value["available"] is False
+
+
+@pytest.mark.parametrize(
+    "violation", ["missing_proof", "duplicate_hunter", "unknown_anchor"]
+)
+def test_finalization_requires_a_bound_and_declared_hunter_set(
+    tmp_path, planner, violation
+):
+    prepare, call = planner
+    ref = prepare(plan_with())
+    selected, _ = call(ref, selection(tmp_path))
+    files = json.loads((tmp_path / ref["path"]).read_bytes())["files"]
+    part = plain_requests(
+        selection(tmp_path, state_checksum=selected["state_checksum"], hunters=[]),
+        files,
+        "finalize",
+    )[0]
+    if violation == "missing_proof":
+        part.pop("state_checksum")
+    elif violation == "duplicate_hunter":
+        part["hunters"] = [{"agent": "7", "status": "complete"}] * 2
+    else:
+        part["anchors"] = {"unknown": [["finding", 0, 1]]}
+    value, _ = call(ref, {}, wire_parts=[part], phase="finalize")
+    assert value["available"] is False
+
+
+def test_rewritten_stored_request_parts_cannot_change_the_selection(tmp_path, planner):
+    prepare, call = planner
+    ref = prepare(plan_with(300))
+    refs = [["code-gauntlet:bug-detector", f"src/{i}", 1, 1] for i in range(300)]
+
+    def rewrite_first_part(args, part):
+        if part == 1:
+            (stored,) = tmp_path.glob(
+                f"code-gauntlet-discovery-*-select-*-0-{SHA}.json"
+            )
+            stored.write_bytes(b"{}")
+
+    value, _ = call(ref, selection(tmp_path, refs=refs), mutate=rewrite_first_part)
+    assert value["available"] is False

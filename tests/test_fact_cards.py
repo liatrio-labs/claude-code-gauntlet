@@ -119,3 +119,74 @@ def test_invocation_shapes_share_variable_slots_without_language_keywords(
     callees = [c for c in facts["cards"] if c["kind"] == "callee_candidate"]
     assert len(callees) == 1
     assert callees[0]["text"] == "target(…)"
+
+
+def test_unfinished_and_oversize_parameter_lists_do_not_create_declaration_cards(
+    scan_snapshot,
+):
+    library = (
+        "method target(\n"
+        + "x" * 4097
+        + "\n) {\n}\n"
+        + "fn target(\n"
+        + "  argument,\n" * 11
+        + ") {\n}\n"
+        + "external target(value);\n"
+        + "public target(nested(value)) {\n  return value\n}\n"
+    )
+    facts = scan_snapshot(library)
+    callees = [c for c in facts["cards"] if c["kind"] == "callee_candidate"]
+    assert len(callees) == 1
+    assert callees[0]["line_start"] == 20
+    assert callees[0]["text"] == "target(…)"
+
+
+def test_diff_scan_deadline_discloses_incomplete_call_search(monkeypatch, tmp_path):
+    ticks = iter([0.0])
+    monkeypatch.setattr(fact_cards.time, "monotonic", lambda: next(ticks, 6.0))
+    diff = b"diff --git a/changed b/changed\n--- a/changed\n+++ b/changed\n@@ -1 +1 @@\n-old\n+target(value)\n"
+    facts = fact_cards.build_fact_cards(
+        SourceAdapter(tmp_path, "local", None), annotate_diff(diff), len(diff)
+    )
+    assert facts["scan"]["diff_limited"] and facts["scan"]["deadline_reached"]
+    assert facts["scan_limited"] and not facts["cards"]
+
+
+@pytest.mark.parametrize("stage", ["listing", "reading"])
+def test_scan_deadline_after_io_prevents_further_fact_work(
+    scan_snapshot, monkeypatch, stage
+):
+    clock = [0.0]
+    monkeypatch.setattr(fact_cards.time, "monotonic", lambda: clock[0])
+    method = "unignored_files" if stage == "listing" else "read_snapshot"
+    original = getattr(SourceAdapter, method)
+
+    def expire_after_io(*args, **kwargs):
+        result = original(*args, **kwargs)
+        clock[0] = fact_cards.MAX_SCAN_SECONDS + 1
+        return result
+
+    monkeypatch.setattr(SourceAdapter, method, expire_after_io)
+    facts = scan_snapshot("public target(value) {\n  return value\n}\n")
+    assert facts["scan"]["deadline_reached"] and facts["scan_limited"]
+    assert facts["scan"]["selected_files"] == (0 if stage == "listing" else 2)
+    assert not facts["cards"]
+
+
+def test_changed_declarations_are_not_exported_as_outside_callee_evidence(
+    scan_snapshot,
+):
+    facts = scan_snapshot(
+        "public target(value) {\n  return value\n}\n",
+        changed="public target(value) {",
+    )
+    callees = [c for c in facts["cards"] if c["kind"] == "callee_candidate"]
+    assert [c["file"] for c in callees] == ["library"]
+
+
+def test_oversize_diff_lines_disclose_an_incomplete_call_search(scan_snapshot):
+    facts = scan_snapshot(
+        "public target(value) {\n  return value\n}\n", changed="x" * 4097
+    )
+    assert facts["scan"]["diff_limited"] and facts["scan_limited"]
+    assert not facts["cards"]

@@ -4,7 +4,7 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/liatrio-labs/claude-code-gauntlet/badge)](https://securityscorecards.dev/viewer/?uri=github.com/liatrio-labs/claude-code-gauntlet)
 
-Adversarial code review for Claude Code: seven specialist reviewers investigate bugs, security, tests and cross-file impact, with a budgeted gap hunter for uncited regions. Findings pass verification, skeptical validation and blind challenge before posting.
+Adversarial code review for Claude Code: seven specialist reviewers investigate bugs, security, tests and cross-file impact, with a budgeted gap hunter for regions without citations. Findings pass verification, skeptical validation and blind challenge before posting.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/pipeline-overview-dark.svg">
