@@ -87,7 +87,7 @@ candidate comments before delivery grouping, not a prediction of the grouper's e
 The `all` policy is selected; `bounded` remains a diagnostic and is not applied by the pipeline.
 
 Confusion-table rows are validator answers and columns are independent-reader answers. Worth
-maps present failure, latent, and artifact defect to yes, no practical effect to no, independently of claim truth.
+maps present failure, latent, and artifact defect to yes, comment defect and no practical effect to no, independently of claim truth.
 Reader coverage is partial; `reader_matches` states the joined denominator. Refuted and not-established claims have no worth answer (`not_applicable`). Baseline numeric
 scores are never imputed as typed answers (`no_typed_verdict`). Baseline routes use the stored
 `passes_floor` observations; they do not reconstruct historical full delivery. Adjacent-pass

@@ -64,7 +64,7 @@ for (const [comment, acceptable] of [...invalidComments.map((comment) => [commen
   });
 }
 
-test('legacy verdicts without reader text resume and retain their trace fallback', async () => {
+test('legacy verdicts without reader text resume, and only traced findings record the fallback', async () => {
   const args = validArgs({ measurementTrace: true });
   let payload;
   const out = await runWith(makeCtx(args, { onPersist: (value) => { payload = value; } }), args);
@@ -72,10 +72,12 @@ test('legacy verdicts without reader text resume and retain their trace fallback
   assert.deepEqual(resumed.payload.postReview.map((f) => f.id), ['F1', 'F2']);
   const replay = JSON.parse(out.measurement.replay.text);
   assert.ok(replay.state.phaseOutputs.challenge.findings.every((f) => !Object.hasOwn(f.verdict, 'comment')));
-  const trace = JSON.parse(resumed.out.measurement.text);
-  const fallbacks = trace.snapshots.flatMap((s) => s.decisions).filter((d) => d.reason_code === 'comment_text_fallback');
+  const fallbacksOf = (text) => JSON.parse(text).snapshots.flatMap((s) => s.decisions).filter((d) => d.reason_code === 'comment_text_fallback');
+  const fallbacks = fallbacksOf(out.measurement.text);
   assert.equal(fallbacks.length, 2);
-  assert.ok(fallbacks.every((d) => d.decision === 'kept'));
+  assert.ok(fallbacks.every((d) => d.decision === 'kept' && d.trace_id));
+  // Checkpoints carry no trace ids, and a decision without one fails the bench decoder.
+  assert.deepEqual(fallbacksOf(resumed.out.measurement.text), []);
 });
 
 for (const field of ['title', 'body']) test(`resolved reader ${field} passes the replay injection belt`, () => {

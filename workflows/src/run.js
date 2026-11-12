@@ -146,7 +146,7 @@ export async function deliverFromCheckpoint(c, A, state) {
   if (measurementTrace) recordStage(measurementTrace, 'select', postReview, { cap: limits.deliveryCap,
     cap_hit: omitted.some((group) => group.reason === 'delivery_cap'),
     decisions: [
-      ...deliveryGroups(postReview).filter(({ primary }) => primary.verdict?.claim === 'confirmed' && !confirmedComment(primary))
+      ...deliveryGroups(postReview).filter(({ primary }) => primary.trace_id && primary.verdict?.claim === 'confirmed' && !confirmedComment(primary))
         .map(({ primary }) => traceDecision(primary, 'comment_text_fallback', 'resolved verdict has no valid comment text', [], 'kept')),
       ...omitted.flatMap((group) => group.findings.filter((f) => f.trace_id).map((f) =>
         traceDecision(f, group.reason, 'delivery selection', [], 'not_selected'))),

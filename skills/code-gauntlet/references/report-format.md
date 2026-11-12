@@ -389,8 +389,9 @@ The `code-gauntlet-findings` hidden HTML comment enables incremental review: on 
 
 ## Inline PR Comment Format
 
-Each issue renders the lead only, then confirmed additional sites and an anonymous count of
-independent reviewers when there are at least two. Other descriptions stay in the local report.
+Each issue renders the lead only, then confirmed additional sites. The title and body are the
+resolved reader's confirmed statement, or the discovery text when no valid statement exists.
+Other descriptions stay in the local report.
 
 **You do not compose this body — `scripts/gauntlet/delivery/compose.py::render_comment_body` does.** You supply
 the finding fields (see `references/delivery-guide.md` for the input JSON); the script renders
@@ -426,7 +427,8 @@ ends with it, once — one mark per delivered surface. Never hand-type it.
 `{emoji}` is 🔴 critical / 🟠 high / 🟡 medium / 💡 low, `{SEVERITY}` is the normalized severity uppercased.
 <!-- /generated-from-registry-identity:inline_legend -->
 
-`{body}` is the v2 alias of `description` applied at the persist boundary. The renderer emits
+`{body}` is the resolved reader's statement body; without a valid statement it is the v2 alias
+of `description` applied at the persist boundary. The renderer emits
 no permalink and no confidence footer — those belong to the report markdown, not to inline
 comments.
 Posted fields use the code-owned outbound contract in
