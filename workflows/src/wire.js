@@ -159,3 +159,25 @@ export function pythonArgv(python = 'python3') {
   if (!Object.hasOwn(PYTHON_COMMAND_ARGV, python)) throw new Error('invalid python command');
   return PYTHON_COMMAND_ARGV[python];
 }
+
+// Escaping every opener keeps repository text from forging either trusted or untrusted blocks.
+export function untrustedJson(value, kind) {
+  const body = JSON.stringify(value).replace(/[<>&\u2028\u2029]/g,
+    (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  const id = fnv1a32(body).slice('fnv1a32:0x'.length);
+  return `<untrusted-code-content kind="${kind}" id="${id}">\n${body}\n</untrusted-code-content id="${id}">`;
+}
+
+// Match standard UTF-8 encoding, including replacement of isolated surrogates.
+export function utf8Encode(text) {
+  const bytes = [];
+  for (const char of text) {
+    let code = char.codePointAt(0);
+    if (code >= 0xd800 && code <= 0xdfff) code = 0xfffd;
+    if (code < 0x80) bytes.push(code);
+    else if (code < 0x800) bytes.push(0xc0 | (code >> 6), 0x80 | (code & 63));
+    else if (code < 0x10000) bytes.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 63), 0x80 | (code & 63));
+    else bytes.push(0xf0 | (code >> 18), 0x80 | ((code >> 12) & 63), 0x80 | ((code >> 6) & 63), 0x80 | (code & 63));
+  }
+  return bytes;
+}

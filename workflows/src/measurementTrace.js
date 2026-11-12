@@ -1,6 +1,9 @@
+import { DIMENSIONS } from './registry.js';
+import { boundedCoverageLedger } from './coverageLedger.js';
 import { compressMeasurement } from './measurementCompression.js';
 import { deepClone, RETURN_CHAR_BUDGET } from './wire.js';
 
+export const TRACE_DISCOVERY_DIMENSIONS = [...new Set(DIMENSIONS.map((d) => d.dimension)), 'gap_hunt', 'unknown'];
 export const TRACE_STAGES = ['discover', 'merge', 'verify', 'validate', 'filter', 'admission', 'challenge', 'cite', 'dispose', 'holdback', 'select', 'deliver'];
 // Bench discovery rendering, delivery provenance/replay, admission comparisons and description evaluation
 // determine the kept fields. The generated Python registry shares this list; bench tests guard reader coverage.
@@ -20,7 +23,9 @@ function traceFinding(finding) {
 export function createMeasurementTrace(nonce, previous = null) {
   const trace = { schema_version: 2, run_nonce: nonce,
     versions: previous ? previous.versions.map((v) => ({ ...deepClone(v), finding: traceFinding(v.finding) })) : [],
-    snapshots: [], complete: false, dropped_stages: [] };
+    snapshots: [], complete: false, dropped_stages: [],
+    ...(previous?.coverage_ledger ? { coverage_ledger: deepClone(previous.coverage_ledger) } : {}),
+    ...(previous?.coverage_ledger_artifact ? {coverage_ledger_artifact:deepClone(previous.coverage_ledger_artifact)} : {}) };
   // Historical snapshots reference their original IDs, even when their full findings now share a projection.
   traceHistory.set(trace, new Map(trace.versions.map((v) => [JSON.stringify(v.finding), v.version_id])));
   return trace;
@@ -50,7 +55,7 @@ export function stampDiscovery(trace, finding, spec, dispatch, occurrence) {
   const out = finding;
   out.trace_id = `${trace.run_nonce}:${dispatch}:${occurrence}`;
   out.discovery_agent = spec.agentType.split(':').pop();
-  out.discovery_dimension = spec.dimensions.includes(out.dimension) ? out.dimension : 'unknown';
+  out.discovery_dimension = spec.dispatch === 'uncovered' ? 'gap_hunt' : spec.dimensions.includes(out.dimension) ? out.dimension : 'unknown';
   return out;
 }
 
@@ -95,6 +100,10 @@ export function appendMeasurement(envelope, trace) {
     return { ...envelope, measurement: { status: 'available', encoding: 'json-pool-lzw16-base64-v1', text: compressMeasurement(text) } };
   };
   let result = available(true);
+  if (JSON.stringify(result).length > RETURN_CHAR_BUDGET && candidate.coverage_ledger) {
+    candidate.coverage_ledger = boundedCoverageLedger(candidate.coverage_ledger, 0);
+    result = available(true);
+  }
   // Keep the discovery prefix longest, and never turn a cut stage into an observed empty set.
   for (const snapshot of [...candidate.snapshots].reverse()) {
     if (JSON.stringify(result).length <= RETURN_CHAR_BUDGET) return result;

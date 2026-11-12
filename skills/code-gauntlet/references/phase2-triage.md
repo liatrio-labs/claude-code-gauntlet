@@ -184,7 +184,7 @@ Never use `grep` or `find` from Bash for AI detection.
 
 The workflow computes the dispatched dimensions with `deriveAgentFlags(riskTable, changedLines, scopeAnswer)` in `workflows/src/discover.js`.
 A `light` answer on a light-eligible diff (every changed file low-risk and fewer than 50 changed lines) yields `{ deep: false }` and dispatches only bug-detector and security-reviewer.
-Every other valid run dispatches all seven discovery agents.
+Every other valid run dispatches all seven specialists, followed by a gap hunter when citation-only coverage leaves reportable regions within its read budget. Light scope disables the hunter.
 
 ---
 
@@ -274,7 +274,9 @@ Model dispatch, including user mappings and gateway naming, follows [model-polic
 **Other inputs (optional unless noted):**
 
 - `scopeAnswer` — `"light"` or `"full"`, stamped only when the 2e trivial-scope gate asked (see 2e).
-- `contextLines` / `contextChars` / `contextMaxLineChars` — the shared context file's measured size and maximum line length (including LF) from `write_shared_context.py`'s receipt. **Not provenance — consumed** by the Read plan. Optional (absent ⇒ count-free read-to-end wording); character measurements require `contextLines`; all must be positive integers.
+- `contextLines` / `contextChars` / `contextMaxLineChars` — the shared context file's measured size and maximum line length (including LF) from `write_shared_context.py`'s receipt. **Not provenance — consumed** by the Read plan. Optional (absent ⇒ count-free read-to-end wording); all present measurements must be positive integers. Missing `contextLines` produces one count-free-read gap even if other measurements were copied.
+- `contextReadPlanVersion` / `contextReadChunks` — version `1` and a short list of positive per-chunk line counts from the writer. Offsets follow from cumulative counts, whose sum must equal `contextLines`; per-chunk character counts are not copied. Missing or invalid data, including an empty list for a non-empty file, yields one disclosed fallback. Aggregate-only receipts remain compatible with a gap because they cannot be distinguished from a current receipt with both plan fields lost. Every measured chunk is retained up to the shared 2,000-chunk ceiling; compact variable plans are bounded at 26,400 characters plus the context path.
+- `discoveryPlanRef` — only the preparation writer's filename and SHA-256. The plan remains on disk. A pinned script computes citation-only coverage and chooses the hunter's regions and facts within 24,000 bytes and 750 lines, including assignment reads. Executor inputs use valid JSON parts of at most 1,000 characters; each checked response is at most 2,048 characters. Selection and finalization each use one Sonnet executor call per part, with at most four parts per operation. Finalization runs only after a hunter dispatch. Missing or invalid references leave primary review running with coverage unavailable. The trace contains a bounded summary and a SHA-256 reference to the full coverage ledger artifact. Inline plans are not accepted. Existing `removedTests` and read-plan fields retain their current handoff.
 - `changedFilesPath` — `{output_dir}/code-gauntlet-files-{head_sha_short}.json`, the on-disk companion to `changedFiles`. Optional provenance only — the workflow has no disk access and never opens it.
 - `baseBranch` — the base branch name (verify/blame).
 - `unsupportedReviewConfig` — copy `receipt.unsupported_review_config`; a boolean controlling only the local retired-settings notice.

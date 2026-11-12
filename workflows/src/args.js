@@ -1,5 +1,5 @@
 import { normalizeAbsoluteRoot } from './paths.js';
-import { REQUIRED, DELIVERY_TIERS, SCOPE_ANSWERS, CONTROL_RE } from './registry.js';
+import { REQUIRED, DELIVERY_TIERS, SCOPE_ANSWERS, CONTROL_RE, CONTEXT_RECEIPT_FIELDS } from './registry.js';
 import { LIMIT_DEFAULTS, LIGHT_SCOPE_MAX_CHANGED_LINES } from './registry.js';
 import { PR_IDENTITY_FIELDS, POLICY_PROVIDERS, MODEL_ALIASES } from './registry.js';
 import { KNOB_VOCAB } from './registry.js';
@@ -245,10 +245,28 @@ export function stripNullOptionalsReport(args, descriptors = KNOB_REGISTRY) {
 // Strip nulls before receipt derivation so newly absent fields can be filled and their drops tracked.
 export function normalizeArgsReport(raw, descriptors = KNOB_REGISTRY) {
   const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-  const report = stripNullOptionalsReport(parsed, descriptors);
+  const equal = (a, b) => a === b || (a !== null && b !== null && typeof a === 'object' && typeof b === 'object'
+    && Array.isArray(a) === Array.isArray(b) && Object.keys(a).length === Object.keys(b).length
+    && Object.keys(a).every((key) => Object.hasOwn(b, key) && equal(a[key], b[key])));
+  const receiptFields = isPlainObject(parsed?.contextReceipt)
+    ? CONTEXT_RECEIPT_FIELDS.filter((key) => Object.hasOwn(parsed.contextReceipt, key)) : [];
+  const contextReceiptGaps = receiptFields.filter((key) => Object.hasOwn(parsed, key) && !equal(parsed[key], parsed.contextReceipt[key]))
+    .map((key) => `contextReceipt.${key} conflicts with top-level ${key}; preparation receipt value used`);
+  const withContext = isPlainObject(parsed?.contextReceipt) ? { ...parsed,
+    ...Object.fromEntries(receiptFields.map((key) => [key, parsed.contextReceipt[key]])) } : parsed;
+  const report = stripNullOptionalsReport(withContext, descriptors);
+  if (Object.hasOwn(report.args || {}, 'discoveryPlan') || Object.hasOwn(parsed?.contextReceipt || {}, 'discoveryPlan')) {
+    delete report.args.discoveryPlan;
+    if (isPlainObject(report.args.contextReceipt)) {
+      report.args.contextReceipt = {...report.args.contextReceipt};
+      delete report.args.contextReceipt.discoveryPlan;
+    }
+    contextReceiptGaps.push('inline discoveryPlan is no longer accepted; supply the preparation discoveryPlanRef instead');
+  }
   const { args, derivedPaths } = deriveConfigWaist(report.args, descriptors);
   report.args = args;
   report.derivedPaths = derivedPaths;
+  if (contextReceiptGaps.length) report.contextReceiptGaps = contextReceiptGaps;
   return report;
 }
 
@@ -378,12 +396,6 @@ export function validateArgs(args, descriptors = KNOB_REGISTRY) {
   // The host cannot inspect the context file, so supplied sizes drive its read plan.
   // Bounds prevent an uncatchable allocation failure; missing line counts remain a disclosed degradation.
   validateArgsFields(args, 'context', errors);
-  if (args.contextChars !== undefined && args.contextLines === undefined) {
-    errors.push('contextChars requires contextLines — chars alone cannot size a line-offset read plan');
-  }
-  if (args.contextMaxLineChars !== undefined && args.contextLines === undefined) {
-    errors.push('contextMaxLineChars requires contextLines — line width alone cannot size a line-offset read plan');
-  }
   // Reject unknown tiers before selection can default to all and lose the operator's narrowing intent.
   if (args.delivery !== undefined) {
     if (!isPlainObject(args.delivery)) {

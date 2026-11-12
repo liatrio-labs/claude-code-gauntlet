@@ -736,10 +736,13 @@ def score_run(
                 )
                 if binding["path"] != path.name:
                     raise ValueError("measurement artifact binding mismatch")
-                collection[url] = stages.TraceCollection("available", None)
                 traces[url] = (
                     path,
                     stages.load_trace(path, expected_sha256=binding["sha256"]),
+                )
+                collection[url] = stages.TraceCollection(
+                    "available",
+                    traces[url][1].coverage_ledger_gap or collection[url].reason,
                 )
         except (ValueError, KeyError, TypeError, OSError) as exc:
             collection[url] = stages.TraceCollection("unavailable", str(exc))
@@ -765,6 +768,7 @@ def score_run(
         if info.get("payload_path"):
             sources.append(Path(info["payload_path"]))
         for pattern in (
+            "code-gauntlet-coverage-ledger-*.json",
             "code-gauntlet-measurement-*.json",
             "code-gauntlet-post-review-*.json",
         ):

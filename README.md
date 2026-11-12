@@ -4,11 +4,11 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/liatrio-labs/claude-code-gauntlet/badge)](https://securityscorecards.dev/viewer/?uri=github.com/liatrio-labs/claude-code-gauntlet)
 
-Adversarial code review for Claude Code: each GitHub PR or GitLab MR runs a gauntlet of up to seven specialist agents for bugs, security, tests and cross-file impact, and every finding must survive verification, a skeptical validator, and a blind challenge before it is posted.
+Adversarial code review for Claude Code: seven specialist reviewers investigate bugs, security, tests and cross-file impact, with a budgeted gap hunter for regions without citations. Findings pass verification, skeptical validation and blind challenge before posting.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/pipeline-overview-dark.svg">
-  <img alt="Code Gauntlet pipeline overview: seven parallel reviewers feed merge, verify, validate, filter and blind challenge stages before delivery" src="docs/assets/pipeline-overview-light.svg">
+  <img alt="Code Gauntlet pipeline overview: seven specialist reviewers and an optional gap hunter feed verification and delivery" src="docs/assets/pipeline-overview-light.svg">
 </picture>
 
 ## Quick start
@@ -53,7 +53,7 @@ The v3.0 measurement used 20.9 million tokens across 15 PRs, about 1.4 million p
 
 ## How it reviews
 
-A full review runs seven discovery agents in parallel:
+A full review starts seven specialist reviewers in parallel:
 
 | Agent | Model | Focus |
 | --- | --- | --- |
@@ -64,6 +64,8 @@ A full review runs seven discovery agents in parallel:
 | conventions-and-intent | Sonnet | Project rules, specs, comment accuracy |
 | type-design-analyzer | Sonnet | Type boundaries and invariants |
 | code-simplifier | Sonnet | Simplification opportunities |
+
+After the specialists return, a citation-only coverage ledger identifies uncited changed regions. An eighth reviewer, **gap-hunter** (Sonnet), receives a bounded selection and related fact cards: at most 24,000 read and instruction bytes and 750 lines. Selection favors files with no citations, then risk and smaller packets. The ledger records budget omissions and deletion-only packets without a surviving head anchor. Fully cited changes and light reviews skip this investigator.
 
 The security reviewer runs on Opus, a judgment call that the [routing research](docs/research/artifacts/12-model-routing-for-code-review.md) explains.
 When every changed file is low risk and the change is under 50 lines, the plugin offers a light review with only `bug-detector` and `security-reviewer`.

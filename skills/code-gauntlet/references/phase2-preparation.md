@@ -279,20 +279,22 @@ CODE_GAUNTLET_TRIAGE_{nonce}
 The quoted delimiter passes the text verbatim. Never pipe it through `echo` or unquote the delimiter.
 The nonce in the delimiter keeps any line of the text from ending it.
 Use `configResult.identity.repo_root` for `{repo_root}`.
-Stamp the printed `contextLines`, `contextChars`, `contextMaxLineChars` and `removedTests` into the args waist verbatim, never estimated, carried over or re-derived.
+Stamp the printed context measurements and existing `removedTests` inventory as before, plus the fixed-size `discoveryPlanRef` (filename and SHA-256). The region/fact plan stays on disk; never read, shorten or transcribe it into args. The workflow uses the pinned planner through the executor to consume it.
 An exit 2 wrote no usable context; stop and report its one-line error.
 `scripts/gauntlet/shared_context.py`'s docstring holds the content and measurement rules.
 
 ## Args object shape
 
-```
+```javascript
 {
   argsVersion: 1,
   mode: "interactive" | "headless",
   repoRoot: configResult.identity.repo_root, outputDir, headShaShort, nonce, generatedAt,
   python,
   diffPath, changedFilesPath,
-  removedTests: contextReceipt.removedTests,  // verbatim saved-diff inventory and checksum
+  contextLines, contextChars, contextMaxLineChars, contextReadPlanVersion, contextReadChunks,
+  removedTests,
+  discoveryPlanRef,  // only the writer's filename and SHA-256; no regions or fact packets
   riskTable: [ ...{ path, risk } per changed file, from Phase 2e... ],  // REQUIRED, path set === changedFiles
   scopeAnswer: "light" | "full",  // interactive answer only when the trivial-scope question fires
   policy: { tier, subagentModel, provider, gateway, mappedAliases },
@@ -307,9 +309,9 @@ An exit 2 wrote no usable context; stop and report its one-line error.
   // by-value inputs the in-memory stages need (the workflow has no disk):
   changedFiles, changedLines, baseBranch, unsupportedReviewConfig,
 
-  // the shared context file's measured size, from write_shared_context.py's receipt,
-  // verbatim. Character measurements require contextLines.
-  contextLines, contextChars, contextMaxLineChars,
+  // The plan is a disk artifact bound to the prepared context. Missing measurements
+  // force count-free reads; missing or invalid plan references disable
+  // gap hunting with a coverage-unavailable note while primary review continues.
 
   // how the run's artifacts reach disk. `returnPrimaries: true` is the default and the
   // only path on which no model transcribes them — see phase2-triage.md, "Args Preparation". Omit `persist`

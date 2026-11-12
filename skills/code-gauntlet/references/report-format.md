@@ -77,7 +77,7 @@ The pipeline's declaration lives in `workflows/src/registry.js`. A field this ta
 | `confidence` | number | yes | 0-100 CERTAINTY score |
 | `dimension` | string | yes | Review dimension (bug, security, cross-file, etc.) |
 | `origin` | string | no | Blame classification stamped by `scripts/verify_findings.py`. |
-| `evidence` | string | no | Code snippet or behavior demonstrating the issue. Required and non-empty in the discovery schema. |
+| `evidence` | string | yes | Code snippet or behavior demonstrating the issue. Required and non-empty in the discovery schema. |
 | `anchor` | string | yes | Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters. |
 | `suggested_fix_code` | string | no | Complete replacement for file lines line_start through line_end, including indentation; include line_end. Omit if uncertain or incomplete. |
 | `sites` | array | no | Additional locations of this issue. |
@@ -111,6 +111,8 @@ For convention findings, `rule_source` selects the heading for `claude_md_rule`:
 | `duplicate_of` | object | simplification | no | Source reference to the existing implementation duplicated here. |
 | `precedent` | object | simplification | no | Source reference to an existing repository idiom supporting the change. |
 | `behavior_preserved` | string | simplification | no | Why the simpler equivalent preserves observable behavior. |
+
+The existing blame-based Origin line is the public provenance annotation.
 
 Required is tri-state. A `yes` field is required in the owning agent's dispatch; a `conditional` field is schema-required for its dimension on first-party direct dispatches. Runtime intake enforces both requirements for the owning row on every provider and gateway, including kind-specific evidence requirements. A `no` field is optional unless its admission kind requires it. Omit inapplicable fields; never emit null.
 
@@ -318,12 +320,12 @@ Resolved config:
 |--------|---------|
 | Version | {pipeline_version} (plugin and pipeline) |
 | Provider | provider=firstParty; gateway=false; conditional schema active=true |
-| Per-stage models | change-summarizer=claude-sonnet-5-5, bug-detector=claude-sonnet-5-5, security-reviewer=claude-opus-5-5, cross-file-impact=claude-sonnet-5-5, test-analyzer=claude-sonnet-5-5, conventions-and-intent=claude-sonnet-5-5, type-design-analyzer=claude-sonnet-5-5, code-simplifier=claude-sonnet-5-5, validator=claude-sonnet-5-5, challenger=claude-sonnet-5-5, grouper=claude-sonnet-5-5, executor=claude-sonnet-5-5, artifact-writer=claude-sonnet-5-5 |
+| Per-stage models | change-summarizer=claude-sonnet-5-5, bug-detector=claude-sonnet-5-5, security-reviewer=claude-opus-5-5, cross-file-impact=claude-sonnet-5-5, test-analyzer=claude-sonnet-5-5, conventions-and-intent=claude-sonnet-5-5, type-design-analyzer=claude-sonnet-5-5, code-simplifier=claude-sonnet-5-5, gap-hunter=claude-sonnet-5-5, validator=claude-sonnet-5-5, challenger=claude-sonnet-5-5, grouper=claude-sonnet-5-5, executor=claude-sonnet-5-5, artifact-writer=claude-sonnet-5-5 |
 | Delivery selection | selection policy: tier=all, cap=uncapped |
 | Review scope | Full |
 | Findings pipeline | discovered={stats.discovered}; validate: accepted={stats.validate.accepted}, rejected={stats.validate.rejected}; filter: accepted={stats.filter.accepted}, rejected={stats.filter.rejected}; challenge: accepted={stats.challenge.accepted}, rejected={stats.challenge.rejected}; merge: per-channel: ndjson={stats.merge.ndjson}, text_fallback={stats.merge.text_fallback}; duplicates resolved={stats.merge.duplicates_resolved}; dropped-no-id={stats.merge.dropped_no_id}; truncation warnings={stats.merge.truncation_warnings}; validation warnings={stats.merge.validation_warnings} |
 | Gaps | 0 |
-| Dimensions | dispatched=7; degraded=0 |
+| Dimensions | dispatched=8; degraded=0 |
 
 This section covers the pipeline up to the report stage; persistence, delivery, and duration are reported by the orchestrator at delivery.
 ````

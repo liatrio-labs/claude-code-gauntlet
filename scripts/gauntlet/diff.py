@@ -245,12 +245,12 @@ def _walk_diff_indexed(
 
 
 def walk_diff(diff_text: str, *, strict: bool = False) -> Iterator[DiffEvent]:
-    lines, _ = _split_lines(diff_text)
+    lines, _ = split_diff_lines(diff_text)
     for _, event in _walk_diff_indexed(lines, strict=strict):
         yield event
 
 
-def _split_lines(diff_text: str) -> tuple[list[str], bool]:
+def split_diff_lines(diff_text: str) -> tuple[list[str], bool]:
     # Git treats form feeds, vertical tabs, NEL and Unicode separators as content.
     # splitlines() would drain budgets early and shift the header/body boundary.
     lines = diff_text.split("\n")
@@ -280,7 +280,7 @@ def _build_raw_hunk(
 
 
 def raw_hunks(diff_text: str) -> Iterator[RawHunk]:
-    lines, has_final_newline = _split_lines(diff_text)
+    lines, has_final_newline = split_diff_lines(diff_text)
     current_path: str | None = None
     hunk: HunkEvent | None = None
     hunk_path: str | None = None
@@ -350,7 +350,7 @@ def annotate_diff(
     A failed walk raises before publishing any partial map or hunk authority.
     """
     text = content.decode("utf-8", "surrogateescape")
-    lines, final_lf = _split_lines(text)
+    lines, final_lf = split_diff_lines(text)
     policy = patch_report_policy(text) if policy is None else policy
     rendered = list(lines)
     entries: dict[int, ContextMapEntry] = {}

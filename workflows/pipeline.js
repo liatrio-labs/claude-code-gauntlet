@@ -247,8 +247,29 @@ function pythonArgv(python = 'python3') {
   if (!Object.hasOwn(PYTHON_COMMAND_ARGV, python)) throw new Error('invalid python command');
   return PYTHON_COMMAND_ARGV[python];
 }
+function untrustedJson(value, kind) {
+  const body = JSON.stringify(value).replace(/[<>&\u2028\u2029]/g,
+    (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  const id = fnv1a32(body).slice('fnv1a32:0x'.length);
+  return `<untrusted-code-content kind="${kind}" id="${id}">\n${body}\n</untrusted-code-content id="${id}">`;
+}
+function utf8Encode(text) {
+  const bytes = [];
+  for (const char of text) {
+    let code = char.codePointAt(0);
+    if (code >= 0xd800 && code <= 0xdfff) code = 0xfffd;
+    if (code < 0x80) bytes.push(code);
+    else if (code < 0x800) bytes.push(0xc0 | (code >> 6), 0x80 | (code & 63));
+    else if (code < 0x10000) bytes.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 63), 0x80 | (code & 63));
+    else bytes.push(0xf0 | (code >> 18), 0x80 | ((code >> 12) & 63), 0x80 | ((code >> 6) & 63), 0x80 | (code & 63));
+  }
+  return bytes;
+}
 // --- registry.js ---
 const DEEP = 'deep';
+const READ_PLAN_MAX_CHUNKS = 2000;
+const DISCOVERY_TRANSPORT_LIMITS = deepFreeze({requestChars:1000,receiptChars:2048,maxParts:4});
+const CONTEXT_RECEIPT_FIELDS = deepFreeze(['contextLines', 'contextChars', 'contextMaxLineChars', 'contextReadPlanVersion', 'contextReadChunks', 'removedTests', 'discoveryPlanRef']);
 const AGENT_TYPE_TEST_ANALYZER = 'code-gauntlet:test-analyzer';
 const SHA_FULL_RE = /^[0-9a-f]{40}$/;
 const WEB_ORIGIN_RE = new RegExp(
@@ -330,7 +351,7 @@ const DISPOSITION_RIGHTS = deepFreeze({
   eliminate: { inline: false, body: false, report: 'eliminated', fixTask: false, patch: false, fence: false, sourceLink: false },
 });
 const DISPOSITIONS = deepFreeze(Object.keys(DISPOSITION_RIGHTS));
-const STAGE_COSTS = deepFreeze({ verify: { attempts: 2, singletonRetries: 3 }, validate: { retryBatchDivisor: 5 }, writer: { attempts: 2 } });
+const STAGE_COSTS = deepFreeze({ verify: { attempts: 2, singletonRetries: 3 }, validate: { retryBatchDivisor: 5 }, grouping: { attempts: 1 }, writer: { attempts: 2 }, discoveryPlan: { attempts: 2 * DISCOVERY_TRANSPORT_LIMITS.maxParts } });
 const SOURCE_REFERENCE = {
   type: 'object', $comment: 'source-reference', properties: {
     file: { type: 'string', $comment: 'repo-path' },
@@ -462,6 +483,30 @@ const DIMENSIONS = deepFreeze([
   } : {}) },
   requiredWhenDimension: [...row.requiredWhenDimension, ...(row.admission ? [row.admission.field] : [])],
 })));
+const DISCOVERY_DISPATCHES = deepFreeze(['parallel', 'uncovered']);
+const DISCOVERY_REVIEWER_KEYS = ['agentType', 'dimension', 'dispatch', 'conditionalFlag', 'label', 'objective', 'tools', 'effort', 'color', 'modelOverride'];
+function discoveryReviewer(row) {
+  if (!row || Object.keys(row).length !== DISCOVERY_REVIEWER_KEYS.length
+    || DISCOVERY_REVIEWER_KEYS.some((key) => !Object.hasOwn(row, key))
+    || !/^code-gauntlet:[a-z][a-z0-9-]*$/.test(row.agentType)
+    || !DIMENSIONS.some((d) => d.dimension === row.dimension)
+    || !DISCOVERY_DISPATCHES.includes(row.dispatch)
+    || ![null, DEEP].includes(row.conditionalFlag)
+    || !['label', 'objective'].every((key) => typeof row[key] === 'string' && row[key].trim())
+    || !Array.isArray(row.tools) || !row.tools.length || row.tools.some((t) => !['Read', 'Grep', 'Glob', 'LSP'].includes(t))
+    || !['low', 'medium', 'high'].includes(row.effort)
+    || !['red', 'blue', 'green', 'yellow', 'purple', 'cyan', 'magenta'].includes(row.color)
+    || !(row.modelOverride === null || (typeof row.modelOverride === 'string' && row.modelOverride.trim()))) {
+    throw new Error('Invalid discovery reviewer registry row');
+  }
+  return row;
+}
+const DISCOVERY_REVIEWERS = deepFreeze([
+  { agentType: 'code-gauntlet:gap-hunter', dimension: 'bug', dispatch: 'uncovered', conditionalFlag: DEEP, label: 'Gap Hunter',
+    objective: 'Focus on the supplied uncovered regions and fact cards; report any defect you find, including findings anchored outside the assignment.',
+    tools: ['Read'], effort: 'high', color: 'cyan', modelOverride: 'sonnet' },
+].map(discoveryReviewer));
+const DISCOVERY_AGENT_TYPES = deepFreeze([...new Set([...DIMENSIONS, ...DISCOVERY_REVIEWERS].map(row => row.agentType))]);
 const VERIFY_REFERENCE_FIELDS = deepFreeze(Object.keys(SOURCE_REFERENCE.properties));
 const VERIFY_REFERENCE_DESCRIPTORS = deepFreeze(Object.fromEntries(Object.entries(Object.assign({}, ...DIMENSIONS.map((row) => row.schemaExtra)))
   .filter(([, schema]) => schema.$comment === 'source-reference' || schema.items?.$comment === 'source-reference' || schema.$comment === 'search-paths')
@@ -680,7 +725,7 @@ const FINDING_TEXT_FIELD_NAMES = deepFreeze([...new Set([
   ...DIMENSIONS.flatMap((dimension) => Object.keys(dimension.schemaExtra || {})),
   ...PIPELINE_FINDING_FIELDS,
 ])]);
-const AGENTS = deepFreeze([...new Set(DIMENSIONS.map((d) => d.agentType))]);
+const AGENTS = deepFreeze([...new Set([...DIMENSIONS, ...DISCOVERY_REVIEWERS].map((d) => d.agentType))]);
 const AGENT_LABELS = deepFreeze({
   'code-gauntlet:bug-detector': 'Correctness & Error Handling',
   'code-gauntlet:security-reviewer': 'Security',
@@ -689,6 +734,7 @@ const AGENT_LABELS = deepFreeze({
   'code-gauntlet:conventions-and-intent': 'Conventions & Intent',
   'code-gauntlet:type-design-analyzer': 'Type Design',
   'code-gauntlet:code-simplifier': 'Code Simplification',
+  ...Object.fromEntries(DISCOVERY_REVIEWERS.map((r) => [r.agentType, r.label])),
 });
 const BRAND_MARK = '\u2694\uFE0F';
 const BRAND_NAME = 'Code Gauntlet';
@@ -720,7 +766,7 @@ function resolvePolicy(agentType, opts = {}, dimensions = DIMENSIONS) {
   if (opts.subagentModelEnv) {
     return { model: toModelId(opts.subagentModelEnv, opts.provider, opts.mappedAliases) };
   }
-  const dim = dimensions.find((d) => d.agentType === agentType);
+  const dim = dimensions.find((d) => d.agentType === agentType) || DISCOVERY_REVIEWERS.find((r) => r.agentType === agentType);
   const model = toModelId(dim?.modelOverride || STAGE_DEFAULTS[agentType.split(':').pop()] || 'sonnet', opts.provider, opts.mappedAliases);
   return { model };
 }
@@ -748,6 +794,7 @@ const LIMIT_DEFAULTS = deepFreeze({
 });
 const LIGHT_SCOPE_MAX_CHANGED_LINES = 50;
 const TRUSTED_SCRIPT_BASENAMES = deepFreeze({
+  discovery: 'plan_discovery.py',
   assemble: 'assemble_artifacts.py',
   verify: 'verify_findings.py',
   refutations: 'check_refutations.py',
@@ -788,7 +835,7 @@ function identityCheck(identity, name, fields = PR_IDENTITY_FIELDS) {
 const REPORT_PLACED_FIELDS = deepFreeze([
   'sites',
   'id', 'file', 'line_start', 'line_end', 'title', 'description', 'severity',
-  'confidence', 'dimension', 'origin', 'evidence', 'suggestion',
+  'confidence', 'dimension', 'origin', 'change_origin', 'change_relevance', 'evidence', 'suggestion',
   'claude_md_rule', 'rule_source', 'spec_text', 'cross_file_refs',
 ]);
 // --- location.js ---
@@ -1293,14 +1340,31 @@ function suppressAuditOverlaps(findings, audit) {
 // --- contextPlan.js ---
 const READ_PLAN_MAX_LINES = 750;
 const READ_PLAN_MAX_CHARS = 30000;
+const READ_PLAN_MAX_BYTES = 24000;
+const READ_PLAN_LINE_PREFIX_BYTES = 12;
 const READ_PLAN_MAX_ENUMERATED = 10;
-const READ_PLAN_MAX_CHUNKS = 2000;
+function chunkReadPlan(lines, chunks) {
+  if (chunks === undefined) return { reason: 'contextReadChunks was not stamped' };
+  if (!Array.isArray(chunks)) return { reason: 'contextReadChunks is not a line-count array' };
+  if (chunks.length === 0) return { reason: 'empty contextReadChunks for a non-empty context' };
+  if (chunks.length > READ_PLAN_MAX_CHUNKS) return { reason: 'contextReadChunks exceeds the allocation ceiling' };
+  if (chunks.some((count) => !Number.isSafeInteger(count))) return { reason: 'contextReadChunks contains a non-integer line count' };
+  if (chunks.some((count) => count < 1)) return { reason: 'contextReadChunks contains a non-positive line count' };
+  if (chunks.some((count) => count > READ_PLAN_MAX_LINES)) return { reason: 'contextReadChunks exceeds the per-read line limit' };
+  if (chunks.reduce((sum, count) => sum + count, 0) !== lines) return { reason: 'contextReadChunks does not cover contextLines' };
+  let offset = 1;
+  return { plan: chunks.map((limit) => {
+    const chunk = { offset, limit };
+    offset += limit;
+    return chunk;
+  }) };
+}
 function lineWidthEstimate(maxLineChars, chars, total) {
   if (Number.isSafeInteger(maxLineChars) && maxLineChars > 0) return maxLineChars;
   if (Number.isSafeInteger(chars) && chars > 0) return chars / total;
   return 0;
 }
-function contextReadPlan(lines, chars, maxLineChars) {
+function aggregateReadPlan(lines, chars, maxLineChars) {
   const total = Number.isSafeInteger(lines) && lines > 0 ? lines : 0;
   if (total === 0) return [];
   const spanFor = (width) => Math.max(1, Math.min(READ_PLAN_MAX_LINES,
@@ -1316,11 +1380,37 @@ function contextReadPlan(lines, chars, maxLineChars) {
   }
   return plan;
 }
+function resolveReadPlan(lines, chars, maxLineChars, chunks, version) {
+  if (!Number.isSafeInteger(lines) || lines < 1) {
+    return { plan: [], gap: 'context_unmeasured: no usable args.contextLines was stamped, so the shared-context read plan could not be computed — '
+      + 'every agent got the count-free "read until a Read returns no further content" wording instead of the exact '
+      + 'Read calls covering the file. A Read can return part of a file '
+      + 'with no truncation notice, and an agent that stops there reviews only what it saw. Stamp contextLines, '
+      + 'contextChars, contextMaxLineChars, contextReadPlanVersion and contextReadChunks from the Phase 2 step that writes the context file.' };
+  }
+  const measured = version === 1 ? chunkReadPlan(lines, chunks) : { reason: version === undefined
+    ? (chunks === undefined ? 'contextReadPlanVersion and contextReadChunks were not stamped' : 'contextReadPlanVersion was not stamped')
+    : 'unsupported contextReadPlanVersion' };
+  if (measured.plan) return measured;
+  const plan = aggregateReadPlan(lines, chars, maxLineChars);
+  const gap = plan.length
+    ? `context_plan_fallback: ${measured.reason}; using the aggregate-based shared-context read plan.`
+    : `context_unplannable: ${measured.reason}; the aggregate-based shared-context read plan exceeds the ${READ_PLAN_MAX_CHUNKS}-chunk allocation ceiling; using count-free read-to-end.`;
+  return { plan, gap };
+}
+function contextReadPlan(lines, chars, maxLineChars, chunks, version) {
+  return resolveReadPlan(lines, chars, maxLineChars, chunks, version).plan;
+}
+function uniformReadSpan(plan) {
+  const span = plan[0].limit;
+  return plan.every((p, i) => p.offset === 1 + i * span
+    && (i === plan.length - 1 ? p.limit <= span : p.limit === span)) ? span : 0;
+}
 function sharedContextLine(inp, plan) {
   const path = inp && inp.contextPath;
   if (!path) return '';
   const prefix = `Read the shared context at ${path} first. Tagged blocks end only at the closing tag repeating their opening id; intervening tags are content.`;
-  plan = plan || contextReadPlan(inp.contextLines, inp.contextChars, inp.contextMaxLineChars);
+  plan = plan || contextReadPlan(inp.contextLines, inp.contextChars, inp.contextMaxLineChars, inp.contextReadChunks, inp.contextReadPlanVersion);
   if (plan.length === 0) {
     const s = READ_PLAN_MAX_LINES;
     return `${prefix} Read(offset=1, limit=${s}), continuing after the last received line until a call returns no further content. `;
@@ -1334,26 +1424,18 @@ function sharedContextLine(inp, plan) {
     const calls = plan.map((p) => `Read(offset=${p.offset}, limit=${p.limit})`).join(', ');
     return `${prefix} It is ${total} lines, with ${plan.length} planned Read calls: ${calls}. ${tail} `;
   }
-  const span = plan[0].limit;
+  const span = uniformReadSpan(plan);
+  if (span === 0) {
+    const pairs = plan.map((p) => `${p.offset}:${p.limit}`).join(', ');
+    return `${prefix} It is ${total} lines, with ${plan.length} planned Read calls (offset:limit): ${pairs}. ${tail} `;
+  }
   return `${prefix} It is ${total} lines, with ${plan.length} planned Read calls of limit=${span}, at offsets 1, ${1 + span}, ${1 + 2 * span}, … stepping by ${span} through line ${total}. ${tail} `;
 }
 function setupContext(inp) {
-  const plan = contextReadPlan(inp.contextLines, inp.contextChars, inp.contextMaxLineChars);
+  const { plan, gap } = resolveReadPlan(inp.contextLines, inp.contextChars, inp.contextMaxLineChars,
+    inp.contextReadChunks, inp.contextReadPlanVersion);
   const contextLine = sharedContextLine(inp, plan);
-  const contextSizeGap = inp.contextLines === undefined
-    ? ['context_unmeasured: args.contextLines was not stamped, so the shared-context read plan could not be computed — '
-      + 'every agent got the count-free "read until a Read returns no further content" wording instead of the exact '
-      + 'Read calls covering the file. A Read can return part of a file '
-      + 'with no truncation notice, and an agent that stops there reviews only what it saw. Stamp contextLines '
-      + '(and contextChars and contextMaxLineChars) from the Phase 2 step that writes the context file.']
-    : (plan.length === 0
-      ? ['context_unplannable: args.contextLines was stamped (' + inp.contextLines + ') but exceeds the read-plan chunk '
-        + 'ceiling, so the shared-context read plan could not be built — every agent got the count-free '
-        + '"read until a Read returns no further content" wording instead of the exact Read calls covering the file. '
-        + 'Shrink the shared context '
-        + '(or raise READ_PLAN_MAX_CHUNKS with a matching prompt-size budget) so a plan can be computed.']
-      : []);
-  return { contextLine, contextSizeGap };
+  return { contextLine, contextSizeGap: gap ? [gap] : [] };
 }
 // --- verifySymbols.js ---
 const VERIFY_SKIP_SYMBOLS = new Set(('the this that with from import class def for not and its but are was were '
@@ -1673,7 +1755,8 @@ function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main', inp
   const verifyCalls = verifyTerm(L, nFindings, baseBranch, input);
   const validateCalls = validationCost(L, findings);
   const challengeCalls = Math.min(findings, effectiveChallengeCap(L, findings));
-  return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + STAGE_COSTS.writer.attempts;
+  const groupingCalls = findings > 1 ? STAGE_COSTS.grouping.attempts : 0;
+  return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + groupingCalls + STAGE_COSTS.writer.attempts + STAGE_COSTS.discoveryPlan.attempts;
 }
 function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', input = {}) {
   const L = { ...(limits || {}) };
@@ -1892,6 +1975,60 @@ function validateConfigEcho(args, errors, table = KNOB_REGISTRY) {
     }
   }
 }
+// --- coverageLedger.js ---
+const MAX_CITATION_CHARS = READ_PLAN_MAX_BYTES;
+const EVIDENCE_REF = /(?:^|[^\w./@-])([\w./@-]+):L?(\d+)(?:-L?(\d+))?/g;
+function sourceRefs(value, output = []) {
+  if (!value || typeof value !== 'object') return output;
+  const start = value.line_start ?? value.line;
+  if (typeof value.file === 'string' && Number.isSafeInteger(start) && start > 0) {
+    const end = value.line_end ?? start;
+    if (Number.isSafeInteger(end) && end >= start) output.push({ file: value.file, start, end });
+  }
+  for (const [key, child] of Object.entries(value)) {
+    if (key === 'cross_file_refs' && Array.isArray(child)) {
+      for (const ref of child) {
+        const match = typeof ref === 'string' && /^(.*?):(?:L)?(\d+)(?:-(?:L)?(\d+))?$/.exec(ref.slice(0, MAX_CITATION_CHARS));
+        if (match) output.push({ file: match[1], start: Number(match[2]), end: Number(match[3] || match[2]) });
+      }
+    } else if (key === 'evidence' && typeof child === 'string') {
+      for (const match of child.slice(0, MAX_CITATION_CHARS).matchAll(EVIDENCE_REF)) {
+        output.push({ file: match[1], start: Number(match[2]), end: Number(match[3] || match[2]) });
+      }
+    } else if (child && typeof child === 'object') sourceRefs(child, output);
+  }
+  return output;
+}
+function coverageReferences(specs, results, repoRoot) {
+  return specs.flatMap((spec, i) => Array.isArray(results[i]?.findings)
+    ? sourceRefs([results[i].findings, results[i].removed_test_audit]).flatMap((ref) => {
+      const path = repoRelativeFindingPath(repoRoot || '.', ref.file);
+      return path.file ? [[spec.agentType, path.file, ref.start, ref.end]] : [];
+    }) : []);
+}
+function coverageAnchors(findings, repoRoot) {
+  const seen=new Set();
+  return findings.flatMap((finding) => {
+    const path = repoRelativeFindingPath(repoRoot || '.', finding?.file);
+    if(!path.file || !Number.isSafeInteger(finding.line_start) || finding.line_start<1 || typeof finding.id!=='string' || !finding.id.trim() || seen.has(finding.id))return [];
+    seen.add(finding.id);
+    return [[finding.id,path.file,finding.line_start]];
+  });
+}
+const COVERAGE_LEDGER_CHAR_BUDGET = 128000;
+function boundedCoverageLedger(ledger, budget = COVERAGE_LEDGER_CHAR_BUDGET) {
+  if (JSON.stringify(ledger).length <= budget) return ledger;
+  const summary = { version: 2, status: 'trimmed', region_count: ledger.region_count ?? ledger.regions.length,
+    uncovered_count: ledger.uncovered_count ?? ledger.uncovered.length,
+    ...((ledger.remaining_uncovered_count !== undefined || Array.isArray(ledger.remaining_uncovered))
+      ? {remaining_uncovered_count:ledger.remaining_uncovered_count ?? ledger.remaining_uncovered.length} : {}),
+    omitted_count: ledger.omitted_count ?? ledger.omitted.length, hunter_count: ledger.hunter_count ?? ledger.hunters.length,
+    hunters: [...ledger.hunters], omitted: [...ledger.omitted], budget_bytes: ledger.budget_bytes,
+    assigned_bytes: ledger.assigned_bytes, omitted_fact_packets: ledger.omitted_fact_packets };
+  while (JSON.stringify(summary).length > budget && summary.omitted.length) summary.omitted.length = Math.floor(summary.omitted.length / 2);
+  while (JSON.stringify(summary).length > budget && summary.hunters.length) summary.hunters.length = Math.floor(summary.hunters.length / 2);
+  return summary;
+}
 // --- measurementCompression.js ---
 const BASE64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 function compressMeasurement(text) {
@@ -1933,6 +2070,7 @@ function compressMeasurement(text) {
   return encoded.join('');
 }
 // --- measurementTrace.js ---
+const TRACE_DISCOVERY_DIMENSIONS = [...new Set(DIMENSIONS.map((d) => d.dimension)), 'gap_hunt', 'unknown'];
 const TRACE_STAGES = ['discover', 'merge', 'verify', 'validate', 'filter', 'admission', 'challenge', 'cite', 'dispose', 'holdback', 'select', 'deliver'];
 const TRACE_FINDING_FIELDS = ['trace_id', 'discovery_agent', 'discovery_dimension', 'id', 'file',
   'line_start', 'line_end', 'line', 'end_line', 'claimed_line_start', 'claimed_line_end', 'anchor', 'location_status',
@@ -1950,7 +2088,9 @@ function traceFinding(finding) {
 function createMeasurementTrace(nonce, previous = null) {
   const trace = { schema_version: 2, run_nonce: nonce,
     versions: previous ? previous.versions.map((v) => ({ ...deepClone(v), finding: traceFinding(v.finding) })) : [],
-    snapshots: [], complete: false, dropped_stages: [] };
+    snapshots: [], complete: false, dropped_stages: [],
+    ...(previous?.coverage_ledger ? { coverage_ledger: deepClone(previous.coverage_ledger) } : {}),
+    ...(previous?.coverage_ledger_artifact ? {coverage_ledger_artifact:deepClone(previous.coverage_ledger_artifact)} : {}) };
   traceHistory.set(trace, new Map(trace.versions.map((v) => [JSON.stringify(v.finding), v.version_id])));
   return trace;
 }
@@ -1978,7 +2118,7 @@ function stampDiscovery(trace, finding, spec, dispatch, occurrence) {
   const out = finding;
   out.trace_id = `${trace.run_nonce}:${dispatch}:${occurrence}`;
   out.discovery_agent = spec.agentType.split(':').pop();
-  out.discovery_dimension = spec.dimensions.includes(out.dimension) ? out.dimension : 'unknown';
+  out.discovery_dimension = spec.dispatch === 'uncovered' ? 'gap_hunt' : spec.dimensions.includes(out.dimension) ? out.dimension : 'unknown';
   return out;
 }
 function traceVersion(trace, finding) {
@@ -2021,6 +2161,10 @@ function appendMeasurement(envelope, trace) {
     return { ...envelope, measurement: { status: 'available', encoding: 'json-pool-lzw16-base64-v1', text: compressMeasurement(text) } };
   };
   let result = available(true);
+  if (JSON.stringify(result).length > RETURN_CHAR_BUDGET && candidate.coverage_ledger) {
+    candidate.coverage_ledger = boundedCoverageLedger(candidate.coverage_ledger, 0);
+    result = available(true);
+  }
   for (const snapshot of [...candidate.snapshots].reverse()) {
     if (JSON.stringify(result).length <= RETURN_CHAR_BUDGET) return result;
     if (candidate.dropped_stages.includes(snapshot.stage)) continue;
@@ -2051,6 +2195,134 @@ function stripTraceFields(value) {
   if (!value || typeof value !== 'object') return;
   for (const key of ['trace_id', 'discovery_agent', 'discovery_dimension']) delete value[key];
   for (const child of Object.values(value)) stripTraceFields(child);
+}
+// --- discoveryDisk.js ---
+const DISCOVERY_REQUEST_CHARS = DISCOVERY_TRANSPORT_LIMITS.requestChars;
+const DISCOVERY_RECEIPT_CHARS = DISCOVERY_TRANSPORT_LIMITS.receiptChars;
+const HASH = /^[0-9a-f]{64}$/;
+const discoveryArtifactName = (kind, sha, nonce = '') => `code-gauntlet-${kind}${nonce ? `-${fnv1a32(nonce).slice(-8)}` : ''}-${sha}.${kind === 'gap-assignment' ? 'md' : 'json'}`;
+const unavailableCoverage = () => ({version:2,status:'unavailable',regions:[],uncovered:[],remaining_uncovered:[],omitted:[],hunters:[],budget_bytes:READ_PLAN_MAX_BYTES,assigned_bytes:0,omitted_fact_packets:0});
+const integer = {type:'integer'};
+const string = {type:'string'};
+const callPlanner = defineAgentCall('discover:plan', () => ({type:'object',properties:{
+  status:string, nonce_checksum:string, part:integer,parts:integer,input_checksum:string,request_checksum:string,receipt_checksum:string,reason:string,
+  result:{type:'object',properties:{stored:{type:'boolean'},available:{type:'boolean'},reason:string,
+    ledger_checksum:string,state_checksum:string,assigned_count:integer,assignment_checksum:{type:['string','null']},assignment_lines:integer,assignment_prompt:string,
+    summary:{type:'object',properties:{version:integer,status:string,region_count:integer,uncovered_count:integer,remaining_uncovered_count:integer,omitted_count:integer,hunter_count:integer,
+      hunters:{type:'array',items:{type:'object',properties:{}}},omitted:{type:'array',items:{type:'object',properties:{}}},budget_bytes:integer,assigned_bytes:integer,omitted_fact_packets:integer},additionalProperties:false},
+  },additionalProperties:false},
+},required:['status'],additionalProperties:false}));
+const spanText = ([a,b]) => a === b ? String(a) : `${a}-${b}`;
+function mergedSpans(spans) {
+  const out=[];
+  for(const [a,b] of spans.sort((x,y)=>x[0]-y[0] || x[1]-y[1])) {
+    if(!Number.isSafeInteger(a) || !Number.isSafeInteger(b) || a<1 || b<a) continue;
+    const last=out.at(-1);
+    if(last && a<=last[1]+1)last[1]=Math.max(last[1],b);else out.push([a,b]);
+  }
+  return out;
+}
+function discoveryRequests(input,phase,request) {
+  const files=[...new Set(input.changedFiles || [])].sort();
+  const indexes=new Map(files.map((f,i)=>[f,i]));
+  const reviewers=new Map(DISCOVERY_AGENT_TYPES.map((agent,i)=>[agent,String(i)]));
+  const base={files_checksum:fnv1a32(JSON.stringify({files,reviewers:DISCOVERY_AGENT_TYPES})),...(phase==='select'
+    ? {mode:request.enabled ? 'full' : request.disabled_reason}
+    : {state_checksum:request.state_checksum,hunters:request.hunters.map(h=>({agent:reviewers.get(h.agent),status:h.status}))})};
+  const records=[];
+  if(phase==='select')for(const risk of ['high','low']) {
+    const wanted=[...new Set((request.risks || []).filter(r=>r.risk===risk && indexes.has(r.path)).map(r=>indexes.get(r.path)))].sort((a,b)=>a-b);
+    for(const i of wanted)records.push({kind:risk,index:i});
+  }
+  const references=phase==='select' ? request.refs : request.hunters.flatMap(h=>h.refs);
+  const grouped=new Map();
+  for(const [agent,file,a,b] of references) {
+    if(!indexes.has(file))continue;
+    const name=reviewers.get(agent);if(name===undefined)return null;
+    const key=`${name}/${indexes.get(file)}`;
+    if(!grouped.has(key))grouped.set(key,{agent:name,index:indexes.get(file),spans:[]});
+    grouped.get(key).spans.push([a,b]);
+  }
+  for(const row of [...grouped.values()].sort((a,b)=>Number(a.agent)-Number(b.agent)||a.index-b.index))
+    for(const span of mergedSpans(row.spans))records.push({kind:'citation',agent:row.agent,index:row.index,text:spanText(span)});
+  if(phase==='finalize')for(const h of request.hunters) {
+    const anchors=h.anchors.map(([id,file,line])=>[String(id),indexes.get(file) ?? -1,line])
+      .sort((a,b)=>a[1]-b[1] || a[2]-b[2] || (a[0]<b[0]?-1:a[0]>b[0]?1:0));
+    for(const anchor of anchors)records.push({kind:'anchor',agent:reviewers.get(h.agent),anchor});
+  }
+  const parts=[];
+  let value={...base};
+  const append=(target,r)=>{
+    if(r.kind==='citation') {
+      target.citations ||= {};
+      const rows=target.citations[r.agent] || '';
+      target.citations[r.agent]=rows && rows.split(';').at(-1).split(':')[0]===String(r.index)
+        ? `${rows},${r.text}` : `${rows}${rows ? ';' : ''}${r.index}:${r.text}`;
+    } else if(r.kind==='anchor') {
+      target.anchors ||= {};
+      (target.anchors[r.agent] ||= []).push(r.anchor);
+    } else {
+      const spans=(target[r.kind] || '').split(',').filter(Boolean);
+      const last=spans.at(-1), end=last ? Number(last.split('-').at(-1)) : -2;
+      if(r.index===end+1)spans[spans.length-1]=`${last.split('-')[0]}-${r.index}`;else spans.push(String(r.index));
+      target[r.kind]=spans.join(',');
+    }
+  };
+  for(const record of records) {
+    const next=JSON.parse(JSON.stringify(value));append(next,record);
+    if(JSON.stringify(next).length<=DISCOVERY_REQUEST_CHARS)value=next;
+    else {
+      parts.push(value);value={...base};append(value,record);
+      if(parts.length>=DISCOVERY_TRANSPORT_LIMITS.maxParts || JSON.stringify(value).length>DISCOVERY_REQUEST_CHARS)return null;
+    }
+  }
+  parts.push(value);
+  return parts.every(p=>JSON.stringify(p).length<=DISCOVERY_REQUEST_CHARS) ? parts : null;
+}
+function plannerReceiptChecksum(phase,nonce,receipt) {
+  const result=JSON.stringify(receipt.result,(_key,value)=>value && typeof value==='object' && !Array.isArray(value)
+    ? Object.fromEntries(Object.entries(value).sort(([a],[b])=>a<b?-1:a>b?1:0)) : value);
+  return fnv1a32(`${phase}|${receipt.part}|${receipt.parts}|${fnv1a32(nonce)}|${receipt.input_checksum}|${receipt.request_checksum}|${result}`);
+}
+async function planOnDisk(ctx, input, phase, request) {
+  const ref = input.discoveryPlanRef;
+  const expected = discoveryArtifactName('discovery-plan', input.headShaShort);
+  if (!ref || typeof ref !== 'object' || ref.path !== expected || !HASH.test(ref.sha256 || '')
+    || !input.outputDir || !input.pluginRoot || !input.nonce || !input.contextPath) return null;
+  const requests=discoveryRequests(input,phase,request);
+  if(!requests)return null;
+  const inputChecksum=fnv1a32(JSON.stringify(requests)),parts=requests.length;
+  let result=null;
+  for(let part=0;part<parts;part++) {
+    const plain=JSON.stringify(requests[part]);
+    const command = [...pythonArgv(input.python),trustedScriptPath(input.pluginRoot,TRUSTED_SCRIPT_BASENAMES.discovery),
+      '--output-dir',input.outputDir,'--sha',input.headShaShort,'--nonce',input.nonce,'--phase',phase,
+      '--plan-checksum',ref.sha256,'--input-checksum',inputChecksum,'--part',String(part),'--parts',String(parts),'--request',plain].map(shellWord).join(' ');
+    let env;
+    try {
+      env = await callPlanner(ctx,`Run exactly once and return the complete JSON stdout unchanged:\n${command}`, {
+        label:`discovery-plan-${phase}-${part}`,agentType:'code-gauntlet:executor',model:modelFor('code-gauntlet:executor',input.policy || {}),
+      });
+    } catch { return null; }
+    if (!env || JSON.stringify(env).length > DISCOVERY_RECEIPT_CHARS || env.status !== 'ok'
+      || env.nonce_checksum !== fnv1a32(input.nonce) || env.part !== part || env.parts !== parts
+      || env.input_checksum !== inputChecksum || env.request_checksum !== fnv1a32(plain)
+      || !env.result || env.receipt_checksum !== plannerReceiptChecksum(phase,input.nonce,env)) return null;
+    result=env.result;
+    if(part<parts-1 && result.stored!==true)return null;
+  }
+  if (!result?.available) return null;
+  const summary = result.summary;
+  if (!HASH.test(result.ledger_checksum || '') || !HASH.test(result.state_checksum || '')
+    || !summary || summary.version !== 2 || summary.status !== 'trimmed'
+    || !['region_count','uncovered_count','remaining_uncovered_count','omitted_count','hunter_count','assigned_bytes','omitted_fact_packets'].every((key) => Number.isSafeInteger(summary[key]) && summary[key] >= 0)
+    || summary.budget_bytes !== READ_PLAN_MAX_BYTES || summary.assigned_bytes > READ_PLAN_MAX_BYTES
+    || !Array.isArray(summary.hunters) || summary.hunters.length || !Array.isArray(summary.omitted) || summary.omitted.length
+    || !Number.isSafeInteger(result.assigned_count) || result.assigned_count < 0
+    || !Number.isSafeInteger(result.assignment_lines) || result.assignment_lines < 0 || result.assignment_lines > READ_PLAN_MAX_LINES) return null;
+  if (phase === 'select' && result.assigned_count > 0 && (!HASH.test(result.assignment_checksum || '')
+    || typeof result.assignment_prompt !== 'string' || result.assignment_prompt.length > 2048)) return null;
+  return {...result,artifact:{path:discoveryArtifactName('coverage-ledger',input.headShaShort,input.nonce),sha256:result.ledger_checksum}};
 }
 // --- mergeFindings.js ---
 const KNOWN_DIMENSIONS = new Set(DIMENSIONS.map((d) => d.dimension));
@@ -2344,12 +2616,12 @@ function summaryCountLine(inp) {
 function summarizePrompt(inp, files) {
   const ctxLine = inp.contextLine || '';
   const countLine = summaryCountLine(inp);
-  return `${ctxLine}Changed files: ${files.join(', ')}.${countLine}`;
+  return `${ctxLine}${countLine}\n${untrustedJson({ changed_files: files }, 'changed-files')}`;
 }
 function summarizeMergePrompt(inp, partials) {
   const joined = partials.map((p) => p.summary || '').filter(Boolean).join('\n---\n');
   const countLine = summaryCountLine(inp);
-  return `Partial summaries:${countLine}\n${joined}`;
+  return `Merge the supplied partial summaries.${countLine}\n${untrustedJson({ summaries: joined }, 'partial-summaries')}`;
 }
 function intersectRequiredExtra(rows) {
   if (!rows || rows.length === 0) return [];
@@ -2360,7 +2632,7 @@ function intersectRequiredExtra(rows) {
   }
   return [...acc].sort();
 }
-function agentSpecs(dims = DIMENSIONS) {
+function agentSpecs(dims = DIMENSIONS, reviewers = dims === DIMENSIONS ? DISCOVERY_REVIEWERS : []) {
   const byAgent = new Map();
   for (const d of dims) {
     if (!byAgent.has(d.agentType)) byAgent.set(d.agentType, { agentType: d.agentType, dimensions: [], schemaExtra: {}, conditionalFlags: [], promptExtra: null, rows: [] });
@@ -2372,7 +2644,7 @@ function agentSpecs(dims = DIMENSIONS) {
     if (d.promptExtra) spec.promptExtra = d.promptExtra;
   }
   const order = [...new Set(dims.map((d) => d.agentType))];
-  return order.map((a) => {
+  const primary = order.map((a) => {
     const spec = byAgent.get(a);
     spec.requiredExtra = intersectRequiredExtra(spec.rows);
     spec.conditionalRequired = spec.rows
@@ -2383,8 +2655,15 @@ function agentSpecs(dims = DIMENSIONS) {
       .filter(([, kind]) => kind.required.length || kind.anyOf?.length)
       .map(([kind, rule]) => ({ dimension: row.dimension, field: row.admission.field, kind, ...rule })) : []);
     delete spec.rows;
+    spec.dispatch = 'parallel';
     return spec;
   });
+  return [...primary, ...reviewers.map((raw) => {
+    const row = discoveryReviewer(raw);
+    const lane = agentSpecs(dims.filter((d) => d.dimension === row.dimension), [])[0];
+    if (!lane) throw new Error(`Unknown discovery lane: ${row.dimension}`);
+    return { ...deepClone(lane), ...row, dimensions: [row.dimension], conditionalFlags: [row.conditionalFlag] };
+  })];
 }
 function agentActive(spec, agentFlags) {
   const flags = agentFlags || {};
@@ -2403,7 +2682,7 @@ function allActiveDimensionsDegraded(dispatched, degraded) {
   if (activeDims.length === 0) return degradedSet.size > 0;
   return activeDims.every((d) => degradedSet.has(d));
 }
-function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired) {
+function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired, schemaActive) {
   const props = {};
   for (const [k, t] of Object.entries({ ...DISCOVERY_FINDING_PROP_TYPES, ...(schemaExtra || {}) })) {
     props[k] = typeof t === 'string' ? { type: t } : deepClone(t);
@@ -2411,18 +2690,19 @@ function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired) {
   props.anchor.minLength = 1;
   const required = [...FINDING_REQUIRED, 'anchor', 'evidence', ...(requiredExtra || [])];
   const itemSchema = { type: 'object', properties: props, required, additionalProperties: false };
-  if (conditionalRequired && conditionalRequired.length) {
-    itemSchema.allOf = conditionalRequired.map(({ dimension, required: dimRequired }) => ({
+  if (schemaActive && conditionalRequired && conditionalRequired.length) {
+    itemSchema.allOf = [];
+    itemSchema.allOf.push(...conditionalRequired.map(({ dimension, required: dimRequired }) => ({
       if: { properties: { dimension: { const: dimension } }, required: ['dimension'] },
       then: { required: [...dimRequired] },
-    }));
+    })));
   }
   return itemSchema;
 }
 function findingSchema(spec, policy) {
   const conditionalRequired = conditionalSchemaActive(policy) ? (spec.conditionalRequired || []) : [];
   const resultFields = DISPATCH_RESULTS[spec.agentType] || {};
-  const item = findingItemSchema(spec.schemaExtra, spec.requiredExtra, conditionalRequired);
+  const item = findingItemSchema(spec.schemaExtra, spec.requiredExtra, conditionalRequired, conditionalSchemaActive(policy));
   if (conditionalSchemaActive(policy) && spec.admissionRequired?.length) {
     item.allOf = [...(item.allOf || []), ...spec.admissionRequired.map((rule) => ({
       if: { properties: { dimension: { const: rule.dimension }, [rule.field]: { const: rule.kind } }, required: ['dimension', rule.field] },
@@ -2464,13 +2744,26 @@ function dropSuggestedFixCode(f) {
   delete f.suggested_fix_code;
   return true;
 }
+function discoveryCandidate(raw, spec, occurrence) {
+  const candidate = deepClone(raw);
+  if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+    const name = spec.agentType.split(':').pop();
+    if (candidate.id === undefined) candidate.id = `${name}-${occurrence + 1}`;
+    if (spec.dimensions.length === 1 && candidate.dimension === undefined) candidate.dimension = spec.dimensions[0];
+    for (const key of ['removed_test', 'location_status', 'claimed_line_start', 'claimed_line_end', 'line', 'end_line', 'reference_diagnostics', 'change_origin', 'change_relevance']) delete candidate[key];
+    candidate.agent = name;
+  }
+  return candidate;
+}
 async function discover(ctx, input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
   const agentFlags = inp.agentFlags || {};
   const limits = inp.limits || {};
   const policy = inp.policy || {};
   const discoveryCap = limits.discoveryCap;
-  const specs = agentSpecs().filter((spec) => agentActive(spec, agentFlags));
+  const hasPlan = inp.discoveryPlanRef !== undefined || inp.discoveryPlan !== undefined;
+  const activeSpecs = agentSpecs().filter((spec) => agentActive(spec, agentFlags));
+  const specs = activeSpecs.filter((spec) => spec.dispatch === 'parallel');
   const inventory = inp.removedTests || { status: 'unavailable', items: [], omitted: 0, reason: 'inventory not supplied' };
   const auditDispatched = specs.some((spec) => spec.agentType === AGENT_TYPE_TEST_ANALYZER);
   let removedTestAudit = inventory.status === 'unavailable'
@@ -2488,7 +2781,32 @@ async function discover(ctx, input) {
     }, spec, policy);
   });
   const results = await ctx.parallel(thunks);
+  const hunters = activeSpecs.filter((spec) => spec.dispatch === 'uncovered');
+  const primaryUsable = results.some((res, i) => Array.isArray(res?.findings) && (res.findings.length === 0
+    || res.findings.some((raw, n) => {
+      const candidate = discoveryCandidate(raw, specs[i], n);
+      return validateFindings([candidate]).valid.length > 0;
+    })));
+  const coverageExpected = hasPlan || hunters.length > 0;
+  const planRequest = {refs:coverageReferences(specs,results,inp.repoRoot),
+    risks:inp.riskTable || [],enabled:hunters.length > 0 && primaryUsable,disabled_reason:primaryUsable ? 'scope' : 'primary_failure'};
+  let planned = hasPlan ? await planOnDisk(ctx,inp,'select',planRequest) : null;
+  let ledger = planned?.summary || unavailableCoverage();
+  if (planned?.assigned_count && inp.contextPath) {
+    const hunterResults = await ctx.parallel(hunters.map((spec) => () => callDiscovery(ctx,
+      planned.assignment_prompt, {
+        label:spec.agentType,agentType:spec.agentType,model:modelFor(spec.agentType,policy),
+      },spec,policy)));
+    hunters.forEach((spec, i) => {
+      specs.push(spec);
+      results.push(hunterResults[i]);
+    });
+  }
+  const finalResults = results.map((result, i) => specs[i].dispatch === 'uncovered' ? { findings: [] } : result);
+  const ledgerGaps = [];
+  if (coverageExpected && !planned) ledgerGaps.push('discovery coverage unavailable: invalid or unavailable region plan');
   const gaps = [];
+  const hunterGaps = [];
   const findings = [];
   const intake = [];
   const rejected = [];
@@ -2498,6 +2816,7 @@ async function discover(ctx, input) {
   const schemaActive = conditionalSchemaActive(policy);
   results.forEach((res, i) => {
     const spec = specs[i];
+    const channelGaps = spec.dispatch === 'uncovered' ? hunterGaps : gaps;
     let auditLosses = [];
     if (spec.agentType === AGENT_TYPE_TEST_ANALYZER && inventory.status === 'available' && res) {
       const checked = checkRemovedTestAudit(inventory, res.removed_test_audit, inp.repoRoot);
@@ -2511,41 +2830,54 @@ async function discover(ctx, input) {
       const conditionalNote = schemaActive && (spec.conditionalRequired || []).length
         ? ' (dispatch carried the conditional per-dimension schema)'
         : '';
-      gaps.push(`${spec.agentType}: agent returned null (dispatch failed) — dimensions ${spec.dimensions.join('/')} not covered${conditionalNote}`);
-      degradedDims.push(...spec.dimensions);
+      channelGaps.push(spec.dispatch === 'uncovered' ? `${spec.agentType}: assigned gap investigation failed`
+        : `${spec.agentType}: agent returned null (dispatch failed) — dimensions ${spec.dimensions.join('/')} not covered${conditionalNote}`);
+      if (spec.dispatch === 'parallel') degradedDims.push(...spec.dimensions);
       return;
     }
     const list = Array.isArray(res.findings) ? res.findings : null;
     if (list === null) {
-      gaps.push(`${spec.agentType}: malformed result (no findings array)`);
-      degradedDims.push(...spec.dimensions);
+      channelGaps.push(spec.dispatch === 'uncovered' ? `${spec.agentType}: assigned gap investigation failed (malformed result)` : `${spec.agentType}: malformed result (no findings array)`);
+      if (spec.dispatch === 'parallel') degradedDims.push(...spec.dimensions);
       return;
     }
-    const agentName = spec.agentType.split(':').pop();
     for (const [occurrence, raw] of list.entries()) {
-      const candidate = deepClone(raw);
-      if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
-        if (candidate.id === undefined) candidate.id = `${agentName}-${occurrence + 1}`;
-        if (spec.dimensions.length === 1 && candidate.dimension === undefined) candidate.dimension = spec.dimensions[0];
-      }
+      const candidate = discoveryCandidate(raw, spec, occurrence);
       const f = trace ? stampDiscovery(trace, candidate, spec, i, occurrence) : candidate;
       if (trace) intake.push(f);
-      if (f && typeof f === 'object' && !Array.isArray(f)) {
-        for (const key of ['removed_test', 'location_status', 'claimed_line_start', 'claimed_line_end', 'line', 'end_line', 'reference_diagnostics']) delete f[key];
-        f.agent = agentName;
-      }
       const checked = validateFindings([f], decisions);
-      if (checked.rejected.length) gaps.push(...checked.warnings.map((warning) => `${spec.agentType}: ${warning}`));
+      if (checked.rejected.length) channelGaps.push(...checked.warnings.map((warning) => `${spec.agentType}: ${warning}`));
       rejected.push(...checked.rejected);
+      if (!checked.valid.length) continue;
+      if (spec.dispatch === 'uncovered') {
+        finalResults[i].findings.push(f);
+      }
       findings.push(...checked.valid);
     }
     const nearCap = discoveryCap != null && (res.total_seen >= discoveryCap || list.length >= discoveryCap);
     if (res.complete === false || nearCap) {
-      gaps.push(`${spec.agentType}: possibly incomplete (complete=${res.complete === false ? 'false' : 'true'}, total_seen=${res.total_seen}) — dimensions ${spec.dimensions.join('/')}`);
+      channelGaps.push(spec.dispatch === 'uncovered' ? `${spec.agentType}: assigned gap investigation incomplete`
+        : `${spec.agentType}: possibly incomplete (complete=${res.complete === false ? 'false' : 'true'}, total_seen=${res.total_seen}) — dimensions ${spec.dimensions.join('/')}`);
     }
   });
+  const completedHunters = specs.flatMap((spec,i) => spec.dispatch === 'uncovered' ? [{agent:spec.agentType,
+    status:Array.isArray(results[i]?.findings) ? (results[i].complete === false ? 'incomplete' : 'complete') : 'failed',
+    anchors:coverageAnchors(finalResults[i].findings,inp.repoRoot),
+    refs:coverageReferences([spec],[finalResults[i]],inp.repoRoot)}] : []);
+  if (planned && completedHunters.length) {
+    planned = await planOnDisk(ctx,inp,'finalize',{state_checksum:planned.state_checksum,hunters:completedHunters});
+    ledger = planned?.summary || unavailableCoverage();
+    if (!planned) ledgerGaps.push('discovery coverage unavailable: final ledger receipt missing or invalid');
+  }
+  if (!primaryUsable) degradedDims.push(...specs.filter((s) => s.dispatch === 'parallel').flatMap((s) => s.dimensions));
+  if (trace && coverageExpected) {
+    trace.coverage_ledger = ledger;
+    delete trace.coverage_ledger_artifact;
+    if (planned) trace.coverage_ledger_artifact = planned.artifact;
+  }
   if (trace) recordStage(trace, 'discover', intake, {
-    coverage: gaps.length ? 'partial' : 'complete', cap: discoveryCap, cap_hit: gaps.some((gap) => gap.includes('possibly incomplete')) });
+    decisions, coverage: gaps.length ? 'partial' : 'complete', cap: discoveryCap, cap_hit: gaps.some((gap) => gap.includes('possibly incomplete')) });
+  gaps.push(...ledgerGaps, ...hunterGaps);
   if (inventory.omitted > 0) removedTestAudit.omitted = inventory.omitted;
   if (removedTestAudit.status !== 'ran-clean') {
     degradedDims.push('test_coverage');
@@ -2584,13 +2916,14 @@ async function discover(ctx, input) {
     degraded: [...new Set(degradedDims)],
     dispatched: specs.map((spec) => spec.agentType),
     removedTestAudit,
+    ...(coverageExpected ? {coverageLedger:ledger,...(planned ? {coverageLedgerArtifact:planned.artifact} : {})} : {}),
   }, decisions);
 }
 function discoverPrompt(inp, spec) {
   const ctxLine = inp.contextLine || '';
   const base = `${ctxLine}Repository: ${inp.repoRoot || '.'}.`;
   const audit = spec.agentType === AGENT_TYPE_TEST_ANALYZER
-    ? ` Removed-test inventory: ${JSON.stringify(inp.removedTests || { status: 'unavailable', items: [] })}` : '';
+    ? `\n${untrustedJson(inp.removedTests || { status: 'unavailable', items: [] }, 'removed-test-inventory')}` : '';
   return `${base}${spec.promptExtra ? ` ${spec.promptExtra}` : ''}${audit}`;
 }
 // --- refutations.js ---
@@ -5791,10 +6124,28 @@ function stripNullOptionalsReport(args, descriptors = KNOB_REGISTRY) {
 }
 function normalizeArgsReport(raw, descriptors = KNOB_REGISTRY) {
   const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-  const report = stripNullOptionalsReport(parsed, descriptors);
+  const equal = (a, b) => a === b || (a !== null && b !== null && typeof a === 'object' && typeof b === 'object'
+    && Array.isArray(a) === Array.isArray(b) && Object.keys(a).length === Object.keys(b).length
+    && Object.keys(a).every((key) => Object.hasOwn(b, key) && equal(a[key], b[key])));
+  const receiptFields = isPlainObject(parsed?.contextReceipt)
+    ? CONTEXT_RECEIPT_FIELDS.filter((key) => Object.hasOwn(parsed.contextReceipt, key)) : [];
+  const contextReceiptGaps = receiptFields.filter((key) => Object.hasOwn(parsed, key) && !equal(parsed[key], parsed.contextReceipt[key]))
+    .map((key) => `contextReceipt.${key} conflicts with top-level ${key}; preparation receipt value used`);
+  const withContext = isPlainObject(parsed?.contextReceipt) ? { ...parsed,
+    ...Object.fromEntries(receiptFields.map((key) => [key, parsed.contextReceipt[key]])) } : parsed;
+  const report = stripNullOptionalsReport(withContext, descriptors);
+  if (Object.hasOwn(report.args || {}, 'discoveryPlan') || Object.hasOwn(parsed?.contextReceipt || {}, 'discoveryPlan')) {
+    delete report.args.discoveryPlan;
+    if (isPlainObject(report.args.contextReceipt)) {
+      report.args.contextReceipt = {...report.args.contextReceipt};
+      delete report.args.contextReceipt.discoveryPlan;
+    }
+    contextReceiptGaps.push('inline discoveryPlan is no longer accepted; supply the preparation discoveryPlanRef instead');
+  }
   const { args, derivedPaths } = deriveConfigWaist(report.args, descriptors);
   report.args = args;
   report.derivedPaths = derivedPaths;
+  if (contextReceiptGaps.length) report.contextReceiptGaps = contextReceiptGaps;
   return report;
 }
 function normalizeArgs(raw, descriptors = KNOB_REGISTRY) {
@@ -5912,12 +6263,6 @@ function validateArgs(args, descriptors = KNOB_REGISTRY) {
   if (isPlainObject(args.policy)) validateArgsFields(args.policy, 'policy', errors, 'policy');
   validateArgsFields(args, 'changed', errors);
   validateArgsFields(args, 'context', errors);
-  if (args.contextChars !== undefined && args.contextLines === undefined) {
-    errors.push('contextChars requires contextLines — chars alone cannot size a line-offset read plan');
-  }
-  if (args.contextMaxLineChars !== undefined && args.contextLines === undefined) {
-    errors.push('contextMaxLineChars requires contextLines — line width alone cannot size a line-offset read plan');
-  }
   if (args.delivery !== undefined) {
     if (!isPlainObject(args.delivery)) {
       errors.push('delivery must be an object of the form { tier } when present');
@@ -7048,15 +7393,7 @@ async function groupFindings(ctx, findings, policy = {}) {
 }
 // --- measurementReplay.js ---
 function promptSha256(text) {
-  const bytes = [];
-  for (const char of text) {
-    let code = char.codePointAt(0);
-    if (code >= 0xd800 && code <= 0xdfff) code = 0xfffd;
-    if (code < 0x80) bytes.push(code);
-    else if (code < 0x800) bytes.push(0xc0 | (code >> 6), 0x80 | (code & 63));
-    else if (code < 0x10000) bytes.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 63), 0x80 | (code & 63));
-    else bytes.push(0xf0 | (code >> 18), 0x80 | ((code >> 12) & 63), 0x80 | ((code >> 6) & 63), 0x80 | (code & 63));
-  }
+  const bytes = utf8Encode(text);
   const bits = bytes.length * 8;
   bytes.push(0x80);
   while (bytes.length % 64 !== 56) bytes.push(0);
@@ -7319,8 +7656,10 @@ async function runWith(ctx, rawArgs) {
     dropped: droppedNulls,
     respelled: respelledNulls,
     derivedPaths,
+    contextReceiptGaps = [],
   } = normalizeArgsReport(entry.waist);
   const nullArgGaps = [
+    ...contextReceiptGaps,
     ...nullToleranceRejectedKeys(A, droppedNulls, derivedPaths).map((key) => nullToleranceGap(key)),
     ...respelledNulls.map(nullRespellGap),
   ];
@@ -7336,7 +7675,7 @@ async function runWith(ctx, rawArgs) {
   let limits = coarsenLimits(A.limits || {}, nChangedFiles, 0, A.baseBranch, A);
   const policy = A.policy || {};
   const contextPath = `${A.outputDir}/code-gauntlet-context-${A.headShaShort}.md`;
-  const { contextLine, contextSizeGap } = setupContext({ contextPath, contextLines: A.contextLines, contextChars: A.contextChars, contextMaxLineChars: A.contextMaxLineChars });
+  const { contextLine, contextSizeGap } = setupContext({ contextPath, contextLines: A.contextLines, contextChars: A.contextChars, contextMaxLineChars: A.contextMaxLineChars, contextReadChunks: A.contextReadChunks, contextReadPlanVersion: A.contextReadPlanVersion });
   const discardGap = checkpointDiscardGap(A.checkpoints);
   const checkpoints = readCheckpoints(A);
   const checksumViolations = checkpointChecksumErrors(A.checkpoints);
@@ -7409,7 +7748,7 @@ async function runWith(ctx, rawArgs) {
     }));
     const derivedAgentFlags = deriveAgentFlags(A.riskTable, A.changedLines, A.scopeAnswer);
     const discoverSettled = replay('discover') ? null : settle(discover(c, {
-      measurementTrace, agentFlags: derivedAgentFlags, limits, policy, contextLine, repoRoot: A.repoRoot, removedTests: resolveRemovedTestsArgs(A),
+      measurementTrace, agentFlags: derivedAgentFlags, limits, policy, contextLine, contextPath, contextLines: A.contextLines, discoveryPlanRef:A.discoveryPlanRef, changedFiles:A.changedFiles, outputDir:A.outputDir,headShaShort:A.headShaShort,nonce:A.nonce,pluginRoot:A.pluginRoot,python:A.python, riskTable: A.riskTable, repoRoot: A.repoRoot, removedTests: resolveRemovedTestsArgs(A),
     }));
     const summaryOut = await runPhase('summarize', async () => (await summarizeSettled)());
     gaps.push(...(summaryOut.gaps || []));

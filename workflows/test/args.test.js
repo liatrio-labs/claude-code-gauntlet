@@ -4,6 +4,23 @@ import { normalizeArgs, normalizeArgsReport, validateArgs, stripNullOptionalsRep
 import { fnv1a32 } from '../src/wire.js';
 import { nullToleranceGap, nullRespellGap, nullToleranceRejectedKeys } from '../src/args.js';
 import { interactiveArgs, headlessArgs, priorReviewDetector, prIdentity } from './helpers/argsFixtures.js';
+import { CONTEXT_RECEIPT_FIELDS } from '../src/registry.js';
+
+test('preparation receipt owns its declared fields and discloses conflicting top-level values', () => {
+  const receipt = {contextLines:10, contextChars:200, contextMaxLineChars:20, contextReadPlanVersion:1,contextReadChunks:[10],
+    removedTests:{status:'unavailable',items:[],omitted:0,reason:'inventory absent'},
+    discoveryPlanRef:{path:'code-gauntlet-discovery-plan-abc1234.json',sha256:'a'.repeat(64)}};
+  const fields = Object.keys(receipt);
+  assert.deepEqual(new Set(CONTEXT_RECEIPT_FIELDS), new Set(fields));
+  const same = {...receipt,discoveryPlanRef:{sha256:'a'.repeat(64),path:'code-gauntlet-discovery-plan-abc1234.json'}};
+  assert.equal(normalizeArgsReport({...same, contextReceipt:receipt}).contextReceiptGaps, undefined);
+  const report = normalizeArgsReport(Object.fromEntries([...CONTEXT_RECEIPT_FIELDS.map((key) => [key, 0]), ['contextReceipt', receipt]]));
+  assert.equal(report.contextReceiptGaps.length, CONTEXT_RECEIPT_FIELDS.length);
+  for (const key of CONTEXT_RECEIPT_FIELDS) {
+    assert.deepEqual(report.args[key], receipt[key]);
+    assert.ok(report.contextReceiptGaps.some((gap) => gap.startsWith(`contextReceipt.${key} conflicts`)));
+  }
+});
 
 test('removed-test args treat every inventory path control character as unavailable', () => {
   const controls = [...Array.from({ length: 32 }, (_, i) => i),
@@ -87,12 +104,6 @@ const REJECTION_ROWS = [
   { name: 'contextLines ceiling',
     input: (a) => { a.contextLines = 5000001; },
     expected: [ "contextLines is 5000001, above the 5000000 ceiling \u2014 that is not a review context, it is a mis-measurement" ] },
-  { name: 'chars alone',
-    input: (a) => { a.contextChars = 94784; },
-    expected: [ "contextChars requires contextLines \u2014 chars alone cannot size a line-offset read plan" ] },
-  { name: 'max line width alone',
-    input: (a) => { a.contextMaxLineChars = 1000; },
-    expected: [ "contextMaxLineChars requires contextLines \u2014 line width alone cannot size a line-offset read plan" ] },
   { name: 'delivery tier', input: (a) => { a.delivery = { tier: "suggestions_only" }; }, expected: [
     "invalid delivery.tier: suggestions_only (expected one of all, main_only)",
     "delivery.tier does not match configEcho.delivery_tier",

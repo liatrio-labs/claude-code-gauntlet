@@ -113,7 +113,7 @@
   ],
   "detect_prior_review/help": [
     0,
-    "usage: detect_prior_review [-h] --platform {github,gitlab} [--owner OWNER] [--repo REPO]\n                           [--pr-url PR_URL] [--number NUMBER] [--head-sha HEAD_SHA]\n                           [--bodies-file BODIES_FILE]\n\nDetect whether code-gauntlet has already reviewed this PR/MR.\n\noptions:\n  -h, --help            show this help message and exit\n  --platform {github,gitlab}\n                        Forge hosting the PR/MR. Required \u2014 the caller already knows it.\n  --owner OWNER         Repository owner / GitLab namespace. Defaults to the 'origin' remote.\n  --repo REPO           Repository name. Defaults to the 'origin' remote.\n  --pr-url PR_URL       PR/MR URL, including its forge host.\n  --number NUMBER       PR number / MR IID.\n  --head-sha HEAD_SHA   Compare against this SHA instead of `git rev-parse HEAD`.\n  --bodies-file BODIES_FILE\n                        JSON array of {body,timestamp,source,id} entries to scan INSTEAD of\n                        fetching. Offline/test hook.\n"
+    "usage: detect_prior_review [-h] --platform {github,gitlab} [--owner OWNER] [--repo REPO]\n                           [--pr-url PR_URL] [--number NUMBER] [--head-sha HEAD_SHA]\n                           [--bodies-file BODIES_FILE]\n\nDetect whether code-gauntlet has already reviewed this PR/MR.\n\noptions:\n  -h, --help            show this help message and exit\n  --platform {github,gitlab}\n                        Forge hosting the PR/MR. Required — the caller already knows it.\n  --owner OWNER         Repository owner / GitLab namespace. Defaults to the 'origin' remote.\n  --repo REPO           Repository name. Defaults to the 'origin' remote.\n  --pr-url PR_URL       PR/MR URL, including its forge host.\n  --number NUMBER       PR number / MR IID.\n  --head-sha HEAD_SHA   Compare against this SHA instead of `git rev-parse HEAD`.\n  --bodies-file BODIES_FILE\n                        JSON array of {body,timestamp,source,id} entries to scan INSTEAD of\n                        fetching. Offline/test hook.\n"
   ],
   "detect_prior_review/success": [
     0,
@@ -257,7 +257,7 @@
   ],
   "post_review/success": [
     0,
-    "Review captured (dry-run).\n  0 inline comment(s) captured.\nDry run \u2014 no comments posted. Payload written to: <TMP>/post_review/success/post-review-payload.json\n"
+    "Review captured (dry-run).\n  0 inline comment(s) captured.\nDry run — no comments posted. Payload written to: <TMP>/post_review/success/post-review-payload.json\n"
   ],
   "post_review/usage": [
     2,
@@ -445,11 +445,11 @@
   ],
   "write_shared_context/help": [
     0,
-    "usage: write_shared_context [-h] --output-dir OUTPUT_DIR --head-sha HEAD_SHA\n                            [--target-type {pr,mr,branch,local}] [--head-sha-full HEAD_SHA_FULL]\n                            [--snapshot-file SNAPSHOT_FILE] [--repo-root REPO_ROOT]\n\nWrite the shared agent context from paths and triage text supplied as data. Paths belong in argv\nand artifact names are derived here so output-directory characters cannot become Python source.\nThe collector's rules file is always read and an empty file is refused: its successful no-rules\nresult is a message, while empty means stale or failed collection. PR/MR snapshots are validated\nbefore writing; their unverified author claims are framed between triage and diff. Branch/local\ncalls require no snapshot. Layout lists root names and changed-file directories from --repo-root,\nusing local files or the verified --head-sha-full snapshot. Missing source is disclosed. Names are\nuntrusted candidate locations, not evidence of a repository precedent. Content bytes are rules\n(adding LF only if needed), a blank line and ``## Risk classification and AI-generated-code\nstatus``, CR/LF-trimmed stdin plus LF, the framed layout, a blank line and ``## Diff`` with the\nopening untrusted-content tag, the annotated diff (adding LF only if needed) with all block-tag\nopeners and closers inside it rewritten to ``<\\`` and ``<\\/``, then the closing tag and LF. A\nsingle large Read can return only part of a file without notice; the workflow has no disk and\nneeds the receipt's line count to plan exact Reads. The content always ends with LF, so the\nnewline count equals the Read tool's line numbering. ``contextChars`` counts decoded code points\nwith replacement; ``contextMaxLineChars`` includes LF and bounds Read chunk size even when line\nlengths vary.\n\noptions:\n  -h, --help            show this help message and exit\n  --output-dir OUTPUT_DIR\n  --head-sha HEAD_SHA\n  --target-type {pr,mr,branch,local}\n  --head-sha-full HEAD_SHA_FULL\n  --snapshot-file SNAPSHOT_FILE\n  --repo-root REPO_ROOT\n"
+    "usage: write_shared_context [-h] --output-dir OUTPUT_DIR --head-sha HEAD_SHA\n                            [--target-type {pr,mr,branch,local}] [--head-sha-full HEAD_SHA_FULL]\n                            [--snapshot-file SNAPSHOT_FILE] [--repo-root REPO_ROOT]\n\nWrite the shared agent context from paths and triage text supplied as data. Paths belong in argv\nand artifact names are derived here so output-directory characters cannot become Python source.\nThe collector's rules file is always read and an empty file is refused: its successful no-rules\nresult is a message, while empty means stale or failed collection. PR/MR snapshots are validated\nbefore writing; their unverified author claims are framed between triage and diff. Branch/local\ncalls require no snapshot. Layout lists root names and changed-file directories from --repo-root,\nusing local files or the verified --head-sha-full snapshot. Missing source is disclosed. Names are\nuntrusted candidate locations, not evidence of a repository precedent. Bounded fact cards add\ndeclaration outlines near changes, lexical callee candidates and sibling declarations from\ntracked, unignored files in that snapshot. Parameters, initializers and bodies are never copied.\nTheir byte budget, omitted cards and search limits are disclosed; no card asserts a defect.\nContent bytes are rules (adding LF only if needed), a blank line and ``## Risk classification and\nAI-generated-code status``, CR/LF-trimmed stdin plus LF, optional framed author text, the framed\nrepository layout, the framed ``## Discovery regions`` index and ``## Fact cards`` evidence, then\n``## Diff`` with the opening untrusted-content tag, the annotated diff (adding LF only if needed)\nwith all block-tag openers and closers inside it rewritten to ``<\\`` and ``<\\/``, then the closing\ntag and LF. A single large Read can return only part of a file without notice; the workflow has no\ndisk and needs the receipt's line count to plan exact Reads. The content always ends with LF, so\nthe newline count equals the Read tool's line numbering. ``contextChars`` counts decoded code\npoints with replacement; ``contextMaxLineChars`` includes LF. ``contextReadPlanVersion``\nidentifies the measured-plan receipt; ``contextReadChunks`` carries only per-chunk line counts.\nPacking caps each Read at 750 lines and 24,000 UTF-8 bytes including LF and a 12-byte line-prefix\nreserve. The budget assumes a 25,000-token host Read cap and at least one UTF-8 byte per text\ntoken; it is a conservative planning bound, including multibyte text. An oversized line stands\nalone for partial-read continuation.\n\noptions:\n  -h, --help            show this help message and exit\n  --output-dir OUTPUT_DIR\n  --head-sha HEAD_SHA\n  --target-type {pr,mr,branch,local}\n  --head-sha-full HEAD_SHA_FULL\n  --snapshot-file SNAPSHOT_FILE\n  --repo-root REPO_ROOT\n"
   ],
   "write_shared_context/success": [
     0,
-    "{\"contextLines\": 27, \"contextChars\": 650, \"contextMaxLineChars\": 88, \"removedTests\": {\"status\": \"available\", \"items\": [], \"omitted\": 0, \"checksum\": \"<CHECKSUM>\"}}\n"
+    "{\"contextLines\": 40, \"contextChars\": 1373, \"contextMaxLineChars\": 319, \"contextReadPlanVersion\": 1, \"contextReadChunks\": [40], \"discoveryPlan\": {\"version\": 2, \"status\": \"available\", \"regions\": [], \"fact_packets\": []}, \"removedTests\": {\"status\": \"available\", \"items\": [], \"omitted\": 0, \"checksum\": \"<CHECKSUM>\"}}\n"
   ],
   "write_shared_context/usage": [
     2,
@@ -464,6 +464,26 @@
     ""
   ],
   "check_refutations/usage": [
+    2,
+    ""
+  ],
+  "plan_discovery/bad_input": [
+    2,
+    ""
+  ],
+  "plan_discovery/failure": [
+    2,
+    ""
+  ],
+  "plan_discovery/help": [
+    0,
+    "usage: plan_discovery [-h] --output-dir OUTPUT_DIR --sha SHA --nonce NONCE --plan-checksum\n                      PLAN_CHECKSUM --input-checksum INPUT_CHECKSUM --request REQUEST --phase\n                      {select,finalize} --part PART --parts PARTS\n\nDisk-backed discovery planning with bounded, content-bound executor receipts.\n\noptions:\n  -h, --help            show this help message and exit\n  --output-dir OUTPUT_DIR\n  --sha SHA\n  --nonce NONCE\n  --plan-checksum PLAN_CHECKSUM\n  --input-checksum INPUT_CHECKSUM\n  --request REQUEST\n  --phase {select,finalize}\n  --part PART\n  --parts PARTS\n"
+  ],
+  "plan_discovery/success": [
+    0,
+    "{\"status\": \"ok\", \"nonce_checksum\": \"<CHECKSUM>\", \"part\": 0, \"parts\": 1, \"input_checksum\": \"<CHECKSUM>\", \"request_checksum\": \"<CHECKSUM>\", \"result\": {\"available\": false, \"reason\": \"missing, invalid or unbound discovery request/plan/state\"}, \"receipt_checksum\": \"<CHECKSUM>\"}\n"
+  ],
+  "plan_discovery/usage": [
     2,
     ""
   ]

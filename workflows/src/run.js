@@ -265,8 +265,10 @@ export async function runWith(ctx, rawArgs) {
     dropped: droppedNulls,
     respelled: respelledNulls,
     derivedPaths,
+    contextReceiptGaps = [],
   } = normalizeArgsReport(entry.waist);
   const nullArgGaps = [
+    ...contextReceiptGaps,
     ...nullToleranceRejectedKeys(A, droppedNulls, derivedPaths).map((key) => nullToleranceGap(key)),
     ...respelledNulls.map(nullRespellGap),
   ];
@@ -285,7 +287,7 @@ export async function runWith(ctx, rawArgs) {
   let limits = coarsenLimits(A.limits || {}, nChangedFiles, 0, A.baseBranch, A);
   const policy = A.policy || {};
   const contextPath = `${A.outputDir}/code-gauntlet-context-${A.headShaShort}.md`;
-  const { contextLine, contextSizeGap } = setupContext({ contextPath, contextLines: A.contextLines, contextChars: A.contextChars, contextMaxLineChars: A.contextMaxLineChars });
+  const { contextLine, contextSizeGap } = setupContext({ contextPath, contextLines: A.contextLines, contextChars: A.contextChars, contextMaxLineChars: A.contextMaxLineChars, contextReadChunks: A.contextReadChunks, contextReadPlanVersion: A.contextReadPlanVersion });
   // Inspect the stamped checkpoints before readCheckpoints can discard malformed input.
   const discardGap = checkpointDiscardGap(A.checkpoints);
   const checkpoints = readCheckpoints(A);
@@ -369,7 +371,7 @@ export async function runWith(ctx, rawArgs) {
     // Derive scope flags from validated inputs so callers cannot stamp a different decision.
     const derivedAgentFlags = deriveAgentFlags(A.riskTable, A.changedLines, A.scopeAnswer);
     const discoverSettled = replay('discover') ? null : settle(discover(c, {
-      measurementTrace, agentFlags: derivedAgentFlags, limits, policy, contextLine, repoRoot: A.repoRoot, removedTests: resolveRemovedTestsArgs(A),
+      measurementTrace, agentFlags: derivedAgentFlags, limits, policy, contextLine, contextPath, contextLines: A.contextLines, discoveryPlanRef:A.discoveryPlanRef, changedFiles:A.changedFiles, outputDir:A.outputDir,headShaShort:A.headShaShort,nonce:A.nonce,pluginRoot:A.pluginRoot,python:A.python, riskTable: A.riskTable, repoRoot: A.repoRoot, removedTests: resolveRemovedTestsArgs(A),
     }));
 
     const summaryOut = await runPhase('summarize', async () => (await summarizeSettled)());

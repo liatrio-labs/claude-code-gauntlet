@@ -18,11 +18,11 @@ The diff is a starting point: follow the change through callers, consumers, conf
 <!-- /generated-from-discovery:investigation -->
 
 <!-- generated-from-discovery:reporting -->
-Report every issue you find, including uncertain ones; validation and challenge filter importance and confidence.
+Report every issue you find, including defects in moved, carried or newly relied-on code and uncertain claims; validation and challenge establish truth and consequence.
 <!-- /generated-from-discovery:reporting -->
 
 <!-- generated-from-discovery:changed-anchor -->
-Anchor each finding at the changed line that causes or exposes it; a defect wholly in unchanged code belongs only when the change reaches it, and the description says how.
+Anchor each finding in head code and explain its connection to the change.
 <!-- /generated-from-discovery:changed-anchor -->
 
 <!-- Canonical source: references/complete-read-contract.md — keep all agent copies in sync -->

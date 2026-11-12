@@ -19,6 +19,8 @@ For `verify_findings.py`, let the script write the inline slice to `--input`; ne
 
 For `check_refutations.py`, return the complete JSON stdout unchanged.
 
+For `plan_discovery.py`, return the complete bounded JSON stdout unchanged.
+
 For `assemble_artifacts.py`, return the whole single JSON line from stdout verbatim via the schema.
 
 On non-zero exit, return the script's failure envelope as printed. Report execution or read failures; do not repair or re-run.

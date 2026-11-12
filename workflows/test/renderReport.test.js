@@ -202,7 +202,7 @@ const OUTSIDE_SUMMARY_ROWS = [
     expected: '| Per-stage models | ' + [
       'change-summarizer', 'bug-detector', 'security-reviewer', 'cross-file-impact',
       'test-analyzer', 'conventions-and-intent', 'type-design-analyzer',
-      'code-simplifier', 'validator', 'challenger', 'grouper', 'executor', 'artifact-writer',
+      'code-simplifier', 'gap-hunter', 'validator', 'challenger', 'grouper', 'executor', 'artifact-writer',
     ].map((agent) => `${agent}=deployment-name-for-this-custom-model\\|&lt;b> ＠bot`)
       .join(', ') + ' |' },
   { name: 'evidence remains byte equal in its dynamic fence', finding: {
@@ -453,11 +453,11 @@ const RECEIPT_ROWS = [
     expected: '| Per-stage models | change-summarizer=claude-sonnet-5-5, bug-detector=claude-sonnet-5-5, '
       + 'security-reviewer=claude-opus-5-5, cross-file-impact=claude-sonnet-5-5, test-analyzer=claude-sonnet-5-5, '
       + 'conventions-and-intent=claude-sonnet-5-5, type-design-analyzer=claude-sonnet-5-5, code-simplifier=claude-sonnet-5-5, '
-      + 'validator=claude-sonnet-5-5, challenger=claude-sonnet-5-5, grouper=claude-sonnet-5-5, executor=claude-sonnet-5-5, artifact-writer=claude-sonnet-5-5 |' },
+      + 'gap-hunter=claude-sonnet-5-5, validator=claude-sonnet-5-5, challenger=claude-sonnet-5-5, grouper=claude-sonnet-5-5, executor=claude-sonnet-5-5, artifact-writer=claude-sonnet-5-5 |' },
   { name: 'provider model aliases', input: { policy: { provider: 'bedrock' } }, prefix: '| Per-stage models |',
     expected: '| Per-stage models | change-summarizer=sonnet, bug-detector=sonnet, security-reviewer=opus, '
       + 'cross-file-impact=sonnet, test-analyzer=sonnet, conventions-and-intent=sonnet, type-design-analyzer=sonnet, '
-      + 'code-simplifier=sonnet, validator=sonnet, challenger=sonnet, grouper=sonnet, executor=sonnet, artifact-writer=sonnet |' },
+      + 'code-simplifier=sonnet, gap-hunter=sonnet, validator=sonnet, challenger=sonnet, grouper=sonnet, executor=sonnet, artifact-writer=sonnet |' },
   { name: 'pipeline counts and table escaping', input: { reviewScope: { kind: 'incremental', since: 'abc-1', commits: null },
     policy: { subagentModel: 'model|override' }, stats: { discovered: 4, validate: { accepted: 3, rejected: 1 },
       filter: { accepted: 2, rejected: 1 }, challenge: { accepted: 1, rejected: 1 }, merge: {
@@ -490,7 +490,7 @@ const METHODOLOGY_ROWS = [
     '| Version | 3.26.0 (plugin and pipeline) |',
     '| Delivery selection | selection policy: tier=main_only, cap=uncapped |',
     '| Review scope | Full (incremental requested; head has not advanced) |',
-    '| Dimensions | dispatched=7; degraded=1 |',
+    '| Dimensions | dispatched=8; degraded=1 |',
   ] },
   { name: 'default full scope', input: {}, expected: ['| Review scope | Full |'] },
   { name: 'incremental scope commit count', input: {
@@ -621,6 +621,15 @@ test('location rights govern report and summary links', () => {
       assert.equal(text.includes(member.title), text === full || resolved);
       assert.doesNotMatch(text, /RAW_SOURCE_QUOTE|987|999/);
     }
+  }
+});
+
+test('change provenance stays routing data and does not create duplicate Origin bullets', () => {
+  for (const change_origin of ['introduced', 'moved_or_carried', 'pre_existing']) {
+    const text = rendered({ findings: [finding('routing', { change_origin, origin: 'surfaced' })] });
+    assert.equal(text.includes('**Change origin:**'), false);
+    assert.equal(text.includes('**Change Origin:**'), false);
+    assert.equal((text.match(/\*\*Origin:\*\*/g) || []).length, 1);
   }
 });
 

@@ -1,3 +1,4 @@
+import { withPreparedPlan } from './helpers/diskDiscovery.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -159,7 +160,7 @@ test('malformed discovery preserves sibling review with tracing on and off', asy
       ctx.calls.push({ prompt, ...dispatch });
       return Promise.resolve({ findings: [null], complete: true, total_seen: 1 });
     };
-    const out = await runWith(ctx, args);
+    const out = await withPreparedPlan(ctx, args, runWith);
     assert.equal(out.ok, true);
     delete out.measurement;
     captured.push({ out, calls: ctx.calls });
@@ -182,7 +183,7 @@ test('main_only tier exclusions do not count as a delivery cap hit', async () =>
     }
     return result;
   };
-  const out = await runWith(ctx, args);
+  const out = await withPreparedPlan(ctx, args, runWith);
   assert.equal(out.ok, true);
   const trace = JSON.parse(out.measurement.text);
   const selected = trace.snapshots.find((s) => s.stage === 'select');
@@ -202,7 +203,7 @@ test('mid-pipeline failure checkpoints are identical with tracing on and off', a
       if (++dispatches === 2) throw new Error('synthetic mid-pipeline failure');
       return parallel(thunks);
     };
-    const out = await runWith(ctx, args);
+    const out = await withPreparedPlan(ctx, args, runWith);
     assert.equal(out.ok, false);
     assert.equal(out.phaseReached, 'verify');
     assert.equal(out.failingPhase, 'validate');
@@ -251,28 +252,64 @@ test('measured persistence records native UTF-8 hashes, results and thrown error
   assert.equal(appendDeliveryReplay(full, large), full);
 });
 
-test('selection traces one reason for every member of an indivisible omitted group', async () => {
-  const args = validArgs({ measurementTrace: true, limits: { deliveryCap: 1 }, delivery: { tier: 'main_only' } });
-  const ctx = makeCtx(args, { findings: [makeFinding('MAIN'), makeFinding('CHILD'), makeFinding('SUGGESTION'), makeFinding('WIN', { severity: 'critical' })] });
+for (const padding of [0, RETURN_CHAR_BUDGET - 3000]) test(`coverage ledger preserves finding history with return padding ${padding}`, () => {
+  const trace = createMeasurementTrace('ledger-budget');
+  const finding = makeFinding('kept');
+  stampDiscovery(trace, finding, { agentType: 'code-gauntlet:bug-detector', dimensions: ['bug'] }, 0, 0);
+  recordStage(trace, 'discover', [finding]);
+  trace.coverage_ledger = { version: 2, status: 'available', regions: Array.from({ length: 2000 }, (_, i) => ({ id: `region${i}`, file: 'x'.repeat(1000), line_start: 1, line_end: 2, cited_by: [] })),
+    uncovered: [], remaining_uncovered: [], omitted: [], hunters: [], budget_bytes: 24000, assigned_bytes: 0, omitted_fact_packets: 0 };
+  const result = appendMeasurement({ ok: true, padding: 'p'.repeat(padding) }, trace);
+  assert.equal(result.measurement.status, 'available');
+  const saved = decodeMeasurement(result.measurement);
+  if (padding) {
+    assert.equal(saved.coverage_ledger.status, 'trimmed');
+    assert.equal(saved.coverage_ledger.region_count, 2000);
+  } else {
+    assert.equal(result.measurement.encoding, 'json-pool-lzw16-base64-v1');
+    assert.deepEqual(saved.coverage_ledger, trace.coverage_ledger);
+  }
+  assert.equal(saved.versions[0].finding.id, 'kept');
+  assert.equal(saved.snapshots[0].coverage, 'complete');
+  assert.ok(JSON.stringify(result).length <= RETURN_CHAR_BUDGET);
+});
+
+test('outside-assignment hunter coverage survives typed grouping with per-member selection reasons', async () => {
+  const args = validArgs({ measurementTrace: true, limits: { deliveryCap: 1 }, delivery: { tier: 'main_only' },
+    contextReceipt: { contextLines: 20, contextChars: 400, contextMaxLineChars: 20, contextReadPlanVersion: 1, contextReadChunks: [20],
+      discoveryPlan: { version: 2, status: 'available', fact_packets: [],
+        regions: [{ id: 'uncited', file: 'FOCUS.js', line_start: 1, line_end: 2, reads: [{ offset: 5, limit: 2, bytes: 80 }] }] } } });
+  const ctx = makeCtx(args, { findings: [makeFinding('MAIN', { change_origin: 'pre_existing', change_relevance: 'The changed caller now depends on this code.' }), makeFinding('SUGGESTION'), makeFinding('WIN', { severity: 'critical' })] });
   const original = ctx.agent;
   ctx.agent = async (prompt, opts) => {
-    if (opts.label === 'group-findings') return { groups: [{ finding_ids: ['MAIN', 'CHILD'] }] };
+    if (opts.label === 'group-findings') return { groups: [{ finding_ids: ['MAIN', 'gap-hunter-1'] }] };
     const result = await original(prompt, opts);
-    if (opts.label.startsWith('validate-')) for (const v of result.validations) {
-      if (['CHILD', 'SUGGESTION'].includes(v.finding_id)) Object.assign(v, { consequence: 'latent', latent_condition: 'Another caller' });
+    if (opts.agentType === 'code-gauntlet:gap-hunter') {
+      const finding = makeFinding('child', { file: 'CHILD.js', evidence: 'FOCUS.js:1 supplies the triggering input.', confidence: 0, change_origin: 'moved_or_carried' });
+      const properties = opts.schema.properties.findings.items.properties;
+      return { ...result, findings: [Object.fromEntries(Object.entries(finding).filter(([key]) => Object.hasOwn(properties, key)))], total_seen: 1 };
     }
-    if (opts.label.startsWith('challenge-') && /finding (?:CHILD|SUGGESTION)/.test(prompt)) Object.assign(result.verdict, { consequence: 'latent', latent_condition: 'Another caller' });
+    if (opts.label.startsWith('validate-')) for (const v of result.validations) {
+      if (['gap-hunter-1', 'SUGGESTION'].includes(v.finding_id)) Object.assign(v, { consequence: 'latent', latent_condition: 'Another caller' });
+    }
+    if (opts.label.startsWith('challenge-') && /finding (?:gap-hunter-1|SUGGESTION)/.test(prompt)) Object.assign(result.verdict, { consequence: 'latent', latent_condition: 'Another caller' });
     return result;
   };
-  const out = await runWith(ctx, args);
+  const out = await withPreparedPlan(ctx, args, runWith);
   assert.equal(out.ok, true);
   const trace = JSON.parse(out.measurement.text);
   const ids = new Map(trace.versions.map((v) => [v.trace_id, v.finding.id]));
   const selected = trace.snapshots.find((s) => s.stage === 'select');
   const reasons = Object.fromEntries(selected.decisions.map((d) => [ids.get(d.trace_id), d.reason_code]));
   assert.equal(reasons.MAIN, 'delivery_cap');
-  assert.equal(reasons.CHILD, 'delivery_cap');
+  assert.equal(reasons['gap-hunter-1'], 'delivery_cap');
   assert.equal(reasons.SUGGESTION, 'delivery_tier');
+  assert.deepEqual(trace.coverage_ledger.hunters, [{ agent: 'code-gauntlet:gap-hunter', assigned: ['uncited'], status: 'complete', outside_assignment: ['gap-hunter-1'] }]);
+  assert.deepEqual(trace.coverage_ledger.remaining_uncovered, []);
+  const hunter = trace.versions.filter((v) => v.finding.id === 'gap-hunter-1');
+  assert.ok(hunter.length);
+  assert.ok(hunter.every((v) => v.discovery_dimension === 'gap_hunt' && !Object.hasOwn(v.finding, 'change_origin')));
+  assert.ok(hunter.some((v) => v.finding.verdict?.claim === 'confirmed' && v.finding.report_tag === 'suggestion'));
 });
 
 test('budget fallback compresses a partial history before dropping another stage', () => {
