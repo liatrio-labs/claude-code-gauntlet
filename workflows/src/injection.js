@@ -1,3 +1,5 @@
+import { hasAdmission, evaluateAdmission } from './admission.js';
+import { confirmedComment } from './verdict.js';
 import { canonicalRange } from './location.js';
 import { WS_TRIM_RE, asText, deepFreeze } from './wire.js';
 import { INJECTION_STRIPPED_PROSE_FIELDS } from './registry.js';
@@ -314,6 +316,16 @@ function stripInjectionField(finding, field, reason) {
   return kept;
 }
 
+function proseInjection(value, rules) {
+  const folded = foldConfusables(value);
+  for (const row of rules) {
+    if (!row.prose) continue;
+    const match = firstMatch(value, folded, row.patterns);
+    if (match) return { row, match };
+  }
+  return null;
+}
+
 function stripInjectedProseFields(finding, rules) {
   let kept = finding;
   let firstPatternStrip = null;
@@ -323,18 +335,21 @@ function stripInjectedProseFields(finding, rules) {
       continue;
     }
     const value = typeof kept[field] === 'string' ? kept[field] : '';
-    if (!value) continue;
-    const valueFolded = foldConfusables(value);
-    for (const row of rules) {
-      if (!row.prose) continue;
-      const m = firstMatch(value, valueFolded, row.patterns);
-      if (m) {
-        kept = stripInjectionField(kept, field, `${field} ${row.label}: ${JSON.stringify(m)}`);
-        // First field and rule win so propagated fix-removal reasons remain deterministic.
-        if (firstPatternStrip === null) firstPatternStrip = [field, row.label];
-        break;
-      }
+    const injection = value && proseInjection(value, rules);
+    if (injection) {
+      const { row, match } = injection;
+      kept = stripInjectionField(kept, field, `${field} ${row.label}: ${JSON.stringify(match)}`);
+      // First field and rule win so propagated fix-removal reasons remain deterministic.
+      firstPatternStrip ??= [field, row.label];
     }
+  }
+  const comment = confirmedComment(kept);
+  const injection = comment?.fix && proseInjection(comment.fix, rules);
+  if (injection) {
+    const statement = { ...comment };
+    delete statement.fix;
+    kept = { ...kept, verdict: { ...kept.verdict, comment: statement } };
+    firstPatternStrip ??= ['comment.fix', injection.row.label];
   }
   return [kept, firstPatternStrip];
 }
@@ -359,7 +374,9 @@ function stripSuggestedFixCodeIfNeeded(finding, firstPatternStrip) {
 
 export function applyInjectedProseStrip(finding, rules = INJECTION_RULES) {
   const [stripped, firstPatternStrip] = stripInjectedProseFields(finding, rules);
-  return stripSuggestedFixCodeIfNeeded(stripped, firstPatternStrip);
+  const kept = stripSuggestedFixCodeIfNeeded(stripped, firstPatternStrip);
+  // The stamp binds verdict prose; only a valid incoming stamp can authorize this rewrite.
+  return kept.verdict !== finding.verdict && hasAdmission(finding) ? evaluateAdmission(kept) : kept;
 }
 
 // Rule order fixes diagnostic reason order.
@@ -369,8 +386,10 @@ export function applyInjectionFilter(findings, rules = INJECTION_RULES) {
   const seenSignatures = new Map();
 
   for (const finding of findings) {
-    const title = asText(finding.title);
-    const description = asText(finding.description);
+    const comment = confirmedComment(finding);
+    const discoveryTitle = asText(finding.title);
+    const title = [discoveryTitle, comment?.title].filter(Boolean).join('\n');
+    const description = [asText(finding.description), comment?.body].filter(Boolean).join('\n');
     const filepath = asText(finding.file);
     const combined = `${title}\n${description}`;
     const combinedFolded = foldConfusables(combined);
@@ -390,11 +409,11 @@ export function applyInjectionFilter(findings, rules = INJECTION_RULES) {
         }
       } else if (row.kind === 'duplicate') {
         // Ordered tuple encoding keeps title and location boundaries unambiguous for duplicate detection.
-        const sig = JSON.stringify([title.toLowerCase().replace(WS_TRIM_RE, ''), filepath, canonicalRange(finding) ? ['resolved', finding.line_start] : ['unconfirmed', finding.id]]);
+        const sig = JSON.stringify([discoveryTitle.toLowerCase().replace(WS_TRIM_RE, ''), filepath, canonicalRange(finding) ? ['resolved', finding.line_start] : ['unconfirmed', finding.id]]);
         if (seenSignatures.has(sig)) {
           reasons.push(`${row.label} ${JSON.stringify(seenSignatures.get(sig))}`);
         } else {
-          seenSignatures.set(sig, finding.id !== undefined && finding.id !== null ? finding.id : title);
+          seenSignatures.set(sig, finding.id !== undefined && finding.id !== null ? finding.id : discoveryTitle);
         }
       }
     }

@@ -31,7 +31,7 @@ function assertValidConditional(clause, path) {
   if (!Array.isArray(clause.then.required)) throw new Error(`schema ${path}.then: must declare "required" as an array`);
 }
 
-// opts.schema must be REAL JSON Schema: a "type", object schemas carry "properties",
+// Dispatch schemas use explicit types; object schemas carry properties,
 // array schemas carry "items" — recursively (catches nested shorthand like {id:'string'}).
 export function assertValidSchema(schema, path = '$') {
   if (!schema || typeof schema !== 'object') throw new Error(`schema ${path}: must be a JSON Schema object (got ${typeof schema})`);

@@ -1,3 +1,4 @@
+import { confirmedComment } from './verdict.js';
 import { repeatedRequestGap, requestFailureGaps } from './agentCalls.js';
 import { suppressAuditOverlaps } from './removedTests.js';
 // Pipeline sequencing, replay, diagnostics, and return envelopes.
@@ -18,7 +19,7 @@ import { writeArtifacts } from './persist.js';
 import { applyChallengeReplayBelt, normalizePhaseFindings, buildResumeCheckpoints, checkpointDiscardGap } from './checkpoints.js';
 import { checkpointChecksumErrors, checkpointShapeErrors, makeCheckpointShapeRejectEnvelope, readCheckpoints, slimPersistedCheckpoints } from './checkpoints.js';
 import { groupFindings } from './groupFindings.js';
-import { disposeFindings, isDeliveryCandidate } from './dispose.js';
+import { disposeFindings, isDeliveryCandidate, deliveryGroups } from './dispose.js';
 import { deliveryAllows } from './location.js';
 import { appendMeasurement, createMeasurementTrace, recordStage, traceDecision, admissionDetail, eliminationDecisions, stripTraceFields, decisionsFor } from './measurementTrace.js';
 import { captureDeliveryReplay, appendDeliveryReplay } from './measurementReplay.js';
@@ -145,6 +146,8 @@ export async function deliverFromCheckpoint(c, A, state) {
   if (measurementTrace) recordStage(measurementTrace, 'select', postReview, { cap: limits.deliveryCap,
     cap_hit: omitted.some((group) => group.reason === 'delivery_cap'),
     decisions: [
+      ...deliveryGroups(postReview).filter(({ primary }) => primary.trace_id && primary.verdict?.claim === 'confirmed' && !confirmedComment(primary))
+        .map(({ primary }) => traceDecision(primary, 'comment_text_fallback', 'resolved verdict has no valid comment text', [], 'kept')),
       ...omitted.flatMap((group) => group.findings.filter((f) => f.trace_id).map((f) =>
         traceDecision(f, group.reason, 'delivery selection', [], 'not_selected'))),
       ...challengeOut.findings.filter((f) => f.disposition === 'report_only' && f.trace_id).map((f) =>

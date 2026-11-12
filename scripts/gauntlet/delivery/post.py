@@ -876,9 +876,17 @@ def post_gitlab(
                 for index, (member, key) in enumerate(zip(members, keys, strict=True)):
                     extra = cast(Finding, {**member, "disposition": "body"})
                     if index == 0 and not missing_primary:
-                        extra["body"] = (
-                            "Additional confirmed sites for this previously delivered issue."
-                        )
+                        addition_body = "Additional confirmed sites for this previously delivered issue."
+                        extra["body"] = addition_body
+                        if comment := compose.confirmed_comment(extra):
+                            extra["verdict"] = {
+                                **extra["verdict"],
+                                "comment": {
+                                    **comment,
+                                    "body": addition_body,
+                                    "fix": "",
+                                },
+                            }
                     extra.pop("suggested_fix_code", None)
                     coverage_overrides[id(extra)] = (
                         key,

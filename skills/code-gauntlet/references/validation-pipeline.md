@@ -83,10 +83,16 @@ Independent factual checking follows the [shared investigation contract](investi
 using fresh agents defaulting to Sonnet subject to the resolved override.
 
 Validators return `claim` (`confirmed`, `refuted`, `not_established`), `consequence`
-(`present_failure`, `latent`, `artifact_defect`, `no_practical_effect`) only when confirmed, and `justification`. Consequence is the only runtime-effect axis.
+(`present_failure`, `latent`, `artifact_defect`, `comment_defect`, `no_practical_effect`) only when confirmed, and `justification`. Consequence is the only runtime-effect axis.
 A latent consequence names its future change or unusual precondition in `latent_condition`;
 `not_established` names one missing fact in `missing_fact`. Refutations require a closed
 `refutation_kind` and a source reference (`file`, `line_start`, `line_end`, exact `anchor`).
+Reader dispatch schemas require confirmed answers to carry a `comment` object with string `title`, `body` and `fix`.
+Descriptions ask for one title line and one or two body sentences, with ceilings of 100 and 400 characters, plus a one-sentence fix capped at 200 characters.
+An empty or invalid fix omits only the fix line; it never revives discovery suggestion prose.
+Length and blank checks run in code; internal schemas tolerate absent text in older stored verdicts.
+The selected reader verdict supplies posted prose; invalid text falls back without retrying the verdict.
+The report keeps discovery prose and the confirmed statement.
 The schema and route registry live in `workflows/src/registry.js`.
 
 Both readers inspect confirmed findings, including a validator's non-posting consequence. When
@@ -125,6 +131,7 @@ The registry routes truth and consequence independently:
 | Confirmed present failure | `posted` at its severity |
 | Confirmed latent consequence | `posted-latent`, low severity, suggestion tier |
 | Confirmed artifact defect | `posted-artifact`, low severity |
+| Confirmed code comment or docstring defect with correct code and tests | `report-only` |
 | Confirmed no practical effect | `report-only` |
 | Not established or absent verdict | `not-established` |
 

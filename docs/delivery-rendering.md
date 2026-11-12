@@ -32,10 +32,51 @@ highest member severity, and any main-tier member makes the whole group main tie
 these group values; findings keep their own assessed severity and tier in checkpoints and the
 local report. Each issue posts its lead sections. Folded security titles appear on one prepared
 `Security claim` line. Additional sites combine other members'
-confirmed ranges and all confirmed sites, deduplicated without the lead range. Two or more
-distinct agents add an anonymous reviewer count. Unanchored groups render once under the lead
-location. GitLab addenda list only undelivered locations and count the full group's distinct
-reviewers. Other member descriptions remain in the local report.
+confirmed ranges and all confirmed sites. Overlapping and adjacent ranges merge; the inline
+range is removed from that coverage. Same-file sites use line references without repeating the
+path. Unanchored groups render once under the lead location. GitLab addenda list only undelivered
+locations. Other member descriptions remain in the local report. A `comment_defect` is report
+only and contributes no posted text or sites.
+
+## Reader statements
+
+Both readers must return `comment`, an object with string `title`, `body` and `fix`, on confirmed
+verdicts. The resolved verdict selects the statement as well as the consequence, including
+challenger recovery after a failed validator. The title is at most 100 Unicode characters and
+the body at most 400; both must be nonblank and the title must be one line. Schema field
+descriptions ask for one title line and one or two body sentences about one confirmed issue,
+its effect and verified conditions, addressed to the PR author. A separate one-sentence `fix`
+names only the confirmed correction, with a 200-character ceiling. Empty or blank fixes render
+no fix line. Missing, malformed or overlong fixes are discarded independently, preserving the
+reader title and body. Older stored comments without `fix` still use their reader statement.
+
+`CONFIRMED_COMMENT_SCHEMA` owns length, pattern and blank checks in code. The agent-facing
+`READER_VERDICT_SCHEMA` (challenger) and `READER_VALIDATION_VERDICT_SCHEMA` (validator) require
+`comment` only for confirmed answers, with required string `title`, `body` and `fix`. These dispatch
+schemas carry no length, pattern or nonblank constraints on those strings. Structural violations
+have the same whole-answer retry exposure as other required fields (see the
+[recorded host probe](research/artifacts/29-workflow-platform-smoke-tests.md)).
+
+`VERDICT_SCHEMA`, `VALIDATION_VERDICT_SCHEMA` and `VERDICT_ENTRY_SCHEMA` read internal or stored
+verdicts and tolerate absent or malformed comment text, including older checkpoints, resumes and
+trace replays. This also preserves fallback when an unchecked return bypasses host enforcement.
+Code discards an invalid title/body statement as a whole, retaining the verdict without retry;
+an invalid fix is discarded on its own.
+Missing or invalid title/body text uses discovery prose and records one `comment_text_fallback` kept decision
+per selected issue in the measurement trace. No text is truncated to meet these bounds.
+
+Posted titles, bodies, summary entries and folded security titles use the resolved statement.
+When that statement is used, **Suggested fix** uses only its `fix`; discovery suggestion prose
+is suppressed even if the reader fix is empty or invalid. A fallback comment keeps discovery
+suggestion prose. Validated replacement fences render independently of this prose selection.
+The report retains discovery descriptions and suggestions. It shows **Confirmed fix** beside the
+confirmed statement for the lead and each grouped member, when the reader supplied a valid fix.
+Reader titles and bodies pass the same elimination checks as discovery title and description.
+Reader fix prose uses the suggestion strip path: a matching fix is dropped without eliminating
+the finding, and its accompanying replacement code is withheld under the same taint rule as
+discovery suggestion prose. All surviving text passes outbound preparation.
+Traces retain the resolved verdict; replay and benchmark delivery reconstruction use the shared
+composer, preserving the actual posted text.
 
 ## Outbound text preparation
 
