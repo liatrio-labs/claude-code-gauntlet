@@ -30,6 +30,13 @@ export function rankFindings(findings) {
   });
 }
 
+export function challengeOutcome(score, isSecurity = false) {
+  if (score < 25 && !isSecurity) return 'removed';
+  if (score < 50) return 'downgraded';
+  if (score < 75) return 'contested';
+  return 'survived';
+}
+
 export function applyChallenges(findings, challenges) {
   const challengeById = new Map();
   for (const entry of challenges) {
@@ -73,23 +80,25 @@ export function applyChallenges(findings, challenges) {
     const isSurfaced = ('origin' in finding ? finding.origin : '').toLowerCase() === 'surfaced';
     const isSecurity = ('dimension' in finding ? finding.dimension : '').toLowerCase() === 'security';
 
-    if (score < 25 && !isSecurity) {
+    const outcome = challengeOutcome(score, isSecurity);
+    if (outcome === 'removed') {
       eliminated.push({
         ...finding,
         eliminated_by: 'challenge:removed',
         elimination_reason: `challenge score ${score} < 25; finding does not survive blind challenge`,
       });
       stats.challenge_removed += 1;
-    } else if (score < 50) {
+    } else if (outcome === 'downgraded') {
       const currentSev = ('severity' in finding ? finding.severity : 'low').toLowerCase();
       const newSev = downgradeSeverity(currentSev);
       finding.challenge_contested = false;
-      const removed = score < 25 && newSev === null;
+      const belowRemovalThreshold = challengeOutcome(score) === 'removed';
+      const removed = belowRemovalThreshold && newSev === null;
       if (newSev === null) {
         eliminated.push({
           ...finding,
           eliminated_by: removed ? 'challenge:removed' : 'challenge:downgraded',
-          elimination_reason: score < 25
+          elimination_reason: belowRemovalThreshold
             ? `challenge score ${score} < 25; security finding severity already ` +
               `'${currentSev}' (lowest) — finding removed`
             : `challenge score ${score} in 25-49 range; severity already ` +
@@ -104,7 +113,7 @@ export function applyChallenges(findings, challenges) {
         active.push(finding);
       }
       stats[removed ? 'challenge_removed' : 'challenge_downgraded'] += 1;
-    } else if (score < 75) {
+    } else if (outcome === 'contested') {
       finding.challenge_contested = true;
       if (isSurfaced) {
         finding.report_destination = 'suggestion';

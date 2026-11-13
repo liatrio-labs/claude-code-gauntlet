@@ -170,9 +170,17 @@ def test_gitlab_same_sha_summary_only_extends_inline_issue_sites(
 def test_gitlab_member_marker_routes_missing_primary_to_summary_once(
     posting, summary_posted
 ):
-    primary = located(consolidation_key="issue", consolidation_primary=True)
+    primary = located(
+        consolidation_key="issue",
+        consolidation_primary=True,
+        severity="medium",
+        dimension="security",
+        report_tag="suggestion",
+    )
     member = located(
         id="M",
+        severity="critical",
+        report_tag="main",
         title="Existing member",
         consolidation_key="issue",
         line_start=4,
@@ -198,7 +206,12 @@ def test_gitlab_member_marker_routes_missing_primary_to_summary_once(
     body = request.payload["body"]
     assert primary["title"] in body and primary["body"] in body
     assert member["title"] not in body and "```suggestion" not in body
-    assert [marker["key"] for marker in find_finding_markers(body)] == [primary_key]
+    assert {marker["key"] for marker in find_finding_markers(body)} == {
+        primary_key,
+        member_key,
+    }
+    assert "**🔴 [CRITICAL]" in body
+    assert "- `foo.py:4`" not in body
     if summary_posted:
         notes[0]["body"] = body
     else:
@@ -315,7 +328,7 @@ def test_group_retry_is_atomic(posting):
         _, comments = surfaces(run)
         assert len(comments) == 1
         assert comments[0]["body"].count("extra-") == 4
-        assert comments[0]["body"].count("Corroborating finding") == 1
+        assert comments[0]["body"].count("Corroborating finding") == 0
         assert "```suggestion" not in comments[0]["body"]
         assert not any(call.method == "review_entries" for call in run.fake.calls)
     # Membership selects a stamped primary even when a legacy stamp disagrees.
@@ -419,7 +432,8 @@ def test_group_retry_is_atomic(posting):
         assert "position" not in request.payload
         body = request.payload["body"]
         assert_poison(body)
-        assert member_keys[0] in body and member_keys[1] not in body
+        assert member_keys[0] in body
+        assert member_keys[1] in body
         assert all(site["file"] in body for site in sites)
         assert "@ghost" not in body and "<!-- code-gauntlet-findings:" in body
         assert "~~~suggestion" not in body
@@ -626,7 +640,13 @@ def test_body_disposition_digest_and_malformed_reasons(posting):
         posting(review("github", body_findings, review_body=""), diff=DIFF)
     )
     assert comments == []
-    assert digest.count("### security\n") == digest.count("### bug\n") == 1
+    assert [line for line in digest.splitlines() if line.startswith("#")] == [
+        "### ⚔️ Code Gauntlet",
+        "### 3 issues described here",
+        "#### `foo.py:2`",
+        "#### `foo.py:2`",
+        "#### `foo.py:2`",
+    ]
     assert all(digest.count(f"Body claim {i}") == 1 for i in range(3))
     malformed = located(disposition="deliver", disposition_reasons="forged")
     summary, comments = surfaces(
@@ -746,7 +766,7 @@ def test_unconfirmed_delivery_is_summary_only(platform, status, primary, posting
         assert "foo.py (location unconfirmed)" in summary
     else:
         assert "Unresolved observation" not in summary
-        assert "Unresolved observation" in comments[0]["body"]
+        assert "Unresolved observation" not in comments[0]["body"]
     assert "```suggestion" not in summary
     assert "998" not in summary and "999" not in summary and "200" not in summary
 
@@ -961,19 +981,38 @@ def test_existing_gitlab_summary_suppresses_guard_and_notices(posting, monkeypat
 
 
 def test_gitlab_summary_reports_omission_after_capture(posting):
+    stamp = {
+        "issue_key": "group:LEAD",
+        "lead_id": "LEAD",
+        "finding_ids": ["LEAD", "MEMBER"],
+    }
     run = posting(
         review(
             "gitlab",
-            [located(line_start=40, line_end=41)],
+            [
+                located(id="LEAD", line_start=40, line_end=41, delivery_group=stamp),
+                located(
+                    id="MEMBER",
+                    title="Related claim",
+                    line_start=42,
+                    line_end=42,
+                    delivery_group=stamp,
+                ),
+            ],
             review_body="X" * 1000000,
         ),
         diff=DIFF,
     )
     summary, _ = surfaces(run)
     assert "[folded:" in summary and "Range bug" not in summary
-    assert "Skipped finding 'Range bug' at foo.py:40 not shown" in run.err
+    budget_warnings = [
+        line for line in run.err.splitlines() if "not shown: the" in line
+    ]
+    assert budget_warnings == [
+        "WARNING: Issue 'Range bug' at foo.py:40 not shown: the summary note reached the 1000000-byte GitLab body limit."
+    ]
     assert run.out.index("MR summary note captured") < run.out.index(
-        "1 skipped finding(s) not shown"
+        "1 issue(s) not shown"
     )
     assert "review_body folded by" in run.out
 
@@ -1093,14 +1132,22 @@ def test_capture_is_repeatable_and_preserves_input(posting, tmp_path):
 def test_composer_defensively_denies_unconfirmed_fence():
     member = located(location_status="unconfirmed")
     assert "```suggestion" not in compose.render_comment_body(member)
-    section = compose.build_skipped_section(
-        [compose.SkippedEntry("foo.py", 999, member)]
-    )
+    section = compose.compose_review_body(
+        "",
+        [[compose.SkippedEntry("foo.py", 999, member)]],
+        platform="github",
+        findings_count=1,
+        sha="a" * 40,
+    ).body
     assert "foo.py (location unconfirmed)" in section and "999" not in section
     member["location_status"] = "confirmed"
-    section = compose.build_skipped_section(
-        [compose.SkippedEntry("foo.py", 999, member)]
-    )
+    section = compose.compose_review_body(
+        "",
+        [[compose.SkippedEntry("foo.py", 999, member)]],
+        platform="github",
+        findings_count=1,
+        sha="a" * 40,
+    ).body
     assert "foo.py:2" in section and "999" not in section
 
 
@@ -1363,20 +1410,17 @@ def test_review_input_defaults_and_unknown_fields(platform, posting):
         review(owner="other", repo="other", pr_number=9, sha="bbbbbbb", review_body=""),
     ],
 )
-def test_review_input_overrides_and_report(data, posting, tmp_path):
-    report = tmp_path / "report.md"
-    report.write_text(
-        "# Review\n\n## Summary\n\nFrom report\n\n## Findings\n", encoding="utf-8"
-    )
+def test_review_input_overrides_and_deprecated_report(data, posting, tmp_path):
+    report = tmp_path / "missing-report.md"
     run = posting(
         data,
         arguments=(*GH_ARGS, "--report", str(report)),
     )
     assert (run.code, run.err, run.head_calls) == (0, "", ())
     assert run.payload["endpoint"] == "repos/o/r/pulls/5/reviews"
-    assert run.payload["payload"]["body"] == HEADER + "From report" + FOOTER.replace(
-        "{count}", "0"
-    )
+    assert run.payload["payload"][
+        "body"
+    ] == HEADER + "Found 0 issues in this change." + FOOTER.replace("{count}", "0")
     existing = posting(review(), arguments=("--report", "missing-report.md"))
     assert (existing.code, existing.err) == (0, "")
     assert existing.payload["payload"]["body"] == EMPTY_SUMMARY
@@ -1484,7 +1528,7 @@ def test_string_pr_number_and_explicit_group_primary(posting):
     assert run.payload["endpoint"] == "repos/o/r/pulls/5/reviews"
     assert len(comments) == 1 and comments[0]["line"] == 4
     assert comments[0]["body"].startswith("**\U0001f7e0 [HIGH] Primary**")
-    assert "Range bug" in comments[0]["body"]
+    assert "Range bug" not in comments[0]["body"]
 
 
 def test_capture_gl_multibyte_boundary(posting, monkeypatch):
@@ -1504,3 +1548,103 @@ def test_capture_gl_multibyte_boundary(posting, monkeypatch):
     suffix = post._delivery_marker_suffix(SHA, [markers[0]["key"]])
     assert body.removesuffix(suffix) == comments[0]["body"]
     assert "[folded:" in body
+
+
+def test_gitlab_group_site_addenda_count_all_reviewers_without_relisting_delivered_ranges(
+    posting,
+):
+    stamp = {"issue_key": "group:P", "lead_id": "P", "finding_ids": ["P", "M", "N"]}
+    rows = [
+        located(id="P", agent="one", delivery_group=stamp),
+        located(
+            id="M",
+            agent="two",
+            line_start=4,
+            line_end=4,
+            anchor="finish_operation()",
+            delivery_group=stamp,
+        ),
+        located(id="N", agent="three", line_start=8, line_end=8, delivery_group=stamp),
+    ]
+    first = posting(review("gitlab", rows), diff=DIFF, dry_run=False)
+    assert first.code == 0
+    notes = [
+        {
+            "id": 10 + i,
+            "author": {"username": "poster"},
+            "body": request.payload["body"],
+        }
+        for i, request in enumerate(first.requests)
+    ]
+    assert "- `foo.py:4`" in notes[1]["body"]
+    assert "- `foo.py:8`" in notes[1]["body"]
+    sites = [
+        {
+            "file": f"new-{i}.txt",
+            "anchor": "quote",
+            "line_start": 1,
+            "line_end": 1,
+            "location_status": "confirmed",
+        }
+        for i in range(2)
+    ]
+    extended = [{**row, "sites": [sites[i % 2]]} for i, row in enumerate(rows)]
+    update = posting(
+        review("gitlab", extended),
+        diff=DIFF,
+        dry_run=False,
+        entries=JsonFetch(notes, None),
+    )
+    assert update.code == 0 and len(update.requests) == 1
+    body = update.requests[0].payload["body"]
+    assert body.count("_Found independently by 3 reviewers._") == 1
+    assert [line for line in body.splitlines() if line.startswith("- `")] == [
+        "- `new-0.txt:1`",
+        "- `new-1.txt:1`",
+    ]
+    assert "### 1 issue described here" in body
+    notes[0]["body"] = body
+    repeated = posting(
+        review("gitlab", extended),
+        diff=DIFF,
+        dry_run=False,
+        entries=JsonFetch(notes, None),
+    )
+    assert repeated.code == 0 and repeated.requests == ()
+    # Member markers prove that their own ranges were already delivered.
+    notes[1]["body"] = (
+        notes[1]["body"].split("<!-- code-gauntlet-coverage:")[0]
+        + "\n"
+        + "\n".join(
+            post.build_finding_marker(SHA, marker["key"])
+            for marker in find_finding_markers(notes[1]["body"])
+        )
+    )
+    resumed = posting(
+        review("gitlab", extended),
+        diff=DIFF,
+        dry_run=False,
+        entries=JsonFetch(notes, None),
+    )
+    assert resumed.code == 0 and resumed.requests == ()
+    moved_lead = {**stamp, "lead_id": "M", "finding_ids": ["M", "P", "N"]}
+    reranked = posting(
+        review("gitlab", [{**row, "delivery_group": moved_lead} for row in extended]),
+        diff=DIFF,
+        dry_run=False,
+        entries=JsonFetch(notes, None),
+    )
+    assert reranked.code == 0 and reranked.requests == ()
+
+
+def test_github_skip_message_uses_issue_counts_for_multi_member_groups(posting):
+    stamp = {"issue_key": "group:P", "lead_id": "P", "finding_ids": ["P", "M"]}
+    rows = [
+        located(id="P", disposition="body", delivery_group=stamp, body="huge " * 20000),
+        located(id="M", disposition="body", delivery_group=stamp),
+        located(id="S", disposition="body", title="Small", body="small"),
+    ]
+    run = posting(review("github", rows), diff=DIFF)
+    assert run.code == 0
+    assert "1 of 2 issue(s) skipped inline" in run.out
+    assert "1 of 3" not in run.out

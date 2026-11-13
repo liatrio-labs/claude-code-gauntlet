@@ -6,7 +6,7 @@ export const TRACE_STAGES = ['discover', 'merge', 'verify', 'validate', 'filter'
 export const TRACE_FINDING_FIELDS = ['trace_id', 'discovery_agent', 'discovery_dimension', 'id', 'file',
   'line_start', 'line_end', 'line', 'end_line', 'claimed_line_start', 'claimed_line_end', 'anchor', 'location_status',
   'title', 'description', 'body', 'evidence', 'severity', 'suggestion', 'suggested_fix_code', 'claude_md_rule', 'spec_text',
-  'rule_source', 'agent', 'dimension', 'confidence', 'sites', 'admission', 'disposition', 'disposition_reasons',
+  'rule_source', 'agent', 'dimension', 'confidence', 'sites', 'admission', 'disposition', 'disposition_reasons', 'report_tag', 'report_destination',
   'consolidation_key', 'consolidation_primary', 'delivery_group', 'origin_dimension', 'policy_subject', 'path_role'];
 export const TRACE_REASONS = ['not_found', 'duplicate_id', 'invalid_shape', 'invalid_path', 'audit_overlap', 'verify_eliminated', 'verify_unproven', 'validation_skipped', 'threshold', 'exclusion', 'injection', 'suppression', 'challenge_removed', 'challenge_downgraded_removed', 'challenge_failed', 'challenge_cap', 'delivery_cap', 'delivery_tier', 'unanchored', 'body_budget', 'post_omission', 'body_routed', 'report_only', 'held_back', 'folded', 'demoted', 'refuted', 'out_of_scope', 'scope_contradicted', 'cite_unmatched', 'cite_unavailable', 'unknown'];
 const traceHistory = new WeakMap();

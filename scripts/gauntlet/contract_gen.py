@@ -167,6 +167,7 @@ _REGISTRY_FIELDS = (
     "deliveryGroupSchema: m.DELIVERY_GROUP_SCHEMA",
     "validationReturnProperties: m.VALIDATION_RETURN_PROPERTIES",
     "anchorLimits: m.ANCHOR_LIMITS",
+    "reportFoldLimits: m.REPORT_FOLD_LIMITS",
     "locationRights: m.LOCATION_RIGHTS",
     "locationStatuses: m.LOCATION_STATUSES",
     "dispositionRights: m.DISPOSITION_RIGHTS",
@@ -184,6 +185,7 @@ _REGISTRY_FIELDS = (
     " requiredWhenDimension: d.requiredWhenDimension || [],"
     " extraFields: Object.keys(d.schemaExtra || {})}))",
     "brand: {mark: m.BRAND_MARK, name: m.BRAND_NAME}",
+    "publicSummary: m.PUBLIC_SUMMARY",
     "severityEmoji: m.SEVERITY_EMOJI",
     "severityOrder: m.SEVERITY_ORDER",
     "reachability: v.REACHABILITY_VALUES",
@@ -199,7 +201,6 @@ _REGISTRY_FIELDS = (
     "severityEmojiFallback: m.SEVERITY_EMOJI_FALLBACK",
     "ruleSourceLabels: m.RULE_SOURCE_LABELS",
     "ruleSourceLabelFallback: m.RULE_SOURCE_LABEL_FALLBACK",
-    "codeOwnedHeadings: m.CODE_OWNED_HEADINGS",
     "agents: m.AGENTS",
     "modelAliases: m.MODEL_ALIASES",
     "policyProviders: m.POLICY_PROVIDERS",
@@ -815,11 +816,11 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
         "DIMENSION_ROWS": identity["dimensionRows"],
         "BRAND_MARK": identity["brand"]["mark"],
         "BRAND_NAME": identity["brand"]["name"],
+        "PUBLIC_SUMMARY": identity["publicSummary"],
         "SEVERITY_EMOJI": identity["severityEmoji"],
         "SEVERITY_EMOJI_FALLBACK": identity["severityEmojiFallback"],
         "RULE_SOURCE_LABELS": identity["ruleSourceLabels"],
         "RULE_SOURCE_LABEL_FALLBACK": identity["ruleSourceLabelFallback"],
-        "CODE_OWNED_HEADINGS": identity["codeOwnedHeadings"],
         "DETAIL_FIELDS_BY_DIMENSION": _detail_fields(identity),
         "KNOB_REGISTRY": tuple(identity["knobs"]),
     }
@@ -845,6 +846,7 @@ def render_python_registry(identity: Mapping[str, Any]) -> str:
     for name, value in (
         ("ANCHOR_SCHEMA", field_types["anchor"]),
         ("ANCHOR_LIMITS", identity["anchorLimits"]),
+        ("REPORT_FOLD_LIMITS", identity["reportFoldLimits"]),
     ):
         lines.extend(
             [

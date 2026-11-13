@@ -184,6 +184,14 @@ const PR_IDENTITY_FIELDS = deepFreeze([
   { name: 'title', required: false, check: (value) => typeof value === 'string' && value.trim().length > 0,
     describe: 'a non-empty string when present' },
 ]);
+const PUBLIC_SUMMARY = deepFreeze({
+  counts: 'Found {count} {issues} in this change{breakdown}.',
+  improvement: ' {count} is a suggested improvement rather than a defect.',
+  improvements: ' {count} are suggested improvements rather than defects.',
+  index: '- {mark} [{severity}] {location}{suggestion}: {title}',
+  suggestion: ' (improvement suggestion)',
+  remainder: '{count} more {issues} not listed here ({reasons}).',
+});
 const CODE_OWNED_HEADINGS = deepFreeze([
   '## Summary',
   '## Change Context',
@@ -545,7 +553,7 @@ const RULE_SOURCE_LABELS = deepFreeze({
 });
 const RULE_SOURCE_LABEL_FALLBACK = 'Cited rule';
 const STAGE_DEFAULTS = deepFreeze({
-  validator: 'sonnet', challenger: 'sonnet', executor: 'sonnet',
+  validator: 'sonnet', challenger: 'sonnet', grouper: 'sonnet', executor: 'sonnet',
   'artifact-writer': 'sonnet',
 });
 const MODEL_IDS = deepFreeze({ sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5', haiku: 'claude-haiku-4-5-20251001' });
@@ -1788,7 +1796,7 @@ const TRACE_STAGES = ['discover', 'merge', 'verify', 'validate', 'filter', 'admi
 const TRACE_FINDING_FIELDS = ['trace_id', 'discovery_agent', 'discovery_dimension', 'id', 'file',
   'line_start', 'line_end', 'line', 'end_line', 'claimed_line_start', 'claimed_line_end', 'anchor', 'location_status',
   'title', 'description', 'body', 'evidence', 'severity', 'suggestion', 'suggested_fix_code', 'claude_md_rule', 'spec_text',
-  'rule_source', 'agent', 'dimension', 'confidence', 'sites', 'admission', 'disposition', 'disposition_reasons',
+  'rule_source', 'agent', 'dimension', 'confidence', 'sites', 'admission', 'disposition', 'disposition_reasons', 'report_tag', 'report_destination',
   'consolidation_key', 'consolidation_primary', 'delivery_group', 'origin_dimension', 'policy_subject', 'path_role'];
 const TRACE_REASONS = ['not_found', 'duplicate_id', 'invalid_shape', 'invalid_path', 'audit_overlap', 'verify_eliminated', 'verify_unproven', 'validation_skipped', 'threshold', 'exclusion', 'injection', 'suppression', 'challenge_removed', 'challenge_downgraded_removed', 'challenge_failed', 'challenge_cap', 'delivery_cap', 'delivery_tier', 'unanchored', 'body_budget', 'post_omission', 'body_routed', 'report_only', 'held_back', 'folded', 'demoted', 'refuted', 'out_of_scope', 'scope_contradicted', 'cite_unmatched', 'cite_unavailable', 'unknown'];
 const traceHistory = new WeakMap();
@@ -2690,6 +2698,30 @@ function applyValidations(findings, validations) {
   }
   return { adjustedCount, unmatchedIds };
 }
+// --- groupRanking.js ---
+function groupTier(finding) {
+  return (finding.report_tag ?? finding.report_destination ?? finding.admission?.tier ?? 'main') === 'main' ? 1 : 0;
+}
+function groupSeverityRank(finding) {
+  const index = SEVERITY_ORDER.indexOf(asText(finding.severity).trim().toLowerCase());
+  return index < 0 ? 0 : SEVERITY_ORDER.length - index;
+}
+function chooseGroupLead(members) {
+  const key = (f) => [groupSeverityRank(f), (f.dimension ?? '').toLowerCase() === 'security' ? 1 : 0,
+    groupTier(f), deliveryAllows(f, 'inline') ? 1 : 0, asConfidence(f.confidence),
+    findingPolicy(f).core ? 1 : 0, asText(f.description).length];
+  return [...members].sort((a, b) => {
+    const ka = key(a), kb = key(b);
+    for (let i = 0; i < ka.length; i++) if (ka[i] !== kb[i]) return kb[i] - ka[i];
+    return 0;
+  })[0];
+}
+function groupDelivery(primary, corroborators = []) {
+  const members = [primary, ...corroborators];
+  const severity = SEVERITY_ORDER[SEVERITY_ORDER.length - Math.max(...members.map(groupSeverityRank))] ?? 'low';
+  const tier = members.some((f) => groupTier(f)) ? 'main' : 'suggestion';
+  return { ...primary, severity, report_tag: tier, report_destination: tier };
+}
 // --- reviewConfig.js ---
 function cfgGet(config, key, fallback) {
   const v = config ? config[key] : undefined;
@@ -3509,7 +3541,7 @@ function groupByProximity(findings, lineProximity) {
     pyGet(finding, 'file', ''), lineBucket(finding.line_start, lineProximity),
   ]));
 }
-function consolidateCrossAgent(findings, prefer = () => false) {
+function consolidateCrossAgent(findings) {
   const LINE_PROXIMITY = 5;
   for (const f of findings) {
     if (f && typeof f === 'object') {
@@ -3517,20 +3549,6 @@ function consolidateCrossAgent(findings, prefer = () => false) {
       delete f.consolidation_primary;
     }
   }
-  const winnerKey = (f) => {
-    const isCore = findingPolicy(f).core ? 1 : 0;
-    const conf = asConfidence(f.confidence);
-    const descLen = asText(f.description).length;
-    return [prefer(f) ? 1 : 0, isCore, conf, descLen];
-  };
-  const compareWinnerDesc = (a, b) => {
-    const ka = winnerKey(a);
-    const kb = winnerKey(b);
-    for (let i = 0; i < ka.length; i += 1) {
-      if (ka[i] !== kb[i]) return kb[i] - ka[i];
-    }
-    return 0; // tie -> preserve original order (stable sort)
-  };
   const groups = groupByProximity(findings, LINE_PROXIMITY);
   let consolidatedCount = 0;
   for (const group of groups.values()) {
@@ -3539,10 +3557,9 @@ function consolidateCrossAgent(findings, prefer = () => false) {
     const file = pyGet(group[0], 'file', '');
     const bucket = lineBucket(group[0].line_start, LINE_PROXIMITY);
     const consolidationKey = `${file}:${bucket}`;
-    const ranked = [...group].sort(compareWinnerDesc);
-    const primary = ranked.find((f) => pyGet(f, 'id', ''));
-    for (const f of group) {
-      if (!pyGet(f, 'id', '')) continue; // id-less findings stay unstamped
+    const members = group.filter((f) => pyGet(f, 'id', ''));
+    const primary = chooseGroupLead(members);
+    for (const f of members) {
       f.consolidation_key = consolidationKey;
       f.consolidation_primary = f === primary;
       consolidatedCount += 1;
@@ -3661,6 +3678,12 @@ function rankFindings(findings) {
     return ka[0] - kb[0] || ka[1] - kb[1] || ka[2] - kb[2] || ka[3] - kb[3];
   });
 }
+function challengeOutcome(score, isSecurity = false) {
+  if (score < 25 && !isSecurity) return 'removed';
+  if (score < 50) return 'downgraded';
+  if (score < 75) return 'contested';
+  return 'survived';
+}
 function applyChallenges(findings, challenges) {
   const challengeById = new Map();
   for (const entry of challenges) {
@@ -3696,23 +3719,25 @@ function applyChallenges(findings, challenges) {
     if (justification) finding.challenge_justification = justification;
     const isSurfaced = ('origin' in finding ? finding.origin : '').toLowerCase() === 'surfaced';
     const isSecurity = ('dimension' in finding ? finding.dimension : '').toLowerCase() === 'security';
-    if (score < 25 && !isSecurity) {
+    const outcome = challengeOutcome(score, isSecurity);
+    if (outcome === 'removed') {
       eliminated.push({
         ...finding,
         eliminated_by: 'challenge:removed',
         elimination_reason: `challenge score ${score} < 25; finding does not survive blind challenge`,
       });
       stats.challenge_removed += 1;
-    } else if (score < 50) {
+    } else if (outcome === 'downgraded') {
       const currentSev = ('severity' in finding ? finding.severity : 'low').toLowerCase();
       const newSev = downgradeSeverity(currentSev);
       finding.challenge_contested = false;
-      const removed = score < 25 && newSev === null;
+      const belowRemovalThreshold = challengeOutcome(score) === 'removed';
+      const removed = belowRemovalThreshold && newSev === null;
       if (newSev === null) {
         eliminated.push({
           ...finding,
           eliminated_by: removed ? 'challenge:removed' : 'challenge:downgraded',
-          elimination_reason: score < 25
+          elimination_reason: belowRemovalThreshold
             ? `challenge score ${score} < 25; security finding severity already ` +
               `'${currentSev}' (lowest) — finding removed`
             : `challenge score ${score} in 25-49 range; severity already ` +
@@ -3727,7 +3752,7 @@ function applyChallenges(findings, challenges) {
         active.push(finding);
       }
       stats[removed ? 'challenge_removed' : 'challenge_downgraded'] += 1;
-    } else if (score < 75) {
+    } else if (outcome === 'contested') {
       finding.challenge_contested = true;
       if (isSurfaced) {
         finding.report_destination = 'suggestion';
@@ -3759,6 +3784,30 @@ function applyChallenges(findings, challenges) {
 }
 // --- dispose.js ---
 const DELIVERABLE_CHALLENGES = ['survived', 'contested', 'downgraded'];
+function findingDisposition(finding, heldBack = false) {
+  const reasons = incompleteVetting(finding).map((stage) => stage === 'verify' ? 'verify_unproven' : 'validation_skipped');
+  if (Object.hasOwn(UNVERIFIED_REASONS.challenge, finding.challenge) && finding.challenge !== 'skipped') {
+    reasons.push(finding.challenge === 'capped' ? 'challenge_cap' : 'challenge_failed');
+  }
+  if (heldBack && !reasons.length) reasons.push('held_back');
+  let disposition = 'body';
+  const admitted = hasAdmission(finding);
+  if (reasons.length) disposition = 'held_back';
+  else if (!admitted || finding.admission.status !== 'admitted') {
+    disposition = admitted ? finding.admission.status : 'held_back';
+    reasons.push(disposition);
+  } else if (!DELIVERABLE_CHALLENGES.includes(finding.challenge)) {
+    disposition = 'held_back';
+    reasons.push('challenge_failed');
+  } else if (finding.admission.inline_eligible && finding.reachability !== 'future_change_only'
+    && finding.diff_validation?.in_diff === true && locationAllows(finding, 'inline')) {
+    disposition = 'deliver';
+  } else reasons.push('body_routed');
+  return { disposition, reasons: [...new Set([...reasons, ...(admitted ? finding.admission.reasons.map((reason) => reason.status) : [])])] };
+}
+function isDeliveryCandidate(finding) {
+  return ['deliver', 'body'].includes(findingDisposition(finding).disposition);
+}
 function disposeFindings(challenged) {
   const input = deepClone(challenged);
   const findings = [];
@@ -3771,26 +3820,9 @@ function disposeFindings(challenged) {
     delete finding.consolidation_key;
     delete finding.consolidation_primary;
     delete finding.delivery_group;
-    const reasons = incompleteVetting(finding).map((stage) => stage === 'verify' ? 'verify_unproven' : 'validation_skipped');
-    if (Object.hasOwn(UNVERIFIED_REASONS.challenge, finding.challenge) && finding.challenge !== 'skipped') {
-      reasons.push(finding.challenge === 'capped' ? 'challenge_cap' : 'challenge_failed');
-    }
-    if ((input.unverified || []).includes(finding) && !reasons.length) reasons.push('held_back');
-    let disposition = 'body';
-    const admitted = hasAdmission(finding);
-    if (reasons.length) disposition = 'held_back';
-    else if (!admitted || finding.admission.status !== 'admitted') {
-      disposition = admitted ? finding.admission.status : 'held_back';
-      reasons.push(disposition);
-    } else if (!DELIVERABLE_CHALLENGES.includes(finding.challenge)) {
-      disposition = 'held_back';
-      reasons.push('challenge_failed');
-    } else if (finding.admission.inline_eligible && finding.reachability !== 'future_change_only'
-      && finding.diff_validation?.in_diff === true && locationAllows(finding, 'inline')) {
-      disposition = 'deliver';
-    } else reasons.push('body_routed');
+    const { disposition, reasons } = findingDisposition(finding, (input.unverified || []).includes(finding));
     finding.disposition = disposition;
-    finding.disposition_reasons = [...new Set([...reasons, ...(admitted ? finding.admission.reasons.map((reason) => reason.status) : [])])];
+    finding.disposition_reasons = reasons;
     (disposition === 'held_back' ? unverified : findings).push(finding);
     if (finding.trace_id) for (const reason of finding.disposition_reasons) {
       decisions.push(traceDecision(finding, reason, reason, [], ['held_back', 'report_only'].includes(disposition) ? disposition : 'body_routed',
@@ -3806,25 +3838,52 @@ function disposeFindings(challenged) {
   }
   decisions.push(...eliminations.filter((_, index) => eliminated[index].trace_id));
   const actionable = findings.filter((f) => deliveryAllows(f, 'body'));
-  const { consolidatedCount } = consolidateCrossAgent(actionable, (f) => deliveryAllows(f, 'inline'));
-  const groups = deliveryGroups(actionable).map(({ primary, corroborators }, index) => {
+  const groupingNeeded = (input.grouping_ids || actionable).length >= 2;
+  const accepted = groupingNeeded ? acceptGroupingReply(input.grouping_reply, input.grouping_ids || [
+    ...(input.findings || []), ...(input.unverified || []), ...(input.eliminated || []),
+  ].map((f) => f.id), actionable) : { error: null, groups: [] };
+  const grouping = !groupingNeeded ? 'not_needed' : accepted.error ? 'positional' : 'model';
+  const gaps = accepted.error ? [`grouping: ${input.grouping_error || accepted.error}; same-lines grouping used`] : [];
+  if (accepted.error) consolidateCrossAgent(actionable);
+  const candidates = accepted.error
+    ? deliveryGroups(actionable).filter((g) => g.corroborators.length).map(({ primary, corroborators }) => ({
+      members: [primary, ...corroborators], consolidation_key: primary.consolidation_key,
+    })) : accepted.groups;
+  for (const group of candidates) {
+    const primary = chooseGroupLead(group.members);
+    for (const member of group.members) {
+      member.consolidation_key = group.consolidation_key ?? primary.id;
+      member.consolidation_primary = member === primary;
+    }
+  }
+  const delivery = deliveryGroups(actionable);
+  const placementTradeoffs = delivery.filter(({ primary, corroborators }) => !deliveryAllows(primary, 'inline')
+    && corroborators.some((f) => deliveryAllows(f, 'inline'))).length;
+  const groupedMembers = delivery.filter((g) => g.corroborators.length).reduce((n, g) => n + 1 + g.corroborators.length, 0);
+  const groups = delivery.map(({ primary, corroborators }, index) => {
     const members = [primary, ...corroborators];
     const ids = members.map((f) => f.id);
-    const issueKey = primary.consolidation_key ? `group:${primary.consolidation_key}` : `issue:${primary.id || index}`;
+    const issueKey = primary.consolidation_key ? `group:${grouping === 'model' ? primary.id : primary.consolidation_key}` : `issue:${primary.id || index}`;
     const stamp = { issue_key: issueKey, lead_id: primary.id, finding_ids: ids };
+    const delivered = groupDelivery(primary, corroborators);
     if (ids.every((id) => typeof id === 'string' && id)) for (const member of members) member.delivery_group = stamp;
     return { ...stamp, sites: members.flatMap((f) => f.sites || []),
-      tier: members.some((f) => (f.report_tag ?? f.report_destination) === 'main') ? 'main' : 'suggestion',
-      disposition: primary.disposition };
+      severity: delivered.severity, tier: delivered.report_tag,
+      disposition: primary.disposition, same_challenge_verdict: new Set(members.map((f) => typeof f.challenge_score === 'number'
+        ? challengeOutcome(f.challenge_score, (f.dimension ?? '').toLowerCase() === 'security')
+        : f.challenge_contested ? 'contested' : f.challenge)).size === 1 };
   });
   for (const finding of findings.filter((f) => f.consolidation_key && !f.consolidation_primary && f.trace_id)) {
     const related = findings.filter((f) => f.consolidation_key === finding.consolidation_key && f !== finding && f.trace_id).map((f) => f.trace_id);
     if (related.length) decisions.push(traceDecision(finding, 'folded', 'cross-agent consolidation', related, 'coalesced'));
   }
-  return { findings, unverified, eliminated, groups, decisions, stats: { ...input.stats,
+  return { findings, unverified, eliminated, groups, decisions, gaps,
+    ...Object.fromEntries(['grouping_reply', 'grouping_ids', 'grouping_error'].filter((key) => Object.hasOwn(input, key)).map((key) => [key, input[key]])), stats: { ...input.stats,
     skipped: unverified.filter((f) => Object.hasOwn(UNVERIFIED_REASONS.challenge, f.challenge)).length,
     held_back: unverified.length,
-    cross_agent_consolidated: consolidatedCount, final_count: findings.length } };
+    grouping, grouped_members: groupedMembers, grouping_placement_tradeoffs: placementTradeoffs,
+    grouping_verdicts: groups.filter((g) => g.finding_ids.length > 1).map((g) => ({ issue_key: g.issue_key, same_challenge_verdict: g.same_challenge_verdict })),
+    cross_agent_consolidated: groupedMembers, final_count: findings.length } };
 }
 function deliveryGroups(findings) {
   const groups = [];
@@ -3841,6 +3900,27 @@ function deliveryGroups(findings) {
     const primary = ordered.find((f) => stamp ? f.id === stamp.lead_id : f.consolidation_primary) || ordered[0];
     return { primary, corroborators: ordered.filter((f) => f !== primary) };
   });
+}
+function acceptGroupingReply(reply, ids, findings) {
+  const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+  const reject = (error) => ({ error, groups: [] });
+  if (!object(reply)) return reject('missing or non-object reply');
+  if (!Array.isArray(reply.groups)) return reject('groups is not an array');
+  if (Object.keys(reply).some((key) => key !== 'groups')) return reject('unexpected reply field');
+  const known = new Set(ids);
+  const seen = new Set();
+  for (const group of reply.groups) {
+    if (!object(group) || !Array.isArray(group.finding_ids)) return reject('invalid group');
+    for (const id of group.finding_ids) {
+      if (!known.has(id)) return reject('unknown id');
+      if (seen.has(id)) return reject('overlapping id');
+      seen.add(id);
+    }
+  }
+  const byId = new Map(findings.map((f) => [f.id, f]));
+  return { error: null, groups: reply.groups.map((group) => ({
+    members: group.finding_ids.map((id) => byId.get(id)).filter(Boolean),
+  })).filter((group) => group.members.length >= 2) };
 }
 // --- outboundText.js ---
 const OUTBOUND_NAMED_ENTITIES = deepFreeze({
@@ -4510,8 +4590,13 @@ function dimensionsSummaryTable(input, dimensions = DIMENSIONS) {
   });
   return ['| Dimension | Agent | Findings | Notes |', '|-----------|-------|----------|-------|', ...rows].join('\n');
 }
-function consolidateForReport(findings) {
+function consolidateForReport(findings, delivery = false, sources = new WeakMap()) {
   return deliveryGroups(findings).map(({ primary, corroborators }) => {
+    if (delivery) {
+      const finding = groupDelivery(primary, corroborators);
+      sources.set(finding, primary);
+      return finding;
+    }
     if (!corroborators.length) return primary;
     return {
       ...primary,
@@ -4520,6 +4605,8 @@ function consolidateForReport(findings) {
         agent: c.agent,
         dimension: c.dimension,
         confidence: c.confidence,
+        severity: c.severity,
+        report_tag: c.report_tag ?? c.report_destination,
         title: c.title,
         description: c.description,
       })),
@@ -4850,7 +4937,7 @@ function renderFinding(builder, finding, unverified, permalinks) {
         const dimension = preparedCodeSpan(corroboration.dimension, false, undefined, REPORT_FOLD_LIMITS.inlineChars);
         const confidence = inline(corroboration.confidence);
         const title = inline(corroboration.title);
-        builder.addSpans(`- **Corroborated by** ${agent} (${dimension}, confidence ${confidence}) — ${title}`, [agent, dimension]);
+        builder.addSpans(`- **Corroborated by** ${agent} (${dimension}, severity ${inline(normalizeReportSeverity(corroboration.severity))}, tier ${inline(corroboration.report_tag ?? 'main')}, confidence ${confidence}): ${title}`, [agent, dimension]);
         if (isPresent(corroboration.description)) {
           builder.add(foldedProse(corroboration.description).split(/\r?\n/).map((line) => `  ${line}`).join('\n'));
         }
@@ -4886,7 +4973,7 @@ function renderSeverityBuckets(builder, view, unverified, permalinks) {
 function plural(count, noun) {
   return count === 1 ? noun : `${noun}s`;
 }
-function countsSentence(findings, rawCount, unverified, view) {
+function localCountsSentence(findings, rawCount, unverified, view) {
   const count = findings.length;
   let sentence = count === rawCount
     ? `${count} ${plural(count, 'finding')} after the gauntlet`
@@ -4900,10 +4987,21 @@ function countsSentence(findings, rawCount, unverified, view) {
   if (unverified.length > held) sentence += ` ${unverified.length - held} unverified / pipeline-degraded.`;
   return sentence;
 }
+function publicSummaryText(template, values) {
+  return template.replace(/\{(\w+)\}/g, (_, key) => values[key]);
+}
+function countsSentence(findings, view) {
+  const count = findings.length;
+  const breakdown = view.order.map((severity) => `${view.buckets.get(severity).length} ${severity}`);
+  let sentence = publicSummaryText(PUBLIC_SUMMARY.counts, { count, issues: plural(count, 'issue'), breakdown: breakdown.length ? ': ' + breakdown.join(', ') : '' });
+  const suggestions = findings.filter((finding) => (finding.report_tag ?? finding.report_destination) === 'suggestion').length;
+  if (suggestions === 1) sentence += publicSummaryText(PUBLIC_SUMMARY.improvement, { count: suggestions });
+  else if (suggestions > 1) sentence += publicSummaryText(PUBLIC_SUMMARY.improvements, { count: suggestions });
+  return sentence;
+}
 function reportUnitKey(finding, original) {
-  return finding.consolidation_key
-    ? finding.consolidation_key
-    : (original && typeof original === 'object' ? original : finding);
+  return finding.delivery_group?.issue_key ?? finding.consolidation_key
+    ?? (original && typeof original === 'object' ? original : finding);
 }
 function plainReportObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -4914,11 +5012,10 @@ function plainReportObject(value) {
     return false;
   }
 }
-function summaryIndex(rawFindings, findingsView, input) {
+function summaryIndex(rawFindings, findingsView, input, projected, sources) {
   const reported = findingsView.order.flatMap((severity) => findingsView.buckets.get(severity));
-  if (!Array.isArray(input.delivered)) return { indexed: reported, reasons: [] };
+  if (!Array.isArray(input.delivered)) return { indexed: reported, reasons: [], references: new Map(reported.map((f) => [f, typeof f.id === 'string' && f.id ? f.id : projected.indexOf(sources.get(f) ?? f)])) };
   const originals = Array.isArray(input.findings) ? input.findings : [];
-  const projected = rawFindings;
   const delivered = input.delivered.filter(plainReportObject);
   const deliveredOriginals = new Set(delivered);
   const deliveryOrder = new Map();
@@ -4931,6 +5028,7 @@ function summaryIndex(rawFindings, findingsView, input) {
   for (let index = 0; index < originals.length; index += 1) {
     const original = originals[index];
     const finding = projected[index] || {};
+    if (!rawFindings.includes(finding)) continue;
     if (finding && typeof finding === 'object') originalByProjected.set(finding, original);
     const key = reportUnitKey(finding, original);
     if (!unitMembers.has(key)) unitMembers.set(key, []);
@@ -4940,27 +5038,33 @@ function summaryIndex(rawFindings, findingsView, input) {
     }
   }
   pairs.sort((left, right) => deliveryOrder.get(left.original) - deliveryOrder.get(right.original));
-  const deliveredUnits = new Map(consolidateForReport(pairs.map((pair) => pair.finding)).map((finding) => (
-    [reportUnitKey(finding, originalByProjected.get(finding)), finding]
+  const deliveredUnits = new Map(consolidateForReport(pairs.map((pair) => pair.finding), true, sources).map((finding) => (
+    [reportUnitKey(finding, originalByProjected.get(sources.get(finding) ?? finding)), finding]
   )));
   const indexed = reported.map((finding) => deliveredUnits.get(
-    reportUnitKey(finding, originalByProjected.get(finding)),
+    reportUnitKey(finding, originalByProjected.get(sources.get(finding) ?? finding)),
   )).filter(Boolean);
   const omittedUnits = [...unitMembers].filter(([key]) => !deliveredUnits.has(key)).map(([, members]) => members);
   const reasons = [];
-  const isMain = (finding) => (finding.report_tag ?? finding.report_destination) === 'main';
+  const unitTier = (members) => {
+    const delivered = groupDelivery(members[0], members.slice(1));
+    return delivered.report_tag;
+  };
   if (typeof input.deliveryCap === 'number' && omittedUnits.some((members) => (
-    input.deliveryTier !== 'main_only' || members.some(isMain)
+    input.deliveryTier !== 'main_only' || unitTier(members) === 'main'
   ))) {
-    reasons.push(`over the delivery cap of ${input.deliveryCap} ${plural(input.deliveryCap, 'finding')}`);
+    reasons.push(`this review posts at most ${input.deliveryCap} ${plural(input.deliveryCap, 'issue')}`);
   }
   if (input.deliveryTier === 'main_only' && omittedUnits.some((members) => (
-    members.some((finding) => (finding.report_tag ?? finding.report_destination) === 'suggestion')
+    unitTier(members) === 'suggestion'
   ))) {
-    reasons.push('improvement suggestions held back by delivery tier main_only');
+    reasons.push('this review includes defects only');
   }
-  if (!reasons.length && omittedUnits.length) reasons.push('not selected for delivery');
-  return { indexed, reasons };
+  if (!reasons.length && omittedUnits.length) reasons.push('not selected for this review');
+  const references = new Map(indexed.map((finding) => [finding,
+    typeof finding.id === 'string' && finding.id ? finding.id : delivered.indexOf(originalByProjected.get(sources.get(finding) ?? finding)),
+  ]));
+  return { indexed, reasons, references };
 }
 function partitionByDisposition(inp, findingsRight) {
   const projected = coerceReportFindings(inp.findings);
@@ -4972,12 +5076,19 @@ function partitionByDisposition(inp, findingsRight) {
 }
 function summaryBlock(builder, input, findingsRight = 'body') {
   const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  const { rawFindings, rawUnverified } = partitionByDisposition(inp, findingsRight);
-  const findings = consolidateForReport(rawFindings);
+  const { projected, rawFindings, rawUnverified } = partitionByDisposition(inp, findingsRight);
+  const local = findingsRight === 'report';
+  const sources = new WeakMap();
+  const findings = consolidateForReport(rawFindings, !local, sources);
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
-  builder.add(countsSentence(findings, rawFindings.length, unverified, findingsView));
-  const { indexed, reasons } = summaryIndex(rawFindings, findingsView, inp);
+  const counts = local ? localCountsSentence(findings, rawFindings.length, unverified, findingsView) : countsSentence(findings, findingsView);
+  builder.add(counts);
+  const selection = summaryIndex(rawFindings, findingsView, local ? { ...inp, delivered: undefined } : inp, projected, sources);
+  const indexed = selection.indexed.filter((finding) => local || deliveryAllows(finding, 'inline'));
+  const bodyCount = selection.indexed.length - indexed.length;
+  const reasons = [...selection.reasons];
+  const records = [];
   const permalinks = permalinkContext(inp.prIdentity);
   const bullets = [];
   let indexChars = 0;
@@ -4987,34 +5098,36 @@ function summaryBlock(builder, input, findingsRight = 'body') {
     const where = quotedSummaryLocation(finding) || '`location unavailable`';
     const url = locationUrl(finding, permalinks);
     const link = url ? `[${where}](${url})` : where;
-    const suggestion = (finding.report_tag ?? finding.report_destination) === 'suggestion' ? ' (improvement suggestion)' : '';
+    const suggestion = (finding.report_tag ?? finding.report_destination) === 'suggestion' ? PUBLIC_SUMMARY.suggestion : '';
     const bullet = outboundTildeRuns(
-      `- ${severityMark(severity)} [${severity.toUpperCase()}] ${link}${suggestion}: ${prepareSummaryTitle(finding.title)}`,
+      publicSummaryText(PUBLIC_SUMMARY.index, { mark: severityMark(severity), severity: severity.toUpperCase(), location: link, suggestion, title: prepareSummaryTitle(finding.title) }),
     );
+    records.push({ lead_id: selection.references.get(finding), bullet });
     const nextChars = [...bullet].length + (bullets.length ? 1 : 0);
-    if (indexChars + nextChars > REPORT_FOLD_LIMITS.summaryIndexChars) {
+    if (cutForLength || indexChars + nextChars > REPORT_FOLD_LIMITS.summaryIndexChars) {
       cutForLength = true;
-      break;
+      continue;
     }
     bullets.push(bullet);
     indexChars += nextChars;
   }
   if (bullets.length) builder.add();
   for (const bullet of bullets) builder.add(bullet);
-  const remainder = findings.length - bullets.length;
-  if (cutForLength) reasons.push('over the summary length limit');
-  const remainderNoun = findings.length === rawFindings.length
+  const remainder = findings.length - bullets.length - bodyCount;
+  if (cutForLength) reasons.push(local ? 'over the summary length limit' : 'did not fit in this comment');
+  const remainderNoun = !local ? plural(remainder, 'issue') : findings.length === rawFindings.length
     ? plural(remainder, 'finding')
     : `reported ${plural(remainder, 'issue')}`;
   if (remainder) {
     builder.add();
-    builder.add(`${remainder} more ${remainderNoun} not listed here (${reasons.join('; ')}).`);
+    builder.add(publicSummaryText(PUBLIC_SUMMARY.remainder, { count: remainder, issues: remainderNoun, reasons: reasons.join('; ') }));
   }
+  return { counts, index: records, omitted: findings.length - selection.indexed.length, reasons: selection.reasons };
 }
-function renderSummaryBody(input) {
+function renderPublicSummary(input) {
   const builder = reportBuilder();
-  summaryBlock(builder, input);
-  return builder.finish();
+  const data = summaryBlock(builder, input);
+  return { ...data, body: builder.finish() };
 }
 function receiptSafe(value) {
   if (value === undefined || value === null) return 'unknown';
@@ -5531,11 +5644,12 @@ async function challengeStage(ctx, input) {
   };
 }
 function selectDelivery(survivors, cap, tier) {
-  const members = tier === 'main_only'
-    ? (survivors || []).filter((f) => (f.report_tag ?? f.report_destination) === 'main')
-    : (survivors || []);
-  const pool = deliveryGroups(members);
-  const rankable = pool.map(({ primary, corroborators }) => rankFindings(coerceReportFindings([primary, ...corroborators]))[0]);
+  const pool = deliveryGroups(survivors || []).filter(({ primary, corroborators }) => (
+    tier !== 'main_only' || groupDelivery(primary, corroborators).report_tag === 'main'
+  ));
+  const rankable = pool.map(({ primary, corroborators }) => groupDelivery(
+    coerceReportFindings([primary])[0], coerceReportFindings(corroborators),
+  ));
   const originalByRankable = new Map(rankable.map((finding, index) => [finding, pool[index]]));
   let ranked = rankFindings(rankable).map((finding) => originalByRankable.get(finding));
   if (cap !== undefined && cap !== null) ranked = ranked.slice(0, Math.max(0, cap));
@@ -6746,7 +6860,7 @@ function toV2Aliased(f) {
   }
   return out;
 }
-function postReviewWrapper(id, reviewBody) {
+function postReviewWrapper(id, reviewBody, reviewSummary) {
   return {
     owner: id.owner,
     repo: id.repo,
@@ -6755,6 +6869,7 @@ function postReviewWrapper(id, reviewBody) {
     platform: id.platform,
     web_origin: id.web_origin,
     review_body: typeof reviewBody === 'string' ? reviewBody : '',
+    ...(reviewSummary ? { review_summary: reviewSummary } : {}),
   };
 }
 function writerPayload(inp) {
@@ -6763,7 +6878,7 @@ function writerPayload(inp) {
   return {
     findings: (inp.findings || []).map(toV2Aliased),
     postReview: id
-      ? { ...postReviewWrapper(id, inp.reviewBody), findings: postReviewSet }
+      ? { ...postReviewWrapper(id, inp.reviewBody, inp.reviewSummary), findings: postReviewSet }
       : postReviewSet,
     report: inp.report || '',
     checkpoints: inp.checkpoints || {},
@@ -6806,7 +6921,7 @@ function persistPlan(inp, paths) {
       path: paths.postReview,
       source: paths.findings,
       ids: (inp.postReview || []).map((f) => f && f.id),
-      wrapper: id ? postReviewWrapper(id, inp.reviewBody) : null,
+      wrapper: id ? postReviewWrapper(id, inp.reviewBody, inp.reviewSummary) : null,
     },
     checkpoint: {
       path: paths.checkpoints,
@@ -7535,6 +7650,37 @@ function applyChallengeReplayBelt(challengeOut) {
   }
   return challengeOut.eliminated.filter((f) => f.replay_belt === true).length;
 }
+// --- groupFindings.js ---
+function groupingPrompt(findings) {
+  const fold = (text, limit) => {
+    const value = String(text ?? '').replace(/\s+/g, ' ').trim();
+    return limit === undefined ? value : value.slice(0, limit);
+  };
+  return 'Findings:\n' + findings.map((f) => {
+    const range = f.line_end && f.line_end !== f.line_start ? `${f.line_start}-${f.line_end}` : f.line_start;
+    return `- ${f.id} | ${fold(f.file)}:${range} | ${fold(f.severity)} | ${fold(f.title)} | ${fold(f.description, 600)} | Fix: ${fold(f.suggestion, 200)}`;
+  }).join('\n');
+}
+function groupingSchema(ids) {
+  const id = { type: 'string', enum: ids };
+  return { type: 'object', properties: { groups: { type: 'array', items: {
+    type: 'object', properties: { finding_ids: { type: 'array', items: id } },
+    required: ['finding_ids'], additionalProperties: false,
+  } } }, required: ['groups'], additionalProperties: false };
+}
+async function groupFindings(ctx, findings, policy = {}) {
+  const grouping_ids = findings.map((f) => f.id);
+  if (findings.length < 2) return { grouping_ids };
+  try {
+    const grouping_reply = await ctx.agent(groupingPrompt(findings), {
+      label: 'group-findings', agentType: 'code-gauntlet:grouper',
+      model: modelFor('code-gauntlet:grouper', policy), schema: groupingSchema(grouping_ids),
+    });
+    return { grouping_ids, grouping_reply: grouping_reply ?? null };
+  } catch (error) {
+    return { grouping_ids, grouping_reply: null, grouping_error: `dispatch failed: ${asText(error?.message || error) || 'unknown error'}` };
+  }
+}
 // --- measurementReplay.js ---
 function promptSha256(text) {
   const bytes = [];
@@ -7690,6 +7836,7 @@ async function deliverFromCheckpoint(c, A, state) {
   gaps.push(...(rawChallenge.gaps || []));
   const markedCount = applyChallengeReplayBelt(challengeCopy);
   const challengeOut = disposeFindings(challengeCopy);
+  gaps.push(...challengeOut.gaps);
   if (measurementTrace) recordStage(measurementTrace, 'dispose', challengeOut, { decisions: challengeOut.decisions });
   if (markedCount > 0) {
     gaps.push(`replay-filter: ${markedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter and were removed — disclosed per-finding in the eliminated set (eliminated_by:'injection', replay_belt:true), not counted in stats.filter`);
@@ -7713,10 +7860,6 @@ async function deliverFromCheckpoint(c, A, state) {
   if (measurementTrace) measurementTrace.complete = true;
   stripTraceFields(phaseOutputs);
   stripTraceFields(challengeOut);
-  const headlessCommentsEnabled = (configEchoValue(A, 'delivery') || '').split(',').includes('pr_comments');
-  const includeDelivered = Boolean(A.delivery && A.delivery.prIdentity)
-    && (A.mode !== 'headless'
-      || headlessCommentsEnabled);
   const pathNormalization = {};
   for (const [phase, output] of Object.entries(phaseOutputs)) {
     const counts = {};
@@ -7727,7 +7870,6 @@ async function deliverFromCheckpoint(c, A, state) {
   }
   const reportInput = {
     summary: summaryCopy.summary,
-    ...(includeDelivered ? { delivered: postReview } : {}),
     findings: challengeOut.findings,
     unverified: challengeOut.unverified,
     eliminated: challengeOut.eliminated,
@@ -7754,7 +7896,7 @@ async function deliverFromCheckpoint(c, A, state) {
     deliveryCap: limits.deliveryCap ?? null,
     gapCount: gaps.length,
   };
-  const reviewBody = renderSummaryBody(reportInput);
+  const { body: reviewBody, ...reviewSummary } = renderPublicSummary({ ...reportInput, delivered: postReview });
   let reportOut = await runPhase('report', () => ({ report: renderReport(reportInput), gaps: [] }));
   const reportGaps = reportOut.gaps || [];
   gaps.push(...reportGaps);
@@ -7764,7 +7906,7 @@ async function deliverFromCheckpoint(c, A, state) {
     findings: [...challengeOut.findings, ...challengeOut.unverified, ...challengeOut.eliminated],
     postReview,
     prIdentity: (A.delivery || {}).prIdentity,
-    reviewBody,
+    reviewBody, reviewSummary,
     report: reportOut.report,
     checkpoints: slimPersistedCheckpoints(phaseOutputs, completed, state.phaseReached),
     outputDir: A.outputDir,
@@ -7964,6 +8106,7 @@ async function runWith(ctx, rawArgs) {
       const out = await challengeStage(c, {
         findings: admitted, limits, policy, generatedAt: A.generatedAt, diffPath: A.diffPath,
       });
+      Object.assign(out, await groupFindings(c, (out.findings || []).filter(isDeliveryCandidate), policy));
       out.eliminated = [...(verifyOut.eliminated || []), ...(filterOut.eliminated || []), ...(out.eliminated || [])];
       return out;
     });

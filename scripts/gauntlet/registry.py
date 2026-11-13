@@ -299,6 +299,8 @@ TRACE_FINDING_FIELDS: tuple[str, ...] = (
     "admission",
     "disposition",
     "disposition_reasons",
+    "report_tag",
+    "report_destination",
     "consolidation_key",
     "consolidation_primary",
     "delivery_group",
@@ -1217,6 +1219,15 @@ BRAND_MARK = "⚔️"
 
 BRAND_NAME = "Code Gauntlet"
 
+PUBLIC_SUMMARY = {
+    "counts": "Found {count} {issues} in this change{breakdown}.",
+    "improvement": " {count} is a suggested improvement rather than a defect.",
+    "improvements": " {count} are suggested improvements rather than defects.",
+    "index": "- {mark} [{severity}] {location}{suggestion}: {title}",
+    "suggestion": " (improvement suggestion)",
+    "remainder": "{count} more {issues} not listed here ({reasons}).",
+}
+
 SEVERITY_EMOJI = {
     "critical": "🔴",
     "high": "🟠",
@@ -1234,17 +1245,6 @@ RULE_SOURCE_LABELS = {
 }
 
 RULE_SOURCE_LABEL_FALLBACK = "Cited rule"
-
-CODE_OWNED_HEADINGS = [
-    "## Summary",
-    "## Change Context",
-    "## Findings",
-    "## Findings held back by admission",
-    "## Unverified / pipeline-degraded findings",
-    "## Eliminated findings",
-    "## Review Dimensions Summary",
-    "## Review Methodology",
-]
 
 DETAIL_FIELDS_BY_DIMENSION = {
     "bug": ("hidden_errors",),
@@ -1532,6 +1532,17 @@ ANCHOR_LIMITS = MappingProxyType(
     {
         "lines": 8,
         "chars": 400,
+    }
+)
+
+REPORT_FOLD_LIMITS = MappingProxyType(
+    {
+        "proseChars": 4000,
+        "summaryChars": 12000,
+        "summaryIndexChars": 12000,
+        "evidenceLines": 40,
+        "evidenceChars": 8000,
+        "inlineChars": 512,
     }
 )
 

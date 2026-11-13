@@ -174,6 +174,7 @@ class SummaryPlan:
     summary: compose.ComposedBody
     sha: str
     budget_error: str | None
+    gap: str | None = None
 
 
 class DeliverySession:
@@ -359,7 +360,8 @@ def plan_delivery(
     data: ReviewInput, facts: DiffFacts | None, *, platform: Platform
 ) -> DeliveryPlan:
     findings: list[Finding] = []
-    for raw in data["findings"]:
+    indexes = {}
+    for source_index, raw in enumerate(data["findings"]):
         if not delivery_allows(raw, "body"):
             continue
         finding = cast(Finding, normalize_location(raw))
@@ -374,7 +376,7 @@ def plan_delivery(
                     normalize_location({**finding, "location_status": "unconfirmed"}),
                 )
         findings.append(finding)
-    indexes = {id(finding): index for index, finding in enumerate(findings)}
+        indexes[id(finding)] = source_index
     groups: list[GroupPlan] = []
     candidates: list[gate.OverlapCandidate] = []
     for group in compose.consolidate_delivery(findings):
@@ -448,7 +450,10 @@ def _activate_degraded(
     session.warn_skip(group.warning)
     return tuple(
         compose.SkippedEntry(
-            member.path, member.finding.get("line"), session.activate(member)
+            member.path,
+            member.finding.get("line"),
+            session.activate(member),
+            finding_index=member.index,
         )
         for member in group.members
     )
@@ -515,19 +520,34 @@ def plan_summary(
     skipped_groups: Sequence[Sequence[compose.SkippedEntry]],
     *,
     platform: Platform,
-    inline_count: int | None = None,
 ) -> SummaryPlan:
     sha = resolve_marker_sha(data)
-    summary = compose.compose_review_body(
-        data.get("review_body", ""),
-        skipped_groups,
-        platform=platform,
-        findings_count=len(data["findings"]),
-        sha=sha,
-        inline_count=inline_count,
-    )
+    gap = None
+    try:
+        if "review_summary" in data and data["review_summary"] is None:
+            raise compose.ReportShapeError("Invalid review_summary contract.")
+        summary = compose.compose_review_body(
+            data.get("review_body", ""),
+            skipped_groups,
+            platform=platform,
+            findings_count=len(data["findings"]),
+            index_findings=data["findings"],
+            review_summary=data.get("review_summary"),
+            sha=sha,
+        )
+    except compose.ReportShapeError as exc:
+        gap = f"summary: {exc}; issue index omitted"
+        summary = compose.compose_review_body(
+            compose.legacy_summary(data["findings"])["counts"],
+            skipped_groups,
+            platform=platform,
+            findings_count=len(data["findings"]),
+            sha=sha,
+        )
     error = _body_budget_error(summary.body, platform, "summary")
-    return SummaryPlan(summary, sha, error + "; nothing was posted." if error else None)
+    return SummaryPlan(
+        summary, sha, error + "; nothing was posted." if error else None, gap
+    )
 
 
 def _delivery_marker_suffix(sha: object, keys: Sequence[str]) -> str:
@@ -571,13 +591,13 @@ def _report_summary_budget(composed: compose.ComposedBody, platform: Platform) -
     limits = body_limit(platform)
     if composed.omitted:
         print(
-            f"  {composed.omitted} skipped finding(s) not shown: the "
+            f"  {composed.omitted} issue(s) not shown: the "
             f"{limits.surface} reached the {limits.bytes}-byte "
             f"{limits.label} body limit."
         )
         for entry in composed.omitted_entries:
             warn(
-                f"Skipped finding '{entry.title}' at {entry.location} not shown: the "
+                f"Issue '{entry.title}' at {entry.location} not shown: the "
                 f"{limits.surface} reached the {limits.bytes}-byte "
                 f"{limits.label} body limit."
             )
@@ -651,9 +671,9 @@ def post_github(
             comment["line"] = anchor.site.apply_range[1]
         comments.append(comment)
 
-    finalized = plan_summary(
-        data, skipped_groups, platform="github", inline_count=len(comments)
-    )
+    finalized = plan_summary(data, skipped_groups, platform="github")
+    if finalized.gap:
+        session.warn_skip(finalized.gap)
     summary = finalized.summary
     payload: GitHubReviewPayload = {
         "body": summary.body,
@@ -671,12 +691,11 @@ def post_github(
         url = response.get("html_url", response.get("id", "posted"))
         print(f"Review posted: {url}")
         print(f"  {len(comments)} inline comment(s) posted.")
-    flat_skipped = [entry for group in skipped_groups for entry in group]
-    if flat_skipped:
+    if skipped_groups:
         shown = f"{summary.shown} of " if summary.omitted else ""
         print(
-            f"  {shown}{len(flat_skipped)} finding(s) skipped inline "
-            "(lines not in diff) — appended to review body."
+            f"  {shown}{len(skipped_groups)} issue(s) skipped inline "
+            "(lines not in diff), appended to review body."
         )
     _report_summary_budget(summary, "github")
     session.print_fix_summary()
@@ -792,7 +811,10 @@ def post_gitlab(
             key,
             *(
                 site_key(site, owner)
-                for site in finding.get("sites", [])
+                for site in [
+                    *finding.get("sites", []),
+                    *([finding] if owner != key else []),
+                ]
                 if delivery_allows(
                     {
                         **site,
@@ -820,18 +842,9 @@ def post_gitlab(
             or any(key in prior.legacy_group_keys for key in keys)
         ):
             already_present += 1
-            # Per-member deliveries can predate the group's primary finding.
-            if keys[0] not in delivered_keys:
-                extra = cast(Finding, {**members[0], "disposition": "body"})
-                extra.pop("suggested_fix_code", None)
-                coverage_overrides[id(extra)] = coverage(members[0])
-                skipped_groups.append(
-                    (compose.SkippedEntry(extra.get("file"), extra.get("line"), extra),)
-                )
-                continue
-            additions = []
+            missing_primary = keys[0] not in delivered_keys
             legacy = any(key in prior.legacy_group_keys for key in keys)
-            if not legacy:
+            if not legacy and not missing_primary:
                 checked = render_inline(
                     group.primary,
                     group.group.corroborators,
@@ -843,37 +856,43 @@ def post_gitlab(
                 )
                 if checked.budget_error:
                     warn(checked.budget_error)
-            for member, key in zip(members, keys, strict=True):
-                owner = site_owners[key]
-                new_sites = [
-                    site
-                    for site in member.get("sites", [])
-                    if site_key(site, owner) not in prior.site_keys
-                    and delivery_allows(
-                        {
-                            **site,
-                            "disposition": member.get("disposition"),
-                            "admission": member.get("admission"),
-                        },
-                        "sourceLink",
+            owner = keys[0]
+            delivered_ranges = {
+                site_key(member)
+                for member, key in zip(members, keys, strict=True)
+                if key in delivered_keys or legacy
+            }
+            new_sites = tuple(
+                site
+                for site in compose.group_sites(members[0], members[1:])
+                if not any(
+                    site_key(site, previous_owner) in prior.site_keys
+                    for previous_owner in keys
+                )
+                and site_key(site) not in delivered_ranges
+            )
+            if new_sites or missing_primary:
+                additions = []
+                for index, (member, key) in enumerate(zip(members, keys, strict=True)):
+                    extra = cast(Finding, {**member, "disposition": "body"})
+                    if index == 0 and not missing_primary:
+                        extra["body"] = (
+                            "Additional confirmed sites for this previously delivered issue."
+                        )
+                    extra.pop("suggested_fix_code", None)
+                    coverage_overrides[id(extra)] = (
+                        key,
+                        *(site_key(site, owner) for site in new_sites if index == 0),
                     )
-                ]
-                if not new_sites:
-                    continue
-                extra = cast(Finding, {**member, "disposition": "body"})
-                extra["sites"] = new_sites
-                extra["body"] = (
-                    "Additional confirmed sites for this previously delivered issue."
-                )
-                extra.pop("suggested_fix_code", None)
-                coverage_overrides[id(extra)] = (
-                    key,
-                    *(site_key(site, owner) for site in new_sites),
-                )
-                additions.append(
-                    compose.SkippedEntry(member.get("file"), member.get("line"), extra)
-                )
-            if additions:
+                    additions.append(
+                        compose.SkippedEntry(
+                            member.get("file"),
+                            member.get("line"),
+                            extra,
+                            additional_sites=new_sites if index == 0 else None,
+                            finding_index=group.primary.index if index == 0 else None,
+                        )
+                    )
                 skipped_groups.append(tuple(additions))
             continue
         pending.append((group, keys, tuple(key for key in all_keys if key not in keys)))
@@ -896,11 +915,13 @@ def post_gitlab(
             )
         )
         if missing:
-            summary_groups.append(missing)
+            summary_groups.append(skipped_group)
     if tuple(summary_groups) != initial_skipped:
         finalized = plan_summary(
             {**data, "sha": sha}, summary_groups, platform="gitlab"
         )
+    if finalized.gap:
+        session.warn_skip(finalized.gap)
     composed = finalized.summary
     summary_keys: list[str] = []
     summary_sites: list[str] = []
@@ -1061,7 +1082,8 @@ def _parser() -> Parser:
     parser.add_argument(
         "--report",
         metavar="PATH",
-        help="Read the rendered report Summary section as review_body when absent.",
+        help="Deprecated compatibility option; PATH is ignored. "
+        "Summaries are rendered from findings.",
     )
     parser.add_argument("--owner", help="Override the wrapper owner field.")
     parser.add_argument("--repo", help="Override the wrapper repo field.")
@@ -1104,18 +1126,9 @@ def _execute(args: argparse.Namespace) -> int:
         value = getattr(args, name)
         if value is not None:
             raw[name] = value
-    if args.report and not raw.get("review_body"):
-        try:
-            with open(args.report, encoding="utf-8") as fh:
-                report = fh.read()
-        except FileNotFoundError:
-            die(f"Report file not found: {args.report}")
-        try:
-            raw["review_body"] = compose.summary_body_from_report(report)
-        except compose.ReportShapeError as exc:
-            die(str(exc))
-
     data = validate_review_input(raw)
+    if not raw.get("review_body") and "review_summary" not in raw:
+        data["review_summary"] = compose.legacy_summary(data["findings"])
 
     platform = data.get("platform")
     if platform:

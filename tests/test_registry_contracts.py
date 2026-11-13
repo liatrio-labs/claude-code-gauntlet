@@ -458,6 +458,10 @@ def test_emoji_allowlist():
 
 def test_machine_string_registry():
     text = read("docs/machine-parsed-strings.md")
+    table_lines = [
+        i for i, line in enumerate(text.splitlines()) if line.startswith("|")
+    ]
+    assert len(table_lines) == table_lines[-1] - table_lines[0] + 1
     rows = parse_registry(text)
     assert {
         "Headless config:",
@@ -475,8 +479,13 @@ def test_machine_string_registry():
         assert row["producers"] and row["parsers"]
         if NO_PARSER in row["parsers"]:
             assert row["parsers"] == [NO_PARSER] and row["notes"]
-        for rel in row["producers"] + [
-            rel for rel in row["parsers"] if rel != NO_PARSER
+        if NO_PARSER in row["producers"]:
+            assert (
+                row["producers"] == [NO_PARSER]
+                and "no current producer" in row["notes"]
+            )
+        for rel in [
+            rel for rel in row["producers"] + row["parsers"] if rel != NO_PARSER
         ]:
             assert row["string"] in read(rel)
     composite = [
@@ -684,3 +693,8 @@ def test_full_report_predicates(surface):
     assert "{finding.body}" not in text
     assert "suggested_fix_code" not in text
     assert "not apply-checked" not in text
+
+
+def test_grouper_has_an_explicit_empty_tool_list():
+    frontmatter = read("agents/grouper.md").split("---", 2)[1]
+    assert re.search(r"(?m)^tools: \[\]$", frontmatter)

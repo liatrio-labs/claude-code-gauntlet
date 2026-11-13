@@ -41,8 +41,8 @@ test('the report ends with a REVIEW.md tip only when discovery says none exists'
     assert.equal(report.renderReport(absent), `${withoutTip}\n\n${tip}`);
     assert.equal(withoutTip.includes(tip), false);
     assert.equal(rendered({ mode }).includes(tip), false);
-    assert.equal(report.renderSummaryBody(absent), report.renderSummaryBody(present));
-    assert.equal(report.renderSummaryBody(absent).includes(tip), false);
+    assert.equal(report.renderPublicSummary(absent).body, report.renderPublicSummary(present).body);
+    assert.equal(report.renderPublicSummary(absent).body.includes(tip), false);
   }
 });
 
@@ -142,8 +142,8 @@ const REPORT_ROWS = [
     prefix: '- **Reachability:', expected: '- **Reachability:** only under a future change (severity demoted to low)' },
   { name: 'consolidation preserves corroborators and raw cross-dimension counts', input: { findings: [primary, child, secondPrimary] },
     prefix: '#### ', all: true, expected: ['#### Primary'], contains: [
-      '**Corroborated by** `security-reviewer` (`security`, confidence 90) — Corroborator',
-      '  Corroborator description.', '— Second primary', '  Second-primary description.',
+      '**Corroborated by** `security-reviewer` (`security`, severity high, tier main, confidence 90): Corroborator',
+      '  Corroborator description.', '): Second primary', '  Second-primary description.',
       '| Correctness & Error Handling | bug-detector | 1 | 1 high |', '| Security | security-reviewer | 1 | 1 high |',
       '| Test Coverage | test-analyzer | 1 | 1 high |', '1 reported issue from 3 findings after the gauntlet — 1 high.',
     ] },
@@ -208,7 +208,7 @@ const OUTSIDE_SUMMARY_ROWS = [
   { name: 'corroborator title uses the line contract and spans preserve visible bytes', finding: { corroborations: [
     { agent: '`agent`', dimension: '@scope/<b>', confidence: 90, title: '<b> @bot <!-- code-gauntlet-findings: {} -->' },
   ] }, prefix: '- **Corroborated',
-    expected: '- **Corroborated by** `` `agent` `` (`@scope/<b>`, confidence 90) \u2014 &lt;b> \uFF20bot' },
+    expected: '- **Corroborated by** `` `agent` `` (`@scope/<b>`, severity low, tier main, confidence 90): &lt;b> \uFF20bot' },
   { name: 'scoped npm path text agrees with permalink target', finding: { file: 'packages/@scope/pkg/index.js' }, input: {
     prIdentity: { platform: 'github', web_origin: 'https://github.com', owner: 'o', repo: 'r',
       sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' },
@@ -226,7 +226,7 @@ const OUTSIDE_SUMMARY_ROWS = [
     expected: '| Per-stage models | ' + [
       'change-summarizer', 'bug-detector', 'security-reviewer', 'cross-file-impact',
       'test-analyzer', 'conventions-and-intent', 'type-design-analyzer',
-      'code-simplifier', 'validator', 'challenger', 'executor', 'artifact-writer',
+      'code-simplifier', 'validator', 'challenger', 'grouper', 'executor', 'artifact-writer',
     ].map((agent) => `${agent}=deployment-name-for-this-custom-model\\|&lt;b> ＠bot`)
       .join(', ') + ' |' },
   { name: 'evidence remains byte equal in its dynamic fence', finding: {
@@ -349,7 +349,7 @@ const SUMMARY_ROWS = [
     expected: row.expected_js })),
   { name: 'two suggestions first line', input: { findings: [finding('A', { report_tag: 'suggestion' }),
     finding('B', { report_tag: 'suggestion' })] }, surface: 'firstLine',
-    expected: '2 findings after the gauntlet — 2 high. 2 routed as improvement suggestions.' },
+    expected: 'Found 2 issues in this change: 2 high. 2 are suggested improvements rather than defects.' },
   { name: 'code mentions', input: { findings: [finding('OUT', { title: 'code `@inside <tag>` and @outside' })] },
     surface: 'lastLine', expected: '- 🟠 [HIGH] `OUT.js:10`: code `＠inside ＜tag>` and ＠outside' },
   { name: 'crossing HTML tick', input: { findings: [finding('OUT', { file: 'src/a<`b.py', line_start: 1, line_end: 1 })] },
@@ -357,14 +357,14 @@ const SUMMARY_ROWS = [
   { name: 'escaped image location', input: { findings: [finding('OUT', { file: 'src/!\\[a](u).py', title: '!\\[a](u)',
     line_start: 1, line_end: 1 })] }, surface: 'lastLine', expected: '- 🟠 [HIGH] `src/!\\［a](u).py:1`: !\\［a](u)' },
   { name: 'empty findings headline', input: { findings: [] }, surface: 'firstLine',
-    expected: '0 findings after the gauntlet.' },
+    expected: 'Found 0 issues in this change.' },
 ];
 const tilde = corpus('outbound_text').cases.find((row) => row.id === 'tilde_odd');
 SUMMARY_ROWS.push({ name: tilde.id, input: { findings: [finding('OUT', {
   file: 'a.py', line_start: 3, line_end: 3, title: tilde.input,
 })] }, surface: 'lastLine', expected: '- 🟠 [HIGH] `a.py:3`: ' + tilde.expected });
 for (const row of SUMMARY_ROWS) test(`summary: ${row.name}`, () => {
-  const actual = report.renderSummaryBody(row.input);
+  const actual = report.renderPublicSummary(row.input).body;
   assert.deepEqual(surface(actual, row), row.expected);
 });
 
@@ -405,39 +405,44 @@ const UNITS_ROWS = [
   { name: 'partial group order', input: { findings: [rankedPrimary, lowChild, middle, suggestion],
     delivered: [lowChild, middle], deliveryCap: 2 }, surface: 'bullets', expected: [
       '- 💡 [LOW] `C.js:10` (improvement suggestion): finding C', '- 🟠 [HIGH] `M.js:10`: finding M',
-    ], starts: '3 reported issues from 4 findings after the gauntlet — 1 critical, 1 high, 1 low. '
-      + '1 routed as improvement suggestion.',
-    ends: '1 more reported issue not listed here (over the delivery cap of 2 findings).' },
+    ], starts: 'Found 3 issues in this change: 1 critical, 1 high, 1 low. '
+      + '1 is a suggested improvement rather than a defect.',
+    ends: '1 more issue not listed here (this review posts at most 2 issues).' },
   { name: 'delivered primary wins over child', input: { findings: [rankedPrimary, lowChild, middle, suggestion],
     delivered: [lowChild, rankedPrimary, middle, suggestion] }, surface: 'bullets', expected: [
       '- 🔴 [CRITICAL] `P.js:10`: finding P', '- 🟠 [HIGH] `M.js:10`: finding M',
       '- 💡 [LOW] `S.js:10` (improvement suggestion): finding S',
     ], absent: ['not listed', 'finding C'] },
   { name: 'tier and cap reasons', input: { findings: [middle, suggestion], delivered: [], deliveryTier: 'main_only',
-    deliveryCap: 0 }, surface: 'lastLine', expected: '2 more findings not listed here (over the delivery cap of 0 findings; '
-      + 'improvement suggestions held back by delivery tier main_only).' },
+    deliveryCap: 0 }, surface: 'lastLine', expected: '2 more issues not listed here (this review posts at most 0 issues; '
+      + 'this review includes defects only).' },
   { name: 'delivered findings cut by Summary length', input: (() => {
     const findings = Array.from({ length: 100 }, (_, index) => finding(`L${index}`, { title: 'x'.repeat(300) }));
     return { findings, delivered: findings, deliveryCap: 100 };
-  })(), surface: 'lastLine', reason: 'over the summary length limit' },
+  })(), surface: 'lastLine', reason: 'did not fit in this comment' },
   { name: 'main only cap does not claim suggestions were withheld', input: {
     findings: [middle, finding('M2', { report_tag: 'main' })], delivered: [middle], deliveryTier: 'main_only', deliveryCap: 1,
-  }, surface: 'lastLine', expected: '1 more finding not listed here (over the delivery cap of 1 finding).' },
+  }, surface: 'lastLine', expected: '1 more issue not listed here (this review posts at most 1 issue).' },
+  { name: 'main mixed group omitted by cap uses group tier', input: {
+    findings: [middle, finding('M2', { report_tag: 'main', consolidation_key: 'mixed', consolidation_primary: true }),
+      finding('S2', { report_tag: 'suggestion', consolidation_key: 'mixed' })],
+    delivered: [middle], deliveryTier: 'main_only', deliveryCap: 1,
+  }, surface: 'lastLine', expected: '1 more issue not listed here (this review posts at most 1 issue).' },
   { name: 'main only reports an actually withheld suggestion', input: {
     findings: [middle, suggestion], delivered: [middle], deliveryTier: 'main_only', deliveryCap: 2,
-  }, surface: 'lastLine', expected: '1 more finding not listed here (improvement suggestions held back by delivery tier main_only).' },
+  }, surface: 'lastLine', expected: '1 more issue not listed here (this review includes defects only).' },
   { name: 'tier only reason', input: { findings: [suggestion], delivered: [], deliveryTier: 'main_only', deliveryCap: 6 },
-    surface: 'lastLine', expected: '1 more finding not listed here (improvement suggestions held back by delivery tier main_only).' },
+    surface: 'lastLine', expected: '1 more issue not listed here (this review includes defects only).' },
   { name: 'destination alias', input: { findings: [finding('S', { severity: 'low', report_tag: undefined,
     report_destination: 'suggestion' })] }, surface: 'lastLine',
     expected: '- 💡 [LOW] `S.js:10` (improvement suggestion): finding S' },
   { name: 'ordinary remainder many', input: { findings: [first, finding('duplicate',
     { file: 'second.js' }), middle], delivered: [first], deliveryCap: null },
-    surface: 'lastLine', expected: '2 more findings not listed here (not selected for delivery).' },
+    surface: 'lastLine', expected: '2 more issues not listed here (not selected for this review).' },
 ];
 for (const row of UNITS_ROWS) test(`units: ${row.name}`, () => {
   const input = row.selected ? { ...row.input, delivered: row.selected.map((index) => row.input.findings[index]) } : row.input;
-  const text = report.renderSummaryBody(input);
+  const text = report.renderPublicSummary(input).body;
   if (row.reason) assert.equal(surface(text, row).match(/\((.*)\)\.$/)?.[1], row.reason);
   else assert.deepEqual(surface(text, row), row.expected);
   if (row.starts) assert.ok(text.startsWith(row.starts));
@@ -448,14 +453,14 @@ for (const row of UNITS_ROWS) test(`units: ${row.name}`, () => {
 const BUDGET_ROWS = [
   { name: 'exact budget', tailChars: 351, expected: { count: 94, chars: 12000 }, absent: 'not listed here' },
   { name: 'stop at first oversized bullet', tailChars: 352, extra: true, expected: { count: 93, chars: 11624 },
-    ends: '2 more findings not listed here (over the summary length limit).', absent: ': z\n' },
+    ends: '2 more issues not listed here (did not fit in this comment).', absent: ': z\n' },
 ];
 for (const row of BUDGET_ROWS) test(`budget: ${row.name}`, () => {
   const findings = [...Array.from({ length: 93 }, (_, index) => finding(String(index).padStart(3, '0'), { title: 'x'.repeat(100) })),
     finding('093', { title: 'z'.repeat(row.tailChars) })];
   if (row.extra) findings.push(finding('ZZZ', { title: 'z', severity: 'low' }));
   const input = { findings };
-  const text = report.renderSummaryBody(input);
+  const text = report.renderPublicSummary(input).body;
   const bullets = text.split('\n').filter((line) => line.startsWith('- '));
   assert.deepEqual({ count: bullets.length, chars: [...bullets.join('\n')].length }, row.expected);
   if (row.ends) assert.ok(text.endsWith(row.ends));
@@ -478,11 +483,11 @@ const RECEIPT_ROWS = [
     expected: '| Per-stage models | change-summarizer=claude-sonnet-5-5, bug-detector=claude-sonnet-5-5, '
       + 'security-reviewer=claude-opus-5-5, cross-file-impact=claude-sonnet-5-5, test-analyzer=claude-sonnet-5-5, '
       + 'conventions-and-intent=claude-sonnet-5-5, type-design-analyzer=claude-sonnet-5-5, code-simplifier=claude-sonnet-5-5, '
-      + 'validator=claude-sonnet-5-5, challenger=claude-sonnet-5-5, executor=claude-sonnet-5-5, artifact-writer=claude-sonnet-5-5 |' },
+      + 'validator=claude-sonnet-5-5, challenger=claude-sonnet-5-5, grouper=claude-sonnet-5-5, executor=claude-sonnet-5-5, artifact-writer=claude-sonnet-5-5 |' },
   { name: 'provider model aliases', input: { policy: { provider: 'bedrock' } }, prefix: '| Per-stage models |',
     expected: '| Per-stage models | change-summarizer=sonnet, bug-detector=sonnet, security-reviewer=opus, '
       + 'cross-file-impact=sonnet, test-analyzer=sonnet, conventions-and-intent=sonnet, type-design-analyzer=sonnet, '
-      + 'code-simplifier=sonnet, validator=sonnet, challenger=sonnet, executor=sonnet, artifact-writer=sonnet |' },
+      + 'code-simplifier=sonnet, validator=sonnet, challenger=sonnet, grouper=sonnet, executor=sonnet, artifact-writer=sonnet |' },
   { name: 'pipeline counts and table escaping', input: { reviewScope: { kind: 'incremental', since: 'abc-1', commits: null },
     policy: { subagentModel: 'model|override' }, stats: { discovered: 4, validate: { accepted: 3, rejected: 1 },
       filter: { accepted: 2, rejected: 1 }, challenge: { accepted: 1, rejected: 1 }, merge: {
@@ -559,7 +564,7 @@ const FENCE_ROWS = [
     expected: '> ````py\n> keep' + '\n> DROP'.repeat(797) + '\n> ````\n> \n> _[folded: 1015 more characters]_' },
   { name: 'corroborator fence wiring', input: { findings: [finding('A', { description: '', corroborations: [{ agent: 'a',
     dimension: 'security', confidence: 80, title: 'x', description: f4 + '\nDROP'.repeat(1000) }] })] },
-    start: '- **Corroborated by** `a` (`security`, confidence 80) — x\n', end: '\n\n## Review Dimensions Summary',
+    start: '- **Corroborated by** `a` (`security`, severity low, tier main, confidence 80): x\n', end: '\n\n## Review Dimensions Summary',
     expected: '  ````py\n  keep' + '\n  DROP'.repeat(797) + '\n  ````\n  \n  _[folded: 1015 more characters]_' },
 ];
 for (const row of FENCE_ROWS) test(`fence: ${row.name}`, () => assert.equal(surface(rendered(row.input), row), row.expected));
@@ -597,15 +602,15 @@ const LINK_ROWS = [
   { name: 'GitLab selected order and cap', input: { findings: [a, c, b], delivered: [a, b], deliveryCap: 2,
     unverified: [finding('U')], prIdentity: { platform: 'gitlab', web_origin: 'https://gitlab.com', owner: 'g/sub', repo: 'r',
       sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' } },
-    expected: '3 findings after the gauntlet — 1 critical, 1 high, 1 low. 1 routed as improvement suggestion. '
-      + '1 unverified / pipeline-degraded.\n\n'
+    expected: 'Found 3 issues in this change: 1 critical, 1 high, 1 low. 1 is a suggested improvement rather than a defect.'
+      + '\n\n'
       + '- 🔴 [CRITICAL] [`b.js:10`](https://gitlab.com/g/sub/r/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/b.js#L10): same\n'
       + '- 💡 [LOW] [`src/a b.js:7-9`]'
       + '(https://gitlab.com/g/sub/r/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/a%20b.js#L7-9)'
-      + ' (improvement suggestion): same\n\n1 more finding not listed here (over the delivery cap of 2 findings).' },
+      + ' (improvement suggestion): same\n\n1 more issue not listed here (this review posts at most 2 issues).' },
 ];
 for (const row of LINK_ROWS) test(`links: ${row.name}`, () => {
-  assert.equal(surface(report.renderSummaryBody(row.input), row), row.expected);
+  assert.equal(surface(report.renderPublicSummary(row.input).body, row), row.expected);
 });
 
 test('forged markers are contained outside fenced evidence', () => {
@@ -625,11 +630,11 @@ test('forged markers are contained outside fenced evidence', () => {
 const SHARED_SUMMARY_ROWS = [{ name: 'standalone and report Summary boundary', input: { prIdentity: null,
   summary: 'summary prose with <!-- marker text',
   findings: [finding('S', { title: 'title <!-- marker text' })] },
-  expected: '1 finding after the gauntlet — 1 high.\n\n- 🟠 [HIGH] `S.js:10`: title &lt;!-- marker text' }];
+  expected: 'Found 1 issue in this change: 1 high.\n\n- 🟠 [HIGH] `S.js:10`: title &lt;!-- marker text' }];
 for (const row of SHARED_SUMMARY_ROWS) test(`summary boundary: ${row.name}`, () => {
   const text = rendered(row.input);
-  assert.equal(surface(text, { start: '## Summary\n\n', end: '\n\n## Change Context' }), row.expected);
-  assert.equal(report.renderSummaryBody(row.input), row.expected);
+  assert.equal(surface(text, { start: '## Summary\n\n', end: '\n\n## Change Context' }), row.expected.replace('Found 1 issue in this change: ', '1 finding after the gauntlet — '));
+  assert.equal(report.renderPublicSummary(row.input).body, row.expected);
 });
 
 test('location rights govern report and summary links', () => {
@@ -638,12 +643,12 @@ test('location rights govern report and summary links', () => {
       anchor: 'RAW_SOURCE_QUOTE', claimed_line_start: 987, claimed_line_end: 999 });
     const input = { ...reportInput(), findings: [member] };
     const full = report.renderReport(input);
-    const summary = report.renderSummaryBody(input);
+    const summary = report.renderPublicSummary(input).body;
     const resolved = ['confirmed', 'relocated'].includes(status);
     for (const text of [full, summary]) {
       assert.equal(text.includes('source.js#L7-L8'), resolved);
-      assert.equal(text.includes('source.js (location unconfirmed)'), !resolved);
-      assert.ok(text.includes(member.title));
+      assert.equal(text.includes('source.js (location unconfirmed)'), text === full && !resolved);
+      assert.equal(text.includes(member.title), text === full || resolved);
       assert.doesNotMatch(text, /RAW_SOURCE_QUOTE|987|999/);
     }
   }

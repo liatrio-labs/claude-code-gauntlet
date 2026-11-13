@@ -16,8 +16,8 @@ from gauntlet.delivery.fold import (
     utf8_len,
 )
 from gauntlet.delivery.gate import FenceOffsets
-from gauntlet.delivery.input import Finding
-from gauntlet.location import canonical_range, delivery_allows
+from gauntlet.delivery.input import Finding, ReviewSummary, SummaryBullet
+from gauntlet.location import canonical_range, delivery_allows, parse_admission
 from gauntlet.markdown import fence_run
 from gauntlet.marker import LEGACY_PRODUCT, build_footer, build_prose_footer
 from gauntlet.prior_review import site_key
@@ -27,6 +27,7 @@ from gauntlet.text import (
     prepare_line,
     prepare_location,
     prepare_prose,
+    prepare_summary_title,
     prepared_prose,
     redact_secrets,
 )
@@ -41,18 +42,18 @@ __all__ = [
     "OmittedEntry",
     "ReportShapeError",
     "SkippedEntry",
-    "build_skipped_section",
     "compose_inline_body",
     "compose_review_body",
     "consolidate_delivery",
+    "delivery_finding",
     "digest_groups",
     "finding_key",
     "key_material_body",
+    "legacy_summary",
     "render_comment_body",
     "render_finding_sections",
     "render_group_body",
     "render_group_sections",
-    "summary_body_from_report",
 ]
 
 # One mark per delivered surface: inline bodies end with the trailer, the
@@ -81,6 +82,8 @@ class SkippedEntry:
     filepath: object
     line: object
     finding: Mapping[str, object]
+    additional_sites: tuple[Mapping[str, object], ...] | None = None
+    finding_index: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,24 +219,6 @@ def key_material_body(finding: Mapping[str, object]) -> str:
     return render_finding_sections(_key_material_finding(finding))
 
 
-def _render_corroboration(finding: Mapping[str, object]) -> str:
-    agent = prepare_line(finding.get("agent", "unknown"))
-    dimension = prepare_line(finding.get("dimension", "unknown"))
-    confidence = finding.get("confidence")
-    conf_text = prepare_line(confidence) if confidence is not None else "?"
-    raw_title = finding.get("title")
-    title = prepare_line(raw_title) if isinstance(raw_title, str) else ""
-    body = prepare_prose(finding.get("body", ""))
-    parts = [
-        f"**Corroborating finding — {agent} ({dimension}, confidence {conf_text}):**",
-        "",
-        f"**{title or 'Finding'}**",
-    ]
-    if body:
-        parts += ["", body]
-    return "\n".join(parts)
-
-
 def render_group_body(
     primary: Mapping[str, object],
     corroborators: Sequence[Mapping[str, object]],
@@ -247,42 +232,106 @@ def render_group_body(
     ) + (f"\n\n{style.trailer}")
 
 
+def location_text(finding: Mapping[str, object]) -> str:
+    span = canonical_range(finding)
+    assert span is not None
+    start, end = span
+    return f"{finding.get('file')}:{start}" + (f"-{end}" if end != start else "")
+
+
+def group_sites(
+    primary: Mapping[str, object], corroborators: Sequence[Mapping[str, object]]
+) -> tuple[Mapping[str, object], ...]:
+    seen = {site_key(primary)} if canonical_range(primary) is not None else set()
+    sites = []
+    for finding in (primary, *corroborators):
+        candidates = list(
+            cast(Sequence[Mapping[str, object]], finding.get("sites", []))
+        )
+        if finding is not primary:
+            candidates.insert(0, finding)
+        for site in candidates:
+            located = {
+                **site,
+                "disposition": finding.get("disposition"),
+                "admission": finding.get("admission"),
+            }
+            if not delivery_allows(located, "sourceLink") or site_key(site) in seen:
+                continue
+            seen.add(site_key(site))
+            sites.append(site)
+    return tuple(sites)
+
+
+def delivery_finding(
+    primary: Mapping[str, object], corroborators: Sequence[Mapping[str, object]] = ()
+) -> Mapping[str, object]:
+    if not corroborators:
+        return primary
+    members = (primary, *corroborators)
+    severity = min(
+        (
+            normalize_report_severity(member.get("severity"), registry.SEVERITY_EMOJI)
+            for member in members
+        ),
+        key=registry.SEVERITY_ORDER.index,
+    )
+    tier = "suggestion"
+    for member in members:
+        assessed = member.get("report_tag", member.get("report_destination"))
+        if assessed is None:
+            admission = parse_admission(member)
+            assessed = admission["tier"] if admission else "main"
+        if assessed == "main":
+            tier = "main"
+            break
+    return {
+        **primary,
+        "severity": severity,
+        "report_tag": tier,
+        "report_destination": tier,
+    }
+
+
 def render_group_sections(
     primary: Mapping[str, object],
     corroborators: Sequence[Mapping[str, object]],
     *,
     fence_offsets: FenceOffsets | None = None,
     style: CommentStyle | None = None,
+    additional_sites: Sequence[Mapping[str, object]] | None = None,
 ) -> str:
-    # Corroborators cannot supply patches or choose the primary's anchor offsets.
-    body = render_finding_sections(primary, fence_offsets=fence_offsets, style=style)
-    seen: set[str] = set()
-    sites = []
-    for finding in (primary, *corroborators):
-        for site in cast(Sequence[Mapping[str, object]], finding.get("sites", [])):
-            if not delivery_allows(
-                {
-                    **site,
-                    "disposition": finding.get("disposition"),
-                    "admission": finding.get("admission"),
-                },
-                "sourceLink",
-            ):
-                continue
-            key = site_key(site)
-            if key in seen:
-                continue
-            seen.add(key)
-            sites.append(
-                f"- {prepare_location(str(site['file']) + ':' + str(site['line_start']) + '-' + str(site['line_end']))}"
-            )
+    body = render_finding_sections(
+        delivery_finding(primary, corroborators),
+        fence_offsets=fence_offsets,
+        style=style,
+    )
+    sites = (
+        group_sites(primary, corroborators)
+        if additional_sites is None
+        else additional_sites
+    )
     if sites:
-        body += "\n\n**Additional sites:**\n" + "\n".join(sites)
-    if not corroborators:
-        return body
-    section = "\n\n".join(_render_corroboration(c) for c in corroborators)
-    section = neutralize_comment_openers(section)
-    return f"{body}\n\n---\n\n{section}"
+        body += "\n\n**Additional sites:**\n" + "\n".join(
+            f"- {prepare_location(location_text(site))}" for site in sites
+        )
+    claims = list(
+        dict.fromkeys(
+            (prepare_line(member.get("title", "")) or "Finding")
+            for member in corroborators
+            if str(member.get("dimension", "")).lower() == "security"
+        )
+    )
+    if claims:
+        body += "\n\n**Security claim:** " + "; ".join(claims)
+    agents = {
+        agent.strip().lower()
+        for finding in (primary, *corroborators)
+        if isinstance(agent := finding.get("agent"), str) and agent.strip()
+    }
+    if len(agents) >= 2:
+        body += f"\n\n_Found independently by {len(agents)} reviewers._"
+    return body
 
 
 def _skipped_location(filepath: object, finding: Mapping[str, object]) -> str:
@@ -307,109 +356,42 @@ def _plural(count: int, singular: str, plural: str | None = None) -> str:
     return singular if count == 1 else (plural or singular + "s")
 
 
-def _skipped_frame(n: int, shown: int, inline_count: int | None) -> str:
-    group_note = (
-        " A finding listed here may not have an anchoring problem of its own — a "
-        "consolidation group whose primary could not be anchored inline is listed "
-        "here in full, corroborators included."
+def _skipped_frame(n: int) -> str:
+    return f"---\n\n### {n} {_plural(n, 'issue')} described here"
+
+
+def _digest_pieces(entries: Sequence[SkippedEntry]) -> str:
+    if not entries:
+        return ""
+    lead, *others = entries
+    location = _skipped_location(lead.filepath, lead.finding)
+    sections = render_group_sections(
+        lead.finding,
+        [entry.finding for entry in others],
+        additional_sites=lead.additional_sites,
     )
-    if inline_count is None:
-        intro = (
-            f"The following {shown} {_plural(shown, 'finding')} "
-            f"{_plural(shown, 'references', 'reference')} lines outside this diff and "
-            f"{_plural(shown, 'is', 'are')} included here instead of as inline "
-            f"comments:{group_note}"
-        )
-    else:
-        intro = (
-            f"{inline_count} inline {_plural(inline_count, 'comment')} "
-            f"{_plural(inline_count, 'was', 'were')} posted; the following {shown} "
-            f"{_plural(shown, 'finding')} {_plural(shown, 'references', 'reference')} "
-            f"lines outside this diff and {_plural(shown, 'is', 'are')} included here "
-            f"instead:{group_note}"
-        )
-    return "\n".join(
-        [
-            "---",
-            "",
-            f"### ⚠️ {n} {_plural(n, 'finding')} could not be anchored inline",
-            "",
-            intro,
-        ]
+    return neutralize_comment_openers(
+        f"\n\n#### {prepare_location(location)}\n\n{sections}"
     )
-
-
-def _skipped_piece(filepath: object, finding: Mapping[str, object]) -> str:
-    # Neutralize the assembled heading as well as its prepared finding fields.
-    location = _skipped_location(filepath, finding)
-    piece = (
-        f"\n\n#### {prepare_location(location)}\n\n{render_group_sections(finding, [])}"
-    )
-    return neutralize_comment_openers(piece)
-
-
-def _digest_dimension(finding: Mapping[str, object]) -> str | None:
-    if finding.get("disposition") == "body":
-        return prepare_line(finding.get("dimension", "unknown"))
-    return None
-
-
-def _digest_pieces(entries: Sequence[SkippedEntry], dimensions: set[str]) -> str:
-    pieces = []
-    for entry in entries:
-        dimension = _digest_dimension(entry.finding)
-        if dimension is not None and dimension not in dimensions:
-            pieces.append(f"\n\n### {dimension}")
-            dimensions.add(dimension)
-        pieces.append(_skipped_piece(entry.filepath, entry.finding))
-    return "".join(pieces)
 
 
 def _ordered_skipped_groups(
     groups: Sequence[Sequence[SkippedEntry]],
 ) -> tuple[Sequence[SkippedEntry], ...]:
-    return tuple(
-        sorted(
-            groups,
-            key=lambda group: (
-                _digest_dimension(group[0].finding) or "" if group else ""
-            ),
-        )
-    )
+    return tuple(group for group in groups if group)
 
 
 def digest_groups(
     groups: Sequence[Sequence[SkippedEntry]], fits: Callable[[str], bool]
 ) -> Iterator[tuple[Sequence[SkippedEntry], str | None]]:
-    """Yield ordered groups with accepted fragments, or None for omissions."""
-    dimensions: set[str] = set()
+    """Yield whole issue groups without exposing other members' prose."""
     for group in _ordered_skipped_groups(groups):
-        proposed = set(dimensions)
-        fragment = _digest_pieces(group, proposed)
-        if fits(fragment):
-            dimensions = proposed
-            yield group, fragment
-        else:
-            yield group, None
+        fragment = _digest_pieces(group)
+        yield group, fragment if fits(fragment) else None
 
 
-def _closing_line(m: int, n: int, platform: Platform) -> str:
-    limits = body_limit(platform)
-    return (
-        f"_{m} of these {n} {_plural(n, 'finding')} {_plural(m, 'is', 'are')} "
-        f"not shown: this {limits.surface} "
-        f"reached the {limits.bytes}-byte {limits.label} body limit._"
-    )
-
-
-def build_skipped_section(
-    skipped: Sequence[SkippedEntry], inline_count: int | None = None
-) -> str:
-    # GitLab summaries precede inline posts, so they cannot supply a landed count.
-    if not skipped:
-        return ""
-    n = len(skipped)
-    return _skipped_frame(n, n, inline_count) + _digest_pieces(skipped, set())
+def _closing_line(m: int, n: int) -> str:
+    return f"_{m} of these {n} {_plural(n, 'issue')} did not fit in this comment._"
 
 
 def compose_inline_body(
@@ -426,15 +408,13 @@ def compose_inline_body(
 
 def _bounded_section(
     n: int,
-    shown_entries: Sequence[SkippedEntry],
-    inline_count: int | None,
-    platform: Platform,
+    shown_groups: Sequence[Sequence[SkippedEntry]],
 ) -> str:
-    section = _skipped_frame(n, len(shown_entries), inline_count)
-    section += _digest_pieces(shown_entries, set())
-    omitted = n - len(shown_entries)
+    section = _skipped_frame(n)
+    section += "".join(_digest_pieces(group) for group in shown_groups)
+    omitted = n - len(shown_groups)
     if omitted:
-        section += f"\n\n{_closing_line(omitted, n, platform)}"
+        section += f"\n\n{_closing_line(omitted, n)}"
     return section
 
 
@@ -457,11 +437,159 @@ def _standalone_footer_lines(review_body: str) -> str:
     )
 
 
-def _skipped_reserve(n: int, inline_count: int | None, platform: Platform) -> int:
-    # The widest count and both grammar forms bound every possible shown count.
-    frame = max(utf8_len(_skipped_frame(n, shown, inline_count)) for shown in (0, n))
-    closing = utf8_len(_closing_line(n, n, platform))
-    return frame + closing
+def _skipped_reserve(n: int) -> int:
+    return utf8_len(_skipped_frame(n)) + utf8_len(_closing_line(n, n))
+
+
+def _summary_ref(finding: Mapping[str, object], index: int | None) -> str | int:
+    value = finding.get("id")
+    if isinstance(value, str) and value:
+        return value
+    if index is None:
+        raise ReportShapeError("Summary lead has neither an id nor a source index.")
+    return index
+
+
+def render_summary(
+    summary: ReviewSummary,
+    findings: Sequence[Finding],
+    skipped_groups: Sequence[Sequence[SkippedEntry]],
+) -> str:
+    if not isinstance(summary, dict) or set(summary) != {
+        "counts",
+        "index",
+        "omitted",
+        "reasons",
+    }:
+        raise ReportShapeError("Invalid review_summary contract.")
+    if (
+        not isinstance(summary["counts"], str)
+        or not isinstance(summary["index"], list)
+        or not gate.is_plain_int(summary["omitted"])
+        or summary["omitted"] < 0
+        or not isinstance(summary["reasons"], list)
+        or not all(isinstance(reason, str) for reason in summary["reasons"])
+    ):
+        raise ReportShapeError("Invalid review_summary fields.")
+    positions = {id(finding): index for index, finding in enumerate(findings)}
+    groups = consolidate_delivery(findings)
+    known = {
+        _summary_ref(group.primary, positions[id(group.primary)]) for group in groups
+    }
+    expected = {
+        _summary_ref(group.primary, positions[id(group.primary)])
+        for group in groups
+        if delivery_allows(group.primary, "inline")
+    }
+    seen: set[str | int] = set()
+    for row in summary["index"]:
+        if (
+            not isinstance(row, dict)
+            or set(row) != {"lead_id", "bullet"}
+            or not isinstance(row["bullet"], str)
+        ):
+            raise ReportShapeError("Invalid summary bullet record.")
+        ref = row["lead_id"]
+        if not (isinstance(ref, str) or gate.is_plain_int(ref)) or ref not in known:
+            raise ReportShapeError("Unknown summary lead id.")
+        if ref in seen:
+            raise ReportShapeError("Duplicate summary lead id.")
+        seen.add(ref)
+    if expected - seen:
+        raise ReportShapeError("Missing summary bullet for a delivered lead.")
+    texts = [
+        summary["counts"],
+        *summary["reasons"],
+        *(row["bullet"] for row in summary["index"]),
+    ]
+    if any(prepare_prose(text) != text for text in texts):
+        raise ReportShapeError("Uncontained summary text.")
+    blocked = {
+        _summary_ref(group[0].finding, group[0].finding_index)
+        for group in skipped_groups
+    }
+    bullets: list[str] = []
+    size = 0
+    omitted = summary["omitted"]
+    reasons = list(summary["reasons"])
+    cut = False
+    for row in summary["index"]:
+        if row["lead_id"] not in expected or row["lead_id"] in blocked:
+            continue
+        added = len(row["bullet"]) + bool(bullets)
+        if cut or size + added > registry.REPORT_FOLD_LIMITS["summaryIndexChars"]:
+            cut = True
+            omitted += 1
+            continue
+        bullets.append(row["bullet"])
+        size += added
+    body = summary["counts"] + ("\n\n" + "\n".join(bullets) if bullets else "")
+    if cut:
+        reasons.append("did not fit in this comment")
+    if omitted:
+        body += "\n\n" + registry.PUBLIC_SUMMARY["remainder"].format(
+            count=omitted, issues=_plural(omitted, "issue"), reasons="; ".join(reasons)
+        )
+    if prepare_prose(body) != body:
+        raise ReportShapeError("Uncontained summary text.")
+    return body
+
+
+def legacy_summary(findings: Sequence[Finding]) -> ReviewSummary:
+    groups = consolidate_delivery(
+        [finding for finding in findings if delivery_allows(finding, "body")]
+    )
+    delivered = [
+        delivery_finding(group.primary, group.corroborators) for group in groups
+    ]
+    severities = [
+        normalize_report_severity(finding.get("severity"), registry.SEVERITY_EMOJI)
+        for finding in delivered
+    ]
+    breakdown = ", ".join(
+        f"{severities.count(severity)} {severity}"
+        for severity in registry.SEVERITY_ORDER
+        if severity in severities
+    )
+    n = len(groups)
+    sentence = registry.PUBLIC_SUMMARY["counts"].format(
+        count=n,
+        issues=_plural(n, "issue"),
+        breakdown=f": {breakdown}" if breakdown else "",
+    )
+    suggestions = sum(
+        finding.get("report_tag", finding.get("report_destination")) == "suggestion"
+        for finding in delivered
+    )
+    if suggestions == 1:
+        sentence += registry.PUBLIC_SUMMARY["improvement"].format(count=suggestions)
+    elif suggestions > 1:
+        sentence += registry.PUBLIC_SUMMARY["improvements"].format(count=suggestions)
+    positions = {id(finding): index for index, finding in enumerate(findings)}
+    index: list[SummaryBullet] = []
+    for group, finding in zip(groups, delivered, strict=True):
+        if not delivery_allows(group.primary, "inline"):
+            continue
+        severity = normalize_report_severity(
+            finding.get("severity"), registry.SEVERITY_EMOJI
+        )
+        bullet = registry.PUBLIC_SUMMARY["index"].format(
+            mark=registry.SEVERITY_EMOJI[severity],
+            severity=severity.upper(),
+            location=prepare_location(location_text(finding)),
+            suggestion=registry.PUBLIC_SUMMARY["suggestion"]
+            if finding.get("report_tag", finding.get("report_destination"))
+            == "suggestion"
+            else "",
+            title=prepare_summary_title(finding.get("title", "")),
+        )
+        index.append(
+            {
+                "lead_id": _summary_ref(group.primary, positions[id(group.primary)]),
+                "bullet": prepare_prose(bullet),
+            }
+        )
+    return {"counts": sentence, "index": index, "omitted": 0, "reasons": []}
 
 
 def compose_review_body(
@@ -471,16 +599,21 @@ def compose_review_body(
     platform: Platform,
     findings_count: int,
     sha: object,
-    inline_count: int | None = None,
+    index_findings: Sequence[Finding] = (),
+    review_summary: ReviewSummary | None = None,
 ) -> ComposedBody:
     # Standalone prepared summary lines alone drive same-SHA footer deduplication.
     # Reserve the complete envelope; groups are indivisible and prose folds first.
     skipped_groups = _ordered_skipped_groups(skipped_groups)
-    review_body = prepare_prose(review_body)
+    review_body = (
+        render_summary(review_summary, index_findings, skipped_groups)
+        if review_summary is not None
+        else prepare_prose(review_body)
+    )
     limits = body_limit(platform)
     skipped = [entry for group in skipped_groups for entry in group]
-    n = len(skipped)
-    section = build_skipped_section(skipped, inline_count)
+    n = len(skipped_groups)
+    section = _bounded_section(n, skipped_groups) if n else ""
     footer = build_footer(
         findings_count,
         sha,
@@ -495,27 +628,27 @@ def compose_review_body(
     if review_body:
         fixed += utf8_len("\n\n")
     if n:
-        fixed += utf8_len("\n\n\n\n") + _skipped_reserve(n, inline_count, platform)
+        fixed += utf8_len("\n\n\n\n") + _skipped_reserve(n)
     allowance = limits.bytes - fixed
 
     if review_body and utf8_len(review_body) > allowance:
         effective_body, folded_bytes = fold_review_body(
             review_body, allowance, platform
         )
-        section = _bounded_section(n, [], inline_count, platform) if n else ""
+        section = _bounded_section(n, []) if n else ""
         body = _compose_fragments(effective_body, section, footer)
         return ComposedBody(
             body,
             0,
             n,
             folded_bytes,
-            _omitted_entries(skipped),
+            _omitted_entries([group[0] for group in skipped_groups]),
             (),
         )
 
     remaining = allowance - (utf8_len(review_body) if review_body else 0)
-    shown_entries: list[SkippedEntry] = []
-    omitted_entries: list[SkippedEntry] = []
+    shown_groups: list[Sequence[SkippedEntry]] = []
+    omitted_groups: list[Sequence[SkippedEntry]] = []
 
     def fits(fragment: str) -> bool:
         nonlocal remaining
@@ -527,44 +660,18 @@ def compose_review_body(
 
     for group, fragment in digest_groups(skipped_groups, fits):
         if fragment is not None:
-            shown_entries.extend(group)
+            shown_groups.append(group)
         else:
-            omitted_entries.extend(group)
-    section = _bounded_section(n, shown_entries, inline_count, platform) if n else ""
+            omitted_groups.append(group)
+    section = _bounded_section(n, shown_groups) if n else ""
     body = _compose_fragments(review_body, section, footer)
     return ComposedBody(
         body,
-        len(shown_entries),
-        len(omitted_entries),
+        len(shown_groups),
+        len(omitted_groups),
         0,
-        _omitted_entries(omitted_entries),
-        tuple(shown_entries),
-    )
-
-
-def summary_body_from_report(report: str) -> str:
-    marker = "## Summary\n\n"
-    start = report.find(marker)
-    if start < 0:
-        raise ReportShapeError("Report does not contain a rendered Summary section.")
-    body_start = start + len(marker)
-    cursor = body_start
-    while cursor <= len(report):
-        end = report.find("\n", cursor)
-        if end < 0:
-            line = report[cursor:]
-            next_cursor = len(report) + 1
-        else:
-            line = report[cursor:end]
-            next_cursor = end + 1
-        if line.endswith("\r"):
-            line = line[:-1]
-        if line in registry.CODE_OWNED_HEADINGS:
-            body = report[body_start:cursor]
-            return body[:-2] if body.endswith("\n\n") else body
-        cursor = next_cursor
-    raise ReportShapeError(
-        "Report does not contain a following code-owned heading after Summary."
+        _omitted_entries([group[0] for group in omitted_groups]),
+        tuple(entry for group in shown_groups for entry in group),
     )
 
 

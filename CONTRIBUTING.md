@@ -109,8 +109,9 @@ Use these phase names when reporting a failure:
 3. Summarize & discover: agents summarize the changes and propose findings in parallel.
 4. Merge & verify: the pipeline combines candidates and checks source facts and git blame.
 5. Validate: an independent agent tries to disprove each finding.
-6. Filter: the pipeline applies thresholds, rejects injection, and groups related findings.
-7. Blind challenge: a fresh agent checks each claim without the original reasoning or evidence.
+6. Filter: the pipeline applies thresholds and rejects injection.
+7. Blind challenge: a fresh agent checks each claim without the original reasoning or evidence;
+   then the grouper groups deliverable survivors.
 8. Report & deliver: the workflow renders results; the session saves artifacts and handles delivery.
 
 The workflow renders and ranks results but has no filesystem access.

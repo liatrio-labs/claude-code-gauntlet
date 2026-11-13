@@ -68,7 +68,7 @@ for (const row of PERSIST_WIRING_ROWS) test(`persistence dispatch wiring: ${row.
   }
 });
 
-const WRAPPER_BODY = '2 findings after the gauntlet \u2014 2 high.\n\n- \ud83d\udfe0 [HIGH] '
+const WRAPPER_BODY = 'Found 2 issues in this change: 2 high.\n\n- \ud83d\udfe0 [HIGH] '
   + '[`F1.js:10`](https://github.com/o/r/blob/0123456789abcdef0123456789abcdef01234567/F1.js#L10): finding F1\n- '
   + '\ud83d\udfe0 [HIGH] [`F2.js:10`](https://github.com/o/r/blob/0123456789abcdef0123456789abcdef01234567/F2.js#L10): '
   + 'finding F2';
@@ -99,7 +99,7 @@ for (const row of WRAPPER_ROWS) test(`persisted wrapper bytes: ${row.name}`, asy
   assert.equal(out.ok, true);
   if (row.name === 'benign context') {
     assert.deepEqual(Object.keys(payload), ['findings', 'postReview', 'report', 'checkpoints']);
-    assert.deepEqual(Object.keys(payload.postReview), ['owner', 'repo', 'pr_number', 'sha', 'platform', 'web_origin', 'review_body', 'findings']);
+    assert.deepEqual(Object.keys(payload.postReview), ['owner', 'repo', 'pr_number', 'sha', 'platform', 'web_origin', 'review_body', 'review_summary', 'findings']);
     assert.equal(payload.postReview.owner, 'o');
     assert.equal(payload.postReview.repo, 'r');
     assert.equal(payload.postReview.pr_number, 279);
@@ -109,7 +109,7 @@ for (const row of WRAPPER_ROWS) test(`persisted wrapper bytes: ${row.name}`, asy
   }
   const body = payload.postReview.review_body;
   assert.equal(body, WRAPPER_BODY);
-  assert.ok(payload.report.includes('## Summary\n\n' + WRAPPER_BODY + '\n\n## Change Context'));
+  assert.ok(payload.report.includes('## Summary\n\n' + WRAPPER_BODY.replace('Found 2 issues in this change: ', '2 findings after the gauntlet — ') + '\n\n## Change Context'));
   assert.equal(body.includes(row.summary), false);
   if (row.marker) { assert.ok(payload.report.includes('&lt;!--')); assert.equal(body.includes('&lt;!--'), false); }
   assert.equal((payload.report.match(/^## Review Methodology$/gm) || []).length, 1);

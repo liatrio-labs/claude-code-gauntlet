@@ -59,6 +59,15 @@ export const PR_IDENTITY_FIELDS = deepFreeze([
     describe: 'a non-empty string when present' },
 ]);
 
+export const PUBLIC_SUMMARY = deepFreeze({
+  counts: 'Found {count} {issues} in this change{breakdown}.',
+  improvement: ' {count} is a suggested improvement rather than a defect.',
+  improvements: ' {count} are suggested improvements rather than defects.',
+  index: '- {mark} [{severity}] {location}{suggestion}: {title}',
+  suggestion: ' (improvement suggestion)',
+  remainder: '{count} more {issues} not listed here ({reasons}).',
+});
+
 export const CODE_OWNED_HEADINGS = deepFreeze([
   '## Summary',
   '## Change Context',
@@ -474,7 +483,7 @@ export const RULE_SOURCE_LABELS = deepFreeze({
 export const RULE_SOURCE_LABEL_FALLBACK = 'Cited rule';
 
 export const STAGE_DEFAULTS = deepFreeze({
-  validator: 'sonnet', challenger: 'sonnet', executor: 'sonnet',
+  validator: 'sonnet', challenger: 'sonnet', grouper: 'sonnet', executor: 'sonnet',
   'artifact-writer': 'sonnet',
 });
 

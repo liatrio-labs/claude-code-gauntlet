@@ -13,7 +13,7 @@ import { deriveFromPlan } from './helpers/deriveFromPlan.js';
 import { normalizeForChecksum, fnv1a32 } from '../src/wire.js';
 import { disposeFindings } from '../src/dispose.js';
 import { applyChallenges } from '../src/applyChallenges.js';
-import { renderReport, renderSummaryBody } from '../src/renderReport.js';
+import { renderReport, renderPublicSummary } from '../src/renderReport.js';
 import { writeArtifacts } from '../src/persist.js';
 import { deltaContentProof } from '../src/verifyWire.js';
 import { mergeStage } from '../src/mergeFindings.js';
@@ -368,21 +368,21 @@ test('whole issue groups reach every artifact', async (t) => {
   const first = await runAndCapture(args);
   assert.equal(first.out.ok, true, JSON.stringify(first.out));
   const post = first.payload.postReview.findings;
-  assert.deepEqual(post.map((f) => f.id), ['ANCHOR', 'OFF']);
+  assert.deepEqual(post.map((f) => f.id), ['OFF', 'ANCHOR']);
   const grouped = await runAndCapture(validArgs({ ...args, checkpoints: { challenge: challengeOutput({ findings: raw.findings.slice(0, 3) }) } }));
   const groupPost = grouped.payload.postReview.findings;
-  assert.deepEqual(groupPost.map((f) => f.id), ['CORE', 'SUGGESTION', 'CORE-LOW']);
-  assert.deepEqual(groupPost[0].delivery_group, { issue_key: 'group:group.txt:10', lead_id: 'CORE', finding_ids: ['CORE', 'SUGGESTION', 'CORE-LOW'] });
-  assert.equal(groupPost[0].sites.length, 4);
+  assert.deepEqual(groupPost.map((f) => f.id), ['CORE-LOW', 'SUGGESTION', 'CORE']);
+  assert.deepEqual(groupPost[0].delivery_group, { issue_key: 'group:group.txt:10', lead_id: 'CORE-LOW', finding_ids: ['CORE-LOW', 'SUGGESTION', 'CORE'] });
+  assert.equal(groupPost.find((f) => f.id === 'CORE').sites.length, 4);
   const all = first.payload.findings;
-  assert.deepEqual(all.filter((f) => f.delivery_group?.lead_id === 'ANCHOR').map((f) => f.id), ['OFF', 'ANCHOR']);
+  assert.deepEqual(all.filter((f) => f.delivery_group?.lead_id === 'OFF').map((f) => f.id), ['OFF', 'ANCHOR']);
   for (const id of ['SAME-A', 'SAME-B', 'STALE', 'UNRELATED']) {
     const f = all.find((f) => f.id === id);
     assert.deepEqual(f.delivery_group.finding_ids, [id]);
     assert.equal(f.consolidation_key, undefined);
   }
   assert.equal((first.payload.report.match(/\*\*Additional site:\*\*/g) || []).length, 4);
-  assert.equal((first.payload.report.match(/#### finding CORE\n/g) || []).length, 2);
+  assert.equal((first.payload.report.match(/#### finding CORE\n/g) || []).length, 1);
   const resumed = await replayProducedCheckpoint(args, first.payload.checkpoints);
   assert.deepEqual(resumed.payload.postReview, first.payload.postReview);
   const returned = await runAndCapture(validArgs({ ...args, persist: { returnPrimaries: true }, checkpoints: { challenge: challengeOutput({ findings: raw.findings.slice(0, 3) }) } }));
@@ -391,8 +391,8 @@ test('whole issue groups reach every artifact', async (t) => {
   const main = await runAndCapture(validArgs({ limits: { deliveryCap: 100 }, delivery: { prIdentity: prIdentity(), tier: 'main_only' }, checkpoints: { challenge: raw } }));
   const mainIds = main.payload.postReview.findings.map((f) => f.id);
   assert.ok(mainIds.includes('CORE') && mainIds.includes('CORE-LOW') && mainIds.includes('OFF'));
-  assert.equal(mainIds.includes('SUGGESTION'), false);
-  assert.equal(mainIds.includes('ANCHOR'), false);
+  assert.equal(mainIds.includes('SUGGESTION'), true);
+  assert.equal(mainIds.includes('ANCHOR'), true);
   assert.equal(mainIds.includes('BODY-SUGGESTION'), false);
   const uncapped = await runAndCapture(validArgs({ delivery: { prIdentity: prIdentity() }, limits: { deliveryCap: 100 }, checkpoints: { challenge: raw } }));
   assert.equal(uncapped.out.ok, true, JSON.stringify(uncapped.out));
@@ -529,7 +529,7 @@ test('final disposition survives replay and persistence', async () => {
   const mainSection = report.split('## Findings')[1].split('## Unverified')[0];
   for (const i of [2, 4, 5, 6]) assert.equal(mainSection.includes(`claim-${i}`), false);
   for (const i of [2, 3, 5, 6]) assert.ok(report.includes(`RIGHT${i}.js:10`));
-  const body = renderSummaryBody(reportInput);
+  const body = renderPublicSummary(reportInput).body;
   for (const i of [2, 3, 4, 5, 6]) assert.equal(body.includes(`finding RIGHT${i}`), false);
   assert.equal(body.includes('claim-1'), false);
   assert.equal(body.includes('claim-0'), false);
@@ -587,11 +587,11 @@ test('happy contract: compact envelope and complete dispatch inventory', async (
     duplicates_resolved: 0, dropped_no_id: 0, truncation_warnings: 0, validation_warnings: 0 });
   assert.deepEqual(out.gaps.filter((gap) => /UNVERIFIED|host-path-text:|null_arg/.test(gap)), []);
   assert.deepEqual(ctx.calls.map((call) => call.label), [
-    'summarize', ...DISCOVERY, 'verify-slice-0', 'validate-batch-0', 'challenge-0', 'challenge-1', 'artifact-writer',
+    'summarize', ...DISCOVERY, 'verify-slice-0', 'validate-batch-0', 'challenge-0', 'challenge-1', 'group-findings', 'artifact-writer',
   ]);
   assert.deepEqual(ctx.calls.map((call) => call.agentType), [
     'code-gauntlet:change-summarizer', ...DISCOVERY, 'code-gauntlet:executor', 'code-gauntlet:validator',
-    'code-gauntlet:challenger', 'code-gauntlet:challenger', 'code-gauntlet:artifact-writer',
+    'code-gauntlet:challenger', 'code-gauntlet:challenger', 'code-gauntlet:grouper', 'code-gauntlet:artifact-writer',
   ]);
   assert.deepEqual(ctx.violations, []);
   for (const call of ctx.calls) {
@@ -1410,8 +1410,9 @@ for (const row of DELIVERY_ROWS) test(`delivery wiring: ${row.name}`, async () =
 const IDENTITY = { owner: 'o', repo: 'r', pr_number: 362, sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   platform: 'github', web_origin: 'https://github.com' };
 const BODY_ROWS = [
-  { name: 'headless markdown indexes all', mode: 'headless', receipt: 'markdown', identity: true,
-    count: 9, cap: 6, delivered: 6, bullets: 9, suffix: null },
+  { name: 'headless markdown prospective PR index respects cap', mode: 'headless', receipt: 'markdown', identity: true,
+    count: 9, cap: 6, delivered: 6, bullets: 6,
+    suffix: '3 more issues not listed here (this review posts at most 6 issues).' },
   { name: 'interactive local uncapped', mode: 'interactive', count: 9, cap: null, delivered: 9, bullets: 9, suffix: null },
   { name: 'interactive local settings do not cap summary', mode: 'interactive', tier: true,
     count: 9, cap: 1, delivered: 1, bullets: 9, suffix: null },
@@ -1419,13 +1420,13 @@ const BODY_ROWS = [
     count: 9, cap: null, delivered: 9, bullets: 9, suffix: null },
   { name: 'headless comments plural cap', mode: 'headless', receipt: 'markdown,pr_comments', identity: true,
     count: 9, cap: 6, delivered: 6, bullets: 6,
-    suffix: '3 more findings not listed here (over the delivery cap of 6 findings).' },
+    suffix: '3 more issues not listed here (this review posts at most 6 issues).' },
   { name: 'ID-less selection uses selected object', mode: 'headless', receipt: 'markdown,pr_comments', identity: true,
     idless: true, count: 3, cap: 1, delivered: 1, bullets: 1, title: 'critical choice',
-    suffix: '2 more findings not listed here (over the delivery cap of 1 finding).' },
+    suffix: '2 more issues not listed here (this review posts at most 1 issue).' },
   { name: 'headless comments singular omitted finding', mode: 'headless', receipt: 'markdown,pr_comments', identity: true,
     count: 2, cap: 1, delivered: 1, bullets: 1,
-    suffix: '1 more finding not listed here (over the delivery cap of 1 finding).' },
+    suffix: '1 more issue not listed here (this review posts at most 1 issue).' },
 ];
 for (const row of BODY_ROWS) test(`summary delivery modes: ${row.name}`, async () => {
   const findings = row.idless ? [
@@ -1446,9 +1447,16 @@ for (const row of BODY_ROWS) test(`summary delivery modes: ${row.name}`, async (
   assert.equal(out.ok, true);
   const delivered = row.identity ? payload.postReview.findings : payload.postReview;
   assert.equal(delivered.length, row.delivered);
-  const body = payload.report.split('## Summary\n\n')[1].split('\n\n## Change Context')[0];
+  const localBody = payload.report.split('## Summary\n\n')[1].split('\n\n## Change Context')[0];
+  assert.equal(localBody.split('\n').filter((line) => line.startsWith('- ')).length, row.count);
+  const body = row.identity ? payload.postReview.review_body : localBody;
   assert.equal(body.split('\n').filter((line) => line.startsWith('- ')).length, row.bullets);
-  if (row.identity) assert.equal(payload.postReview.review_body, body);
+  if (row.identity) {
+    assert.doesNotMatch(body, /after the gauntlet/);
+    assert.deepEqual(payload.postReview.review_summary.index.map((entry) => entry.bullet),
+      body.split('\n').filter((line) => line.startsWith('- ')));
+    assert.equal(payload.postReview.review_summary.counts, body.split('\n')[0]);
+  }
   if (row.suffix) assert.ok(body.endsWith(row.suffix));
   else assert.equal(body.includes('not listed here'), false);
   if (row.title) { assert.equal(delivered[0].title, row.title); assert.ok(body.includes(': critical choice')); }

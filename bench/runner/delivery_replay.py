@@ -496,6 +496,7 @@ def _candidate_artifacts(inputs, artifacts, paths, before, expected_checkpoint):
             inputs.diff.decode("utf-8") if available else "",
             platform=platform,
             review_body=raw.get("review_body", ""),
+            review_summary=raw.get("review_summary"),
             sha=raw["sha"],
         )
         for group in reconstructed.groups:
