@@ -91,7 +91,7 @@ const WRAPPER_ROWS = [
       + '| Reviewed up to: 0123456789abcdef01234567', marker: true },
 ];
 for (const row of WRAPPER_ROWS) test(`persisted wrapper bytes: ${row.name}`, async () => {
-  const args = validArgs({ contextLines: 10, delivery: { tier: 'all', prIdentity: {
+  const args = validArgs({ contextLines: 10, contextReadPlanVersion: 1, contextReadChunks: [10], delivery: { tier: 'all', prIdentity: {
     owner: 'o', repo: 'r', pr_number: 279, sha_full: '0123456789abcdef0123456789abcdef01234567',
     platform: 'github', web_origin: 'https://github.com',
   } } });
@@ -122,7 +122,7 @@ for (const row of WRAPPER_ROWS) test(`persisted wrapper bytes: ${row.name}`, asy
       + 'dropped-no-id=0; truncation warnings=0; validation warnings=0'));
     assert.ok(payload.report.includes('selection policy: tier=all, cap=25'));
     assert.ok(payload.report.includes('| Dimensions | dispatched=7; degraded=0 |'));
-    assert.ok(payload.report.includes('| Gaps | 0 |'));
+    assert.ok(payload.report.includes('| Gaps | 1 |'));
     assert.deepEqual(payload.checkpoints.completed, PHASES);
     assert.deepEqual(payload.checkpoints.counts, { summarize: 0, discover: 2, merge: 2, verify: 2,
       validate: 2, filter: 2, challenge: 2, report: 0 });
@@ -196,7 +196,7 @@ test('persisted checkpoint wiring: slim challenge survives empty and degraded fr
 test('persisted gap wiring: pre-report count reaches persisted methodology', async () => {
   const { out, payload } = await runAndCapture(validArgs(), { nullAgentLabels: ['code-gauntlet:bug-detector'] });
   assert.equal(out.ok, true);
-  assert.equal(out.gaps.length, 2);
+  assert.equal(out.gaps.length, 3);
   assert.ok(out.gaps.includes('code-gauntlet:bug-detector: agent returned null (dispatch failed) \u2014 dimensions bug not covered'));
-  assert.ok(payload.report.includes('| Gaps | 2 |'));
+  assert.ok(payload.report.includes('| Gaps | 3 |'));
 });

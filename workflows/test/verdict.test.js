@@ -278,7 +278,7 @@ async function twoReaders(validator, challenger, fields = {}) {
   return { ...disposeFindings(challenged), calls };
 }
 
-const seriousness = ['present_failure', 'latent', 'artifact_defect', 'no_practical_effect'];
+const seriousness = ['present_failure', 'latent', 'artifact_defect', 'comment_defect', 'no_practical_effect'];
 test('schema consequences have the declared seriousness order and a routing row', () => {
   assert.deepEqual(VERDICT_PROPERTIES.consequence.enum, seriousness);
   for (const consequence of VERDICT_PROPERTIES.consequence.enum) {
@@ -297,8 +297,8 @@ for (const validator of seriousness) for (const challenger of seriousness) {
     assert.equal(f.validator_verdict.consequence, validator);
     assert.equal(f.challenge_verdict.consequence, challenger);
     assert.equal(f.verdict_route, VERDICT_ROUTES.confirmed[expected].route);
-    assert.equal(f.disposition, expected === 'no_practical_effect' ? 'report_only' : 'deliver');
-    assert.equal(f.severity, expected === 'present_failure' || expected === 'no_practical_effect' ? 'high' : 'low');
+    assert.equal(f.disposition, ['comment_defect', 'no_practical_effect'].includes(expected) ? 'report_only' : 'deliver');
+    assert.equal(f.severity, ['present_failure', 'no_practical_effect'].includes(expected) ? 'high' : 'low');
     assert.equal(f.reachability, undefined);
   });
 }

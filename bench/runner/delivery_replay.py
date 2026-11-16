@@ -682,7 +682,8 @@ def replay_delivery(inputs, *, candidate=False):
             if entry["path"] not in paths.values():
                 raise ValueError("unplanned RETURN artifact path")
             artifacts[entry["path"]] = entry["text"]
-        _assemble_entries(artifacts, envelope["persistReturn"]["planPath"])
+        if envelope["persistReturn"].get("assemble") is not False:
+            _assemble_entries(artifacts, envelope["persistReturn"]["planPath"])
     if (
         not candidate
         and paths["checkpoints"] in artifacts

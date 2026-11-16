@@ -26,3 +26,11 @@ const PATTERN_ROWS = [
 for (const { name, pattern, input, expected } of PATTERN_ROWS) {
   test(`pattern: ${name}`, () => assert.equal(pattern.test(input), expected));
 }
+
+test('supplemental reviewer dispatch and row shape are closed', async () => {
+  const { discoveryReviewer, DISCOVERY_REVIEWERS } = await import('../src/registry.js');
+  const row = DISCOVERY_REVIEWERS[0];
+  for (const invalid of [{ ...row, dispatch: 'later' }, { ...row, unknown: true }, { ...row, effort: undefined }]) {
+    assert.throws(() => discoveryReviewer(invalid), /Invalid discovery reviewer/);
+  }
+});

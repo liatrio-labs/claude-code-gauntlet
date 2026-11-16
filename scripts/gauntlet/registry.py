@@ -77,7 +77,11 @@ _ResolvedSitesItemLocationStatus_Literal = Literal[
 ]
 _Claim_Literal = Literal["confirmed", "refuted", "not_established"]
 _Consequence_Literal = Literal[
-    "present_failure", "latent", "artifact_defect", "no_practical_effect"
+    "present_failure",
+    "latent",
+    "artifact_defect",
+    "comment_defect",
+    "no_practical_effect",
 ]
 _RefutationKind_Literal = Literal[
     "premise_false", "guard_exists", "no_reachable_caller"
@@ -203,6 +207,66 @@ VERDICT_ROUTES: tuple[VerdictRoute, ...] = (
     "eliminated",
     "not-established",
 )
+
+CONFIRMED_COMMENT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$",
+            "description": "One line for the PR author: one confirmed issue, narrowed to what you verified; no trailing period needed, ceiling 100 characters.",
+        },
+        "body": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400,
+            "pattern": "\\S",
+            "description": "One or two sentences for the PR author: one confirmed issue, what is wrong and what happens, narrowed to what you verified; ceiling 400 characters.",
+        },
+        "fix": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "One sentence for the PR author naming the correction you verified, ceiling 200 characters; empty if no correction can be confirmed.",
+        },
+    },
+    "required": ["title", "body"],
+    "additionalProperties": False,
+}
+
+CONFIRMED_VERDICT_ROUTES: dict[str, dict[str, Any]] = {
+    "present_failure": {
+        "route": "posted",
+        "status": "admitted",
+        "tier": "main",
+    },
+    "latent": {
+        "route": "posted-latent",
+        "status": "admitted",
+        "tier": "suggestion",
+        "severity": "low",
+    },
+    "artifact_defect": {
+        "route": "posted-artifact",
+        "status": "admitted",
+        "tier": "suggestion",
+        "severity": "low",
+    },
+    "comment_defect": {
+        "route": "report-only",
+        "status": "report_only",
+        "tier": "suggestion",
+        "severity": "low",
+        "challenge": True,
+    },
+    "no_practical_effect": {
+        "route": "report-only",
+        "status": "report_only",
+        "tier": "suggestion",
+        "challenge": True,
+    },
+}
 
 MODEL_ALIASES: tuple[ModelAlias, ...] = ("sonnet", "opus", "haiku")
 
@@ -1685,6 +1749,12 @@ class SiteConfirmationsItem(TypedDict):
     confirmed: bool
 
 
+class Comment(TypedDict, total=False):
+    title: str
+    body: str
+    fix: str
+
+
 class Refutation(TypedDict):
     file: str
     line_start: int
@@ -1827,7 +1897,19 @@ class ReferenceDiagnostic(TypedDict):
     action: str
 
 
+class Verdict(TypedDict, total=False):
+    claim: _Claim_Literal
+    consequence: _Consequence_Literal
+    comment: Comment
+    justification: str
+    refutation_kind: _RefutationKind_Literal
+    refutation: Refutation
+    missing_fact: str
+    latent_condition: str
+
+
 class FindingMetadata(FindingFacts, total=False):
+    verdict: Verdict
     policy_subject: _PolicySubject_Literal
     admission_assessments: list[AdmissionAssessmentsItem]
     admission: Admission
@@ -1920,6 +2002,32 @@ ARTIFACT_BASENAMES = tuple(ARTIFACT_PATH_TEMPLATES.values())
 FIX_MAX_LINES = 100
 FIX_MAX_CHARS = 8000
 READ_PLAN_MAX_CHARS = 30000
+READ_PLAN_MAX_BYTES = 24000
+READ_PLAN_LINE_PREFIX_BYTES = 12
+READ_PLAN_MAX_LINES = 750
+READ_PLAN_MAX_CHUNKS = 2000
+DISCOVERY_REQUEST_CHARS = 1000
+DISCOVERY_RECEIPT_CHARS = 2048
+DISCOVERY_MAX_PARTS = 4
+DISCOVERY_AGENT_TYPES = (
+    "code-gauntlet:bug-detector",
+    "code-gauntlet:security-reviewer",
+    "code-gauntlet:cross-file-impact",
+    "code-gauntlet:test-analyzer",
+    "code-gauntlet:conventions-and-intent",
+    "code-gauntlet:type-design-analyzer",
+    "code-gauntlet:code-simplifier",
+    "code-gauntlet:gap-hunter",
+)
+CONTEXT_RECEIPT_FIELDS = (
+    "contextLines",
+    "contextChars",
+    "contextMaxLineChars",
+    "contextReadPlanVersion",
+    "contextReadChunks",
+    "removedTests",
+    "discoveryPlanRef",
+)
 JS_TRIM_CHARS = (
     "\t\n\u000b\f\r "
     "\u00a0\u1680\u2000\u2001\u2002\u2003"

@@ -100,6 +100,12 @@ test('lead ordering shares severity, security, origin, tier, placement and stabl
   ]) assert.equal(chooseGroupLead([left, right]).id, b.id);
   assert.equal(chooseGroupLead([{ ...a, confidence: 0, dimension: 'comment_accuracy' },
     { ...b, confidence: 100, description: b.description + ' more' }]).id, a.id);
+  for (const change_origin of ['introduced', 'moved_or_carried', 'pre_existing']) {
+    assert.equal(chooseGroupLead([{ ...a, change_origin, origin: 'unknown', confidence: 100 },
+      { ...b, change_origin: 'pre_existing', origin: 'surfaced', confidence: 0 }]).id, b.id);
+    assert.equal(chooseGroupLead([{ ...a, change_origin, confidence: 0 },
+      { ...b, change_origin: 'introduced', confidence: 100 }]).id, a.id);
+  }
   const singleton = groupDelivery({ severity: 'high', admission: { tier: 'suggestion' } });
   assert.equal(singleton.report_tag, 'suggestion');
   assert.equal(singleton.report_destination, 'suggestion');

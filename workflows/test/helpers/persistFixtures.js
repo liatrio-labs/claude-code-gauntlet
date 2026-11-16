@@ -61,9 +61,10 @@ export function replaySurvivor() {
 }
 
 export function persistInput(over = {}) {
+  // Persistence also accepts artifacts produced before discovery provenance was required.
   const findings = over.findings || [makeFinding('F1'), makeFinding('F2')].map(({ verdict: _verdict, verdict_route: _route, diff_validation: _diff,
     path_role: _role, policy_subject: _subject, validation: _validation, challenge: _challenge, admission: _admission,
-    body_fix_task_eligible: _eligible, report_tag: _tag, report_destination: _destination, ...finding }) => finding);
+    body_fix_task_eligible: _eligible, report_tag: _tag, report_destination: _destination, change_origin: _changeOrigin, ...finding }) => finding);
   return {
     findings, postReview: findings, report: '# Code Gauntlet\n\nfindings rendered here',
     checkpoints: persistCheckpoints(findings),

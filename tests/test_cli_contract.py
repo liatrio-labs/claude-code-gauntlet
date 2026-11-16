@@ -396,6 +396,7 @@ def test_detector_real_child_degradation(tmp_path, invoke, monkeypatch):
 PATCH = "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n"
 # argv strings split on spaces before placeholders expand, so paths may hold spaces.
 MAIN_FAILURE = {
+    "plan_discovery": "--output-dir {dir} --sha abc1234 --nonce cli --phase select --plan-checksum 0000 --input-checksum fnv1a32:0x00000000 --part 0 --parts 5 --request {{}}",
     "check_refutations": "--request invalid --repo-root {dir} --head-sha abcd --target-kind local --diff-file {missing}",
     "capture_policy_env": "",
     "check_eligibility": "--platform github --pr 7",
@@ -426,6 +427,7 @@ MAIN_FAILURE = {
 # diff_numstat, emit_style_context and ensure_output_dir have no malformed-input
 # branch beyond the failure row.
 BAD_INPUT = {
+    "plan_discovery": "--output-dir {dir} --sha abc1234 --nonce cli --phase select --plan-checksum 0000 --input-checksum bad --part 0 --parts 1 --request {{}}",
     "check_eligibility": "--platform github --pr 7",
     "list_pr_files": "--platform github --pr 0",
     "pr_status": "--platform github --pr 0",
@@ -451,6 +453,10 @@ BAD_INPUT = {
 POST = {"platform": "github", "owner": "o", "repo": "r", "pr_number": 5, "sha": FULL}
 # Each success row is (files written under the case directory, argv).
 SUCCESS = {
+    "plan_discovery": (
+        {},
+        "--output-dir {dir} --sha abc1234 --nonce cli --phase select --plan-checksum 0000 --input-checksum fnv1a32:0x00000000 --part 0 --parts 1 --request {{}}",
+    ),
     "check_refutations": (
         {"diff.patch": "diff\n"},
         '--request {{"citations":[]}} --repo-root {dir} --head-sha abcd --target-kind local --diff-file {dir}/diff.patch',
@@ -817,6 +823,7 @@ def rows():
     yield from (
         (name, "help")
         for name in (
+            "plan_discovery",
             "diff_numstat",
             "incremental_diff",
             "stale_truncate",
@@ -839,7 +846,33 @@ def rows():
 
 def _assert_recorded(name, case, returncode, stdout, tmp_path):
     code, expected = RECORDED[f"{name}/{case}"]
-    assert (returncode, normalize(stdout, tmp_path)) == (code, expected)
+    if name == "write_shared_context" and case == "success":
+        assert returncode == code
+        actual, wanted = json.loads(normalize(stdout, tmp_path)), json.loads(expected)
+        paths = list(tmp_path.rglob("code-gauntlet-context-*.md"))
+        assert len(paths) == 1
+        context = paths[0].read_bytes().decode("utf-8", errors="replace")
+        measured = {
+            "contextLines": context.count("\n"),
+            "contextChars": len(context),
+            "contextMaxLineChars": max(map(len, context.split("\n"))) + 1,
+        }
+        from tests.support.phase2 import discovery_plan_payload
+
+        assert discovery_plan_payload(
+            json.loads(stdout), paths[0].parent
+        ) == wanted.pop("discoveryPlan")
+        actual.pop("discoveryPlanRef")
+        for key, value in measured.items():
+            assert actual.pop(key) == value
+            wanted.pop(key)
+        assert actual == wanted
+        return
+    actual = normalize(stdout, tmp_path)
+    if case == "help":
+        # argparse wraps usage lines differently across Python versions.
+        actual, expected = " ".join(actual.split()), " ".join(expected.split())
+    assert (returncode, actual) == (code, expected)
 
 
 @pytest.mark.parametrize(("name", "case"), list(rows()))

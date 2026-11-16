@@ -2,7 +2,7 @@ import { defineAgentCall } from './agentCalls.js';
 import { locationAllows } from './location.js';
 // Validation, filtering, challenge, and delivery selection stages.
 import { effectiveBatchSize, effectiveChallengeCap, effectiveValidationRetrySize } from './capacity.js';
-import { modelFor, VERDICT_SCHEMA, VALIDATION_VERDICT_SCHEMA } from './registry.js';
+import { modelFor, VERDICT_SCHEMA, VALIDATION_VERDICT_SCHEMA, READER_VERDICT_SCHEMA, READER_VALIDATION_VERDICT_SCHEMA } from './registry.js';
 import { checkRefutations } from './refutations.js';
 import { verdictRejections } from './verdict.js';
 import { applyValidations } from './applyValidations.js';
@@ -15,7 +15,7 @@ import { challengeEligible } from './admission.js';
 
 // Both independent readers answer the same closed questions.
 const VALIDATE_SCHEMA = { type: 'object', properties: { validations: { type: 'array',
-  items: VALIDATION_VERDICT_SCHEMA,
+  items: READER_VALIDATION_VERDICT_SCHEMA,
 } }, required: ['validations'], additionalProperties: false };
 
 const callValidator = defineAgentCall('validate', () => VALIDATE_SCHEMA);
@@ -136,7 +136,7 @@ export function filterStage(input) {
 }
 
 const CHALLENGE_SCHEMA = { type: 'object', properties: { verdict: VERDICT_SCHEMA }, required: ['verdict'], additionalProperties: false };
-const callChallenger = defineAgentCall('challenge', () => CHALLENGE_SCHEMA);
+const callChallenger = defineAgentCall('challenge', () => ({ ...CHALLENGE_SCHEMA, properties: { verdict: READER_VERDICT_SCHEMA } }));
 
 // An explicit allowlist excludes confirming rationale even when new finding fields are added.
 // The location lets the challenger investigate the raw code independently.

@@ -128,7 +128,7 @@ test('audit anchors reach Verify without numeric suppression', async () => {
   assert.equal(out.findings[1].anchor, anchor.anchor);
   assert.equal(out.findings[1].location_status, 'unconfirmed');
   assert.equal(projectVerifySliceFinding(out.findings[1]).anchor, anchor.anchor);
-  assert.deepEqual(out.gaps, []);
+  assert.deepEqual(out.gaps, ['discovery coverage unavailable: invalid or unavailable region plan']);
   assert.equal(out.removedTestAudit.duplicates_dropped, undefined);
   const row = dimensionsSummaryTable(out).split('\n').find((line) => line.includes('| test-analyzer |'));
   assert.doesNotMatch(row, /repeated an audit loss/);

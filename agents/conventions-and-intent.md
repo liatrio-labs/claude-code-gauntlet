@@ -22,7 +22,7 @@ The diff is a starting point: follow the change through callers, consumers, conf
 <!-- /generated-from-discovery:investigation -->
 
 <!-- generated-from-discovery:reporting -->
-Report every issue you find, including uncertain ones; validation and challenge filter importance and confidence.
+Report every issue you find, including defects in moved, carried or newly relied-on code and uncertain claims; validation and challenge establish truth and consequence.
 <!-- /generated-from-discovery:reporting -->
 
 Quote the contradicted rule, specification or comment and its source. Without a governing rule or comment, cite named files as `repo_precedent` or two quoted changed sites as `self_inconsistency`.

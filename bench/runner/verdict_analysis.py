@@ -11,6 +11,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
+from gauntlet.registry import CONFIRMED_VERDICT_ROUTES
 from gauntlet.registry import VERDICT_ROUTES as ROUTES
 
 
@@ -212,9 +213,10 @@ def sample_tables(sample, reader, bounded, proximity):
                 "not_applicable"
                 if verdict.get("claim") in ("refuted", "not_established")
                 else "yes"
-                if consequence in ("present_failure", "latent", "artifact_defect")
+                if CONFIRMED_VERDICT_ROUTES.get(consequence, {}).get("status")
+                == "admitted"
                 else "no"
-                if consequence == "no_practical_effect"
+                if consequence in CONFIRMED_VERDICT_ROUTES
                 else "no_typed_verdict",
                 independent["worth"],
             )
@@ -323,7 +325,7 @@ def analyze(samples, reader_rows, expected_bugs=61, proximity=5):
         "definitions": {
             "bounded_cap": "2 + ceil(sqrt(changed_lines / 100)); shared budget for low severity and latent findings per PR",
             "places": f"canonical or claimed start in same file, consecutive starts at most {proximity} lines apart; clusters fixed before routing; a place matches if any member matches",
-            "confusion_axes": "rows=validator; columns=independent reader; worth yes=present_failure, latent or artifact_defect",
+            "confusion_axes": "rows=validator; columns=independent reader; worth yes=confirmed consequence eligible for posting",
             "inline_posting": "product disposition projected after validation assuming blind challenge agrees; excludes body placements and diagnostic-policy holds; older observations without placement are unmeasured",
             "baseline": "stored passes_floor routes, not a reconstruction of full production delivery; no typed answers inferred from scores",
         },

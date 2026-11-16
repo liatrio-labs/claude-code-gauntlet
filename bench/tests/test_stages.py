@@ -1,5 +1,6 @@
 """Workflow evidence survives collection, decoding and caller-level funnel scoring."""
 
+import hashlib
 import json
 import subprocess
 from dataclasses import asdict, replace
@@ -455,7 +456,7 @@ def test_trace_vocabularies_match_workflow_source():
                 "node",
                 "--input-type=module",
                 "-e",
-                "import {TRACE_STAGES,TRACE_REASONS} from './workflows/src/measurementTrace.js'; import {DIMENSIONS} from './workflows/src/registry.js'; console.log(JSON.stringify([TRACE_STAGES,TRACE_REASONS,[...new Set(DIMENSIONS.map(d => d.dimension)), 'unknown']]));",
+                "import {TRACE_STAGES,TRACE_REASONS,TRACE_DISCOVERY_DIMENSIONS} from './workflows/src/measurementTrace.js'; console.log(JSON.stringify([TRACE_STAGES,TRACE_REASONS,TRACE_DISCOVERY_DIMENSIONS]));",
             ],
             cwd=ROOT,
             text=True,
@@ -611,6 +612,143 @@ def test_collection_hashes_top_level_trace_and_persists_availability(tmp_path):
     assert missing.status == "unavailable" and missing.reason
 
 
+def test_collection_persists_ledger_decode_gap_without_losing_trace(tmp_path):
+    trace, _, receipt = emit_trace(tmp_path)
+    measurement = receipt["out"]["measurement"]
+    raw = json.loads(measurement["text"])
+    raw["coverage_ledger"] = {"version": 2}
+    measurement["text"] = json.dumps(raw)
+    directory = tmp_path / "pr"
+    (directory / "workflows").mkdir(parents=True)
+    (directory / "workflows/wf_current.json").write_text(
+        json.dumps({"result": receipt["out"]}), encoding="utf-8"
+    )
+    collected = stages.collect_trace(directory)
+    assert collected.status == "available"
+    assert collected.reason and "incomplete CoverageLedger" in collected.reason
+    assert (
+        read_json(directory / "measurement-collection.json")["reason"]
+        == collected.reason
+    )
+    binding = read_json(directory / "measurement-artifact.json")
+    assert binding["coverage_ledger_gap"] == collected.reason
+    loaded = stages.load_trace(
+        directory / binding["path"], expected_sha256=binding["sha256"]
+    )
+    assert (
+        loaded.coverage_ledger is None
+        and loaded.coverage_ledger_gap == collected.reason
+    )
+    assert loaded.versions == trace.versions
+
+
+@pytest.fixture(scope="module")
+def emitted_coverage_ledgers():
+    result = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            """
+import { discover as rawDiscover } from './workflows/src/discover.js';
+import { withPreparedPlan } from './workflows/test/helpers/diskDiscovery.js';
+const discover=(ctx,input)=>withPreparedPlan(ctx,input,rawDiscover);
+import { boundedCoverageLedger } from './workflows/src/coverageLedger.js';
+const regions = [0,1].map(i=>({id:`r${i}`,file:'source',line_start:i?0:1,line_end:i?0:2,reads:[{offset:1,limit:2,bytes:80}]}));
+const plan = {version:2,status:'available',fact_packets:[],regions};
+const ledgers=[];
+for(const reply of [null,{findings:[],complete:false,total_seen:0},{findings:[],complete:true,total_seen:0},
+{findings:[{file:'other',line_start:7,title:'Outside focus',description:'A present defect in nearby code',severity:'high',confidence:80,evidence:'source:1',anchor:'return process(value);',change_origin:'introduced'}],complete:true,total_seen:1}]) {
+ const ctx={agent:async(_,o)=>o.agentType==='code-gauntlet:gap-hunter'?reply:{findings:[],complete:true,total_seen:0,removed_test_audit:[]},parallel:async ts=>Promise.all(ts.map(t=>t()))};
+ for(const input of [{},{agentFlags:{deep:false}},{discoveryPlan:{}},{discoveryPlan:{...plan,regions:regions.map(r=>({...r,reads:[{offset:1,limit:2,bytes:25000}]}))}}]) {
+  const out=await discover(ctx,{contextPath:'/prepared',contextLines:10,discoveryPlan:plan,...input});
+  if(out.coverageLedger)ledgers.push(out.coverageLedger);
+ }
+}
+const ctx={agent:async()=>null,parallel:async ts=>Promise.all(ts.map(t=>t()))};
+ledgers.push((await discover(ctx,{contextPath:'/prepared',contextLines:10,discoveryPlan:plan})).coverageLedger);
+ledgers.push(boundedCoverageLedger(ledgers[0],0));
+console.log(JSON.stringify(ledgers));
+""",
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return json.loads(result.stdout)
+
+
+def test_ledger_wire_keys_and_closed_values_match_live_discovery(
+    emitted_coverage_ledgers,
+):
+    from typing import get_type_hints
+
+    from gauntlet.discovery_plan import CoverageLedger, TrimmedCoverageLedger
+
+    from bench.runner.decode import decode
+
+    for ledger in emitted_coverage_ledgers:
+        shape = (
+            TrimmedCoverageLedger if ledger["status"] == "trimmed" else CoverageLedger
+        )
+        assert set(ledger) == set(get_type_hints(shape))
+        assert decode(shape, ledger) == ledger
+    assert {
+        h["status"] for ledger in emitted_coverage_ledgers for h in ledger["hunters"]
+    } == {"complete", "incomplete", "failed"}
+    assert any(
+        h.get("outside_assignment")
+        for ledger in emitted_coverage_ledgers
+        for h in ledger["hunters"]
+    )
+    assert {
+        r["reason"] for ledger in emitted_coverage_ledgers for r in ledger["omitted"]
+    } >= {"scope", "no_head_anchor", "primary_failure", "budget"}
+
+
+@pytest.mark.parametrize("shape", ["available", "trimmed"])
+def test_unknown_ledger_fields_degrade_only_coverage(
+    tmp_path, emitted_coverage_ledgers, shape
+):
+    trace, path, _ = emit_trace(tmp_path)
+    ledger = next(
+        ledger for ledger in emitted_coverage_ledgers if ledger["status"] == shape
+    )
+    raw = asdict(trace)
+    raw["coverage_ledger"] = {**ledger, "future_key": True}
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    loaded = stages.load_trace(path, expected_sha256=file_hash(path))
+    assert loaded.coverage_ledger is None
+    assert (
+        loaded.coverage_ledger_gap
+        and "invalid coverage ledger" in loaded.coverage_ledger_gap
+    )
+    assert loaded.versions == trace.versions and loaded.snapshots == trace.snapshots
+
+
+def test_legacy_hunter_receipts_preserve_trace_coverage(
+    tmp_path, emitted_coverage_ledgers
+):
+    trace, path, _ = emit_trace(tmp_path)
+    ledger = next(
+        ledger for ledger in emitted_coverage_ledgers if ledger.get("hunters")
+    )
+    raw = asdict(trace)
+    raw["coverage_ledger"] = {
+        **ledger,
+        "hunters": [
+            {k: v for k, v in h.items() if k != "outside_assignment"}
+            for h in ledger["hunters"]
+        ],
+    }
+    path.write_text(json.dumps(raw), encoding="utf-8", newline="")
+    loaded = stages.load_trace(path, expected_sha256=file_hash(path))
+    assert loaded.coverage_ledger == raw["coverage_ledger"]
+    assert loaded.versions == trace.versions
+
+
 @pytest.mark.parametrize(
     "encoding,text,reason",
     [
@@ -642,4 +780,156 @@ def test_unreadable_compressed_transport_records_collection_gap(
     assert reason in receipt.reason.lower()
     assert (
         read_json(tmp_path / "measurement-collection.json")["reason"] == receipt.reason
+    )
+
+
+@pytest.mark.parametrize(
+    "condition", ["valid", "missing", "changed", "escape", "symlink"]
+)
+def test_external_coverage_artifacts_are_hash_bound_without_losing_trace(
+    tmp_path, emitted_coverage_ledgers, condition
+):
+    from gauntlet.discovery_disk import artifact_name
+
+    trace, path, _ = emit_trace(tmp_path)
+    ledger = next(x for x in emitted_coverage_ledgers if x["status"] == "available")
+    raw = trace.wire()
+    name = artifact_name("coverage-ledger", "abc1234", trace.run_nonce)
+    target = path.parent / name
+    data = json.dumps(ledger).encode()
+
+    digest = hashlib.sha256(data).hexdigest()
+    if condition == "escape":
+        name = "../outside.json"
+    elif condition == "symlink":
+        other = path.parent / "other-ledger.json"
+        other.write_bytes(data)
+        target.symlink_to(other)
+    elif condition != "missing":
+        target.write_bytes(data if condition == "valid" else b"changed")
+    raw["coverage_ledger_artifact"] = {"path": name, "sha256": digest}
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    loaded = stages.load_trace(path, expected_sha256=file_hash(path))
+    assert loaded.versions == trace.versions and loaded.snapshots == trace.snapshots
+    if condition == "valid":
+        assert loaded.coverage_ledger == ledger
+        assert loaded.coverage_ledger_gap is None
+    else:
+        assert loaded.coverage_ledger is None
+        assert "coverage ledger artifact" in loaded.coverage_ledger_gap
+
+
+@pytest.mark.parametrize("copy_ok", [True, False])
+def test_trace_collection_copies_the_bound_ledger_from_the_pipeline_output_directory(
+    tmp_path, emitted_coverage_ledgers, monkeypatch, copy_ok
+):
+    from gauntlet.discovery_disk import artifact_name
+
+    trace, _, receipt = emit_trace(tmp_path)
+    ledger = next(x for x in emitted_coverage_ledgers if x["status"] == "available")
+    output = tmp_path / "output"
+    output.mkdir()
+    name = artifact_name("coverage-ledger", "abc1234", trace.run_nonce)
+    artifact = output / name
+    artifact.write_text(json.dumps(ledger), encoding="utf-8")
+    raw = trace.wire()
+    raw["coverage_ledger_artifact"] = {"path": name, "sha256": file_hash(artifact)}
+    receipt["out"]["measurement"]["text"] = json.dumps(raw)
+    receipt["out"]["artifactPaths"]["findings"] = str(
+        output / "code-gauntlet-findings-abc1234.json"
+    )
+    directory = tmp_path / "pr"
+    (directory / "workflows").mkdir(parents=True)
+    (directory / "workflows/wf_current.json").write_text(
+        json.dumps({"result": receipt["out"]}), encoding="utf-8"
+    )
+    if not copy_ok:
+        from bench.runner import contracts
+
+        def unavailable_copy(*_):
+            raise PermissionError("ledger copy unavailable")
+
+        monkeypatch.setattr(contracts, "copy_exclusive", unavailable_copy)
+    collected = stages.collect_trace(directory)
+    assert collected.status == "available"
+    if copy_ok:
+        assert collected.reason is None
+        assert (directory / name).read_bytes() == artifact.read_bytes()
+    else:
+        assert "coverage ledger artifact" in collected.reason
+    binding = read_json(directory / "measurement-artifact.json")
+    loaded = stages.load_trace(
+        directory / binding["path"], expected_sha256=binding["sha256"]
+    )
+    assert loaded.coverage_ledger == (ledger if copy_ok else None)
+    assert loaded.versions == trace.versions
+
+
+@pytest.mark.parametrize("available", [True, False])
+def test_scoring_preserves_coverage_gaps_and_binds_ledger_source_bytes(
+    score_case, tmp_path, emitted_coverage_ledgers, available
+):
+    from gauntlet.discovery_disk import artifact_name
+
+    trace, _, _ = emit_trace(tmp_path)
+    pr = score_case.payload.parent
+    ledger = next(
+        item for item in emitted_coverage_ledgers if item["status"] == "available"
+    )
+    name = artifact_name("coverage-ledger", "abc1234", trace.run_nonce)
+    data = json.dumps(ledger).encode()
+    target = pr / name
+    if available:
+        target.write_bytes(data)
+    raw = trace.wire()
+    raw["coverage_ledger_artifact"] = {
+        "path": name,
+        "sha256": hashlib.sha256(data).hexdigest(),
+    }
+    (pr / "code-gauntlet-measurement-trace.json").write_text(
+        json.dumps(raw), encoding="utf-8"
+    )
+    (pr / "measurement-collection.json").write_text(
+        json.dumps({"status": "available", "reason": "collector coverage note"}),
+        encoding="utf-8",
+    )
+    packet = score_case.execute()
+    loaded = observations.load_packet(Path(packet["ledger_row"]["packet_path"]))
+    collection = loaded.manifest.trace_collection[score_case.url]
+    assert collection.status == "available"
+    if available:
+        assert collection.reason == "collector coverage note"
+        relative = target.relative_to(score_case.run).as_posix()
+        assert (
+            loaded.manifest.source_artifact_hashes[relative]
+            == hashlib.sha256(data).hexdigest()
+        )
+        target.write_bytes(data + b"\n")
+        assert (
+            loaded.manifest.source_artifact_hashes[relative]
+            != hashlib.sha256(target.read_bytes()).hexdigest()
+        )
+    else:
+        assert "coverage ledger artifact" in collection.reason
+
+
+def test_ledger_loader_follows_the_producers_nonce_component_contract(
+    tmp_path, emitted_coverage_ledgers, monkeypatch
+):
+    from gauntlet import discovery_disk
+
+    trace, path, _ = emit_trace(tmp_path)
+    monkeypatch.setattr(discovery_disk, "artifact_nonce", lambda _: "a" * 12)
+    ledger = next(
+        item for item in emitted_coverage_ledgers if item["status"] == "available"
+    )
+    name = discovery_disk.artifact_name("coverage-ledger", "abc1234", trace.run_nonce)
+    target = path.parent / name
+    target.write_text(json.dumps(ledger), encoding="utf-8")
+    raw = trace.wire()
+    raw["coverage_ledger_artifact"] = {"path": name, "sha256": file_hash(target)}
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    assert (
+        stages.load_trace(path, expected_sha256=file_hash(path)).coverage_ledger
+        == ledger
     )

@@ -3,6 +3,11 @@ import { deepFreeze } from './wire.js';
 // Scope gating is opt-out so absent flags preserve full review; null flags keep core agents ungateable.
 const DEEP = 'deep';
 
+// The writer and workflow must accept the same bounded receipt size.
+export const READ_PLAN_MAX_CHUNKS = 2000;
+export const DISCOVERY_TRANSPORT_LIMITS = deepFreeze({requestChars:1000,receiptChars:2048,maxParts:4});
+export const CONTEXT_RECEIPT_FIELDS = deepFreeze(['contextLines', 'contextChars', 'contextMaxLineChars', 'contextReadPlanVersion', 'contextReadChunks', 'removedTests', 'discoveryPlanRef']);
+
 export const AGENT_TYPE_TEST_ANALYZER = 'code-gauntlet:test-analyzer';
 
 // Share ordered identity checks with validation, rendering, and generated references so their contracts cannot drift.
@@ -97,7 +102,7 @@ export const DISPOSITION_RIGHTS = deepFreeze({
   eliminate: { inline: false, body: false, report: 'eliminated', fixTask: false, patch: false, fence: false, sourceLink: false },
 });
 export const DISPOSITIONS = deepFreeze(Object.keys(DISPOSITION_RIGHTS));
-export const STAGE_COSTS = deepFreeze({ verify: { attempts: 2, singletonRetries: 3 }, validate: { retryBatchDivisor: 5 }, writer: { attempts: 2 } });
+export const STAGE_COSTS = deepFreeze({ verify: { attempts: 2, singletonRetries: 3 }, validate: { retryBatchDivisor: 5 }, grouping: { attempts: 1 }, writer: { attempts: 2 }, discoveryPlan: { attempts: 2 * DISCOVERY_TRANSPORT_LIMITS.maxParts } });
 
 const SOURCE_REFERENCE = {
   type: 'object', $comment: 'source-reference', properties: {
@@ -252,6 +257,34 @@ export const DIMENSIONS = deepFreeze([
   requiredWhenDimension: [...row.requiredWhenDimension, ...(row.admission ? [row.admission.field] : [])],
 })));
 
+
+export const DISCOVERY_DISPATCHES = deepFreeze(['parallel', 'uncovered']);
+const DISCOVERY_REVIEWER_KEYS = ['agentType', 'dimension', 'dispatch', 'conditionalFlag', 'label', 'objective', 'tools', 'effort', 'color', 'modelOverride'];
+export function discoveryReviewer(row) {
+  if (!row || Object.keys(row).length !== DISCOVERY_REVIEWER_KEYS.length
+    || DISCOVERY_REVIEWER_KEYS.some((key) => !Object.hasOwn(row, key))
+    || !/^code-gauntlet:[a-z][a-z0-9-]*$/.test(row.agentType)
+    || !DIMENSIONS.some((d) => d.dimension === row.dimension)
+    || !DISCOVERY_DISPATCHES.includes(row.dispatch)
+    || ![null, DEEP].includes(row.conditionalFlag)
+    || !['label', 'objective'].every((key) => typeof row[key] === 'string' && row[key].trim())
+    || !Array.isArray(row.tools) || !row.tools.length || row.tools.some((t) => !['Read', 'Grep', 'Glob', 'LSP'].includes(t))
+    || !['low', 'medium', 'high'].includes(row.effort)
+    || !['red', 'blue', 'green', 'yellow', 'purple', 'cyan', 'magenta'].includes(row.color)
+    || !(row.modelOverride === null || (typeof row.modelOverride === 'string' && row.modelOverride.trim()))) {
+    throw new Error('Invalid discovery reviewer registry row');
+  }
+  return row;
+}
+
+// One row owns a supplemental role's scheduling, contract, tools and presentation.
+export const DISCOVERY_REVIEWERS = deepFreeze([
+  { agentType: 'code-gauntlet:gap-hunter', dimension: 'bug', dispatch: 'uncovered', conditionalFlag: DEEP, label: 'Gap Hunter',
+    objective: 'Focus on the supplied uncovered regions and fact cards; report any defect you find, including findings anchored outside the assignment.',
+    tools: ['Read'], effort: 'high', color: 'cyan', modelOverride: 'sonnet' },
+].map(discoveryReviewer));
+export const DISCOVERY_AGENT_TYPES = deepFreeze([...new Set([...DIMENSIONS, ...DISCOVERY_REVIEWERS].map(row => row.agentType))]);
+
 export const VERIFY_REFERENCE_FIELDS = deepFreeze(Object.keys(SOURCE_REFERENCE.properties));
 export const VERIFY_REFERENCE_DESCRIPTORS = deepFreeze(Object.fromEntries(Object.entries(Object.assign({}, ...DIMENSIONS.map((row) => row.schemaExtra)))
   .filter(([, schema]) => schema.$comment === 'source-reference' || schema.items?.$comment === 'source-reference' || schema.$comment === 'search-paths')
@@ -307,6 +340,7 @@ export const VERDICT_ROUTES = deepFreeze({
     present_failure: { route: 'posted', status: 'admitted', tier: 'main' },
     latent: { route: 'posted-latent', status: 'admitted', tier: 'suggestion', severity: 'low' },
     artifact_defect: { route: 'posted-artifact', status: 'admitted', tier: 'suggestion', severity: 'low' },
+    comment_defect: { route: 'report-only', status: 'report_only', tier: 'suggestion', severity: 'low', challenge: true },
     no_practical_effect: { route: 'report-only', status: 'report_only', tier: 'suggestion', challenge: true },
   },
   overrides: [
@@ -326,9 +360,25 @@ export const VERDICT_RESOLUTIONS = deepFreeze({
   not_established: { confirmed: 'challenger', refuted_verified: 'challenger', refuted_unverified: 'challenger', not_established: 'challenger' },
 });
 export const CONSEQUENCE_ORDER = deepFreeze(Object.keys(VERDICT_ROUTES.confirmed));
+// Length and blank checks stay local so prose quality cannot retry a whole reader answer.
+export const CONFIRMED_COMMENT_SCHEMA = deepFreeze({
+  type: 'object', properties: {
+    title: { type: 'string', minLength: 1, maxLength: 100, pattern: '^[^\\r\\n]*\\S[^\\r\\n]*$',
+      description: 'One line for the PR author: one confirmed issue, narrowed to what you verified; no trailing period needed, ceiling 100 characters.' },
+    body: { type: 'string', minLength: 1, maxLength: 400, pattern: '\\S',
+      description: 'One or two sentences for the PR author: one confirmed issue, what is wrong and what happens, narrowed to what you verified; ceiling 400 characters.' },
+    fix: { type: 'string', maxLength: 200,
+      description: 'One sentence for the PR author naming the correction you verified, ceiling 200 characters; empty if no correction can be confirmed.' },
+  }, required: ['title', 'body'], additionalProperties: false,
+});
+const READER_COMMENT_SCHEMA = { type: 'object',
+  properties: Object.fromEntries(Object.entries(CONFIRMED_COMMENT_SCHEMA.properties)
+    .map(([key, { type, description }]) => [key, { type, description }])),
+  required: Object.keys(CONFIRMED_COMMENT_SCHEMA.properties), additionalProperties: false };
 export const VERDICT_PROPERTIES = deepFreeze({
   claim: { type: 'string', enum: ['confirmed', 'refuted', 'not_established'] },
   consequence: { type: 'string', enum: CONSEQUENCE_ORDER },
+  comment: {},
   justification: { type: 'string', minLength: 1, pattern: '\\S' },
   refutation_kind: { type: 'string', enum: ['premise_false', 'guard_exists', 'no_reachable_caller'] },
   refutation: { ...SOURCE_REFERENCE, description: `Executable counter-evidence: at most ${ANCHOR_LIMITS.lines} inclusive source lines.`,
@@ -338,32 +388,37 @@ export const VERDICT_PROPERTIES = deepFreeze({
   latent_condition: { type: 'string', minLength: 1, pattern: '\\S' },
 });
 export const VERDICT_CASES = deepFreeze({
-  confirmed: ['consequence', 'latent_condition'],
+  confirmed: ['consequence', 'latent_condition', 'comment'],
   refuted: ['refutation_kind', 'refutation'],
   not_established: ['missing_fact'],
 });
-export function verdictSchema(extra = {}, requiredExtra = []) {
-  return { type: 'object', properties: { ...VERDICT_PROPERTIES, ...extra },
+function verdictSchema(extra = {}, requiredExtra = [], reader = false) {
+  const properties = { ...VERDICT_PROPERTIES, ...(reader ? { comment: READER_COMMENT_SCHEMA } : {}), ...extra };
+  return { type: 'object', properties,
     required: ['claim', 'justification', ...requiredExtra], additionalProperties: false,
     oneOf: Object.entries(VERDICT_CASES).map(([claim, fields]) => ({ type: 'object',
       properties: { claim: { type: 'string', const: claim }, justification: VERDICT_PROPERTIES.justification,
-        ...Object.fromEntries(fields.map((key) => [key, VERDICT_PROPERTIES[key]])), ...extra },
-      required: ['claim', 'justification', ...fields.filter((key) => key !== 'latent_condition'), ...requiredExtra],
+        ...Object.fromEntries(fields.map((key) => [key, properties[key]])), ...extra },
+      required: ['claim', 'justification', ...fields.filter((key) => key !== 'latent_condition' && (key !== 'comment' || reader)), ...requiredExtra],
       additionalProperties: false,
       ...(claim === 'confirmed' ? { allOf: [{ if: { properties: { consequence: { const: 'latent' } }, required: ['consequence'] }, then: { required: ['latent_condition'] } }] } : {}),
     })),
   };
 }
+// Stored verdicts may lack reader prose; dispatch alone requires its structure.
 export const VERDICT_SCHEMA = deepFreeze(verdictSchema());
-export const VALIDATION_VERDICT_SCHEMA = deepFreeze(verdictSchema({
+export const READER_VERDICT_SCHEMA = deepFreeze(verdictSchema({}, [], true));
+const VALIDATION_IDENTITY = {
   finding_id: { type: 'string' }, site_confirmations: RECURRENCE_RETURN_PROPERTIES.site_confirmations,
-}, ['finding_id']));
+};
+export const VALIDATION_VERDICT_SCHEMA = deepFreeze(verdictSchema(VALIDATION_IDENTITY, ['finding_id']));
+export const READER_VALIDATION_VERDICT_SCHEMA = deepFreeze(verdictSchema(VALIDATION_IDENTITY, ['finding_id'], true));
 // Stage-owned identities and code-check receipts are not model verdict fields.
 export const VERDICT_ENTRY_SCHEMA = deepFreeze(verdictSchema({
   id: { type: 'string' }, finding_id: { type: 'string' }, site_confirmations: RECURRENCE_RETURN_PROPERTIES.site_confirmations,
   refutation_check: { type: 'object', properties: { verified: { type: 'boolean' }, reason: { type: 'string' } }, required: ['verified'], additionalProperties: false },
 }, ['id']));
-export const VALIDATION_RETURN_PROPERTIES = deepFreeze({ ...RECURRENCE_RETURN_PROPERTIES, ...VERDICT_PROPERTIES });
+export const VALIDATION_RETURN_PROPERTIES = deepFreeze({ ...RECURRENCE_RETURN_PROPERTIES, ...VERDICT_PROPERTIES, comment: CONFIRMED_COMMENT_SCHEMA });
 export const ADMISSION_STAMP_PROPERTIES = deepFreeze({
   policy_subject: { type: 'string', enum: Object.keys(POLICY_SUBJECTS) },
   admission_assessments: { type: 'array', items: ASSESSMENT },
@@ -492,7 +547,7 @@ export const FINDING_TEXT_FIELD_NAMES = deepFreeze([...new Set([
   ...PIPELINE_FINDING_FIELDS,
 ])]);
 
-export const AGENTS = deepFreeze([...new Set(DIMENSIONS.map((d) => d.agentType))]);
+export const AGENTS = deepFreeze([...new Set([...DIMENSIONS, ...DISCOVERY_REVIEWERS].map((d) => d.agentType))]);
 
 // Key display labels by agent because a shared dispatch contributes one aggregate row, not one row per dimension.
 export const AGENT_LABELS = deepFreeze({
@@ -503,6 +558,7 @@ export const AGENT_LABELS = deepFreeze({
   'code-gauntlet:conventions-and-intent': 'Conventions & Intent',
   'code-gauntlet:type-design-analyzer': 'Type Design',
   'code-gauntlet:code-simplifier': 'Code Simplification',
+  ...Object.fromEntries(DISCOVERY_REVIEWERS.map((r) => [r.agentType, r.label])),
 });
 
 // Presentation branding is separate from the machine-parsed product slug, so changing display text cannot rename the wire protocol.
@@ -546,7 +602,7 @@ export function resolvePolicy(agentType, opts = {}, dimensions = DIMENSIONS) {
     // Preserve explicit third-party deployment IDs so the override remains an escape hatch from alias mapping.
     return { model: toModelId(opts.subagentModelEnv, opts.provider, opts.mappedAliases) };
   }
-  const dim = dimensions.find((d) => d.agentType === agentType);
+  const dim = dimensions.find((d) => d.agentType === agentType) || DISCOVERY_REVIEWERS.find((r) => r.agentType === agentType);
   const model = toModelId(dim?.modelOverride || STAGE_DEFAULTS[agentType.split(':').pop()] || 'sonnet', opts.provider, opts.mappedAliases);
   return { model };
 }
@@ -574,11 +630,10 @@ export const POLICY_PROVIDERS = deepFreeze(['firstParty', 'bedrock', 'vertex', '
 
 export const CONTROL_RE = /[\u0000-\u001F\u007F]/;
 
-// Absent delivery and discovery caps mean no ceiling; defaulting them would silently narrow a review.
+// Absent caps mean no ceiling; defaulting one would silently narrow a review.
 export const LIMIT_DEFAULTS = deepFreeze({
   summarizeBucketSize: 20,
   validateBatch: 25,
-  challengeCap: 40,
   // Small verify slices limit the blast radius of a bad inline transcription.
   verifySliceSize: 25,
   maxLineSpan: 100,
@@ -587,6 +642,7 @@ export const LIMIT_DEFAULTS = deepFreeze({
 export const LIGHT_SCOPE_MAX_CHANGED_LINES = 50;
 
 export const TRUSTED_SCRIPT_BASENAMES = deepFreeze({
+  discovery: 'plan_discovery.py',
   assemble: 'assemble_artifacts.py',
   verify: 'verify_findings.py',
   refutations: 'check_refutations.py',
@@ -638,6 +694,6 @@ export function identityCheck(identity, name, fields = PR_IDENTITY_FIELDS) {
 export const REPORT_PLACED_FIELDS = deepFreeze([
   'sites',
   'id', 'file', 'line_start', 'line_end', 'title', 'description', 'severity',
-  'confidence', 'dimension', 'origin', 'evidence', 'suggestion',
+  'confidence', 'dimension', 'origin', 'change_origin', 'change_relevance', 'evidence', 'suggestion',
   'claude_md_rule', 'rule_source', 'spec_text', 'cross_file_refs',
 ]);

@@ -92,7 +92,7 @@ repos:
         name: generated contract fences are current (regenerate with scripts/generate_contract_requirements.py)
         entry: python3 scripts/generate_contract_requirements.py --check
         language: system
-        files: ^(agents|skills/code-gauntlet|scripts|workflows)/
+        files: ^((agents|skills/code-gauntlet|scripts|workflows)/|\.claude-plugin/plugin\.json$)
         pass_filenames: false
 
       - id: zizmor

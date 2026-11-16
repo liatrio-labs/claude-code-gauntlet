@@ -44,15 +44,16 @@ from the fields you supply. Its output, for reference:
 Every field-backed section after `{body}` is emitted only when its field is present — `null`, `""` and
 whitespace-only all count as absent and produce no heading.
 
-**`suggestion` always renders as prose; it never becomes a suggestion block.** Only
+**Fix advice renders as prose; it never becomes a suggestion block.** Reader comments use
+`comment.fix` under **Suggested fix**, suppressing discovery `suggestion` even when the reader
+fix is empty or invalid. Discovery suggestion prose renders only on the discovery fallback. Only
 `suggested_fix_code` produces the committable ```suggestion fence, and only after
 `post_review.py` runs it through a deterministic pre-render apply-check — the field must be a
 string, non-empty after redaction, have fence rights and a whole-line anchor matching every
 canonical source line, preserve the held claimed span length, land inside a valid diff range,
 match this render site's actual apply range, differ from the current text, and stay within the
 size bound. Unconfirmed and legacy locations stay in the review body with the label
-`location unconfirmed`; they carry no inline comment, fence, patch artifact, or fix task. Any failure strips the field before render and the finding falls back to the prose
-`suggestion`, with the reason recorded via `warn_skip`. A suggestion fence is a one-click apply action, so it requires a dedicated patch field and a proved apply range.
+`location unconfirmed`; they carry no inline comment, fence, patch artifact, or fix task. Any failure strips the field before render and the finding falls back to the selected fix prose, with the reason recorded via `warn_skip`. A suggestion fence is a one-click apply action, so it requires a dedicated patch field and a proved apply range.
 
 A multi-line fence on GitLab carries an offsets header, `` ```suggestion:-m+n ``, with `m`/`n`
 decided by the poster from the discussion's anchor line — never supplied on the finding itself.
@@ -61,16 +62,19 @@ A single-line fix still renders a plain `` ```suggestion `` fence.
 **A fence that would overlap another kept fence in the same file demotes to prose.** The poster
 walks fences in delivery order and keeps the earlier one. Ranges are closed intervals: fences at
 the identical line collide, while adjacent fences do not and are never withheld. A demoted finding
-keeps its prose `suggestion`.
+keeps its selected reader or discovery fix prose.
 
 <!-- generated-from-registry-identity:severity_legend — do not edit; run scripts/generate_contract_requirements.py -->
 Product mark: ⚔️ (Code Gauntlet). Severity emojis: 🔴 critical, 🟠 high, 🟡 medium, 💡 low.
 Rule source labels: documented_rule -> Cited rule, code_comment -> Cited comment, repo_precedent -> Repo precedent, self_inconsistency -> Inconsistency; unknown values -> Cited rule.
 <!-- /generated-from-registry-identity:severity_legend -->
 
-Each issue posts its lead text and any folded security titles. Other members contribute confirmed locations and,
-when at least two distinct agents found it, an anonymous reviewer count. Unanchored issues appear
-once in the summary under their lead location. The local report retains every member description.
+Each issue posts the resolved reader's short title, body and fix, plus any folded security titles.
+Missing or invalid reader text falls back to discovery prose. Other deliverable members contribute
+confirmed locations: overlapping or adjacent ranges merge, inline coverage is omitted, and same-file
+sites use line references. Code comment and docstring wording defects stay in the report.
+Unanchored issues appear once in the summary under their lead location. The local report retains
+every discovery description and confirmed statement.
 
 ### Using post_review.py
 
@@ -141,9 +145,9 @@ when maintaining escaping or host rendering.
   - `severity` — emoji selected from: critical, high, medium, low
   - `title` — one-line finding summary
   - `body` — explanation and context (delivery alias of canonical `description`; see boundary note above)
-  - `suggestion` — optional prose fix advice, rendered under a **Suggested fix:** heading.
+  - `suggestion` — optional discovery fix advice, rendered under **Suggested fix:** only when reader text is unavailable. Valid reader text selects `comment.fix` instead; an empty or invalid reader fix omits the heading.
   - `claude_md_rule` / `spec_text` — optional; whichever survives sanitize renders under a heading as a blockquote (`claude_md_rule` preferred when both survive). When `claude_md_rule` is rendered, `rule_source` selects **Cited rule**, **Cited comment**, **Repo precedent**, or **Inconsistency**. Unknown or absent values use **Cited rule**. A `spec_text` fallback uses **Cited rule**. The raw `rule_source` value is never rendered.
-  - `suggested_fix_code` — optional code block, rendered as a committable GitHub/GitLab suggestion IF it passes `post_review.py`'s deterministic apply-check at the render site; otherwise stripped and the finding falls back to the prose `suggestion`. A body-budget cut also omits a suggestion block whole. Emitted by discovery agents when the fix is a byte-exact drop-in replacement, or supplied directly by a caller's own post-review JSON — same gate either way.
+  - `suggested_fix_code` — optional code block, rendered as a committable GitHub/GitLab suggestion IF it passes `post_review.py`'s deterministic apply-check at the render site; otherwise stripped and the finding retains the selected reader or discovery fix prose. A body-budget cut also omits a suggestion block whole. Emitted by discovery agents when the fix is a byte-exact drop-in replacement, or supplied directly by a caller's own post-review JSON — same gate either way.
     A patch containing marker-shaped text is downgraded with reason `marker_shaped`.
   - Every optional field above treats `null`, `""` and whitespace-only identically to absent: no heading is emitted at all.
 - `owner` — repository owner (GitHub org/user or GitLab group)

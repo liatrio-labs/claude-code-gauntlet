@@ -141,14 +141,22 @@ RECORDER = os.path.join(REPO_ROOT, "workflows", "test", "tools", "emit_task_outp
 NONCE = "nonce-materialize-test"
 
 
-def record_task_output(tmp, nonce=NONCE):
+def record_task_output(tmp, nonce=NONCE, count=2, fractional=False):
     """Run the wired pipeline on the return channel; return (task_path, out_dir)."""
     out_dir = os.path.join(tmp, ".code-gauntlet")
     os.makedirs(out_dir, exist_ok=True)
     task_path = os.path.join(tmp, "tasks", "task-abc123.output")
     os.makedirs(os.path.dirname(task_path), exist_ok=True)
     proc = subprocess.run(
-        ["node", RECORDER, task_path, Path(out_dir).as_posix(), nonce],
+        [
+            "node",
+            RECORDER,
+            task_path,
+            Path(out_dir).as_posix(),
+            nonce,
+            str(count),
+            *(["fractional"] if fractional else []),
+        ],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,

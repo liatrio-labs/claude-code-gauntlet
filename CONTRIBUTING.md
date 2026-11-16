@@ -116,7 +116,7 @@ Use these phase names when reporting a failure:
 
 The workflow renders and ranks results but has no filesystem access.
 On the default RETURN path, the session runs `materialize_artifacts.py` to save artifacts under `.code-gauntlet/`.
-Writer fallbacks persist through `artifact-writer`.
+Explicit writer modes persist through `artifact-writer`; RETURN never falls back to model transcription.
 Set `$CODE_GAUNTLET_OUTPUT_DIR` to change the output directory.
 
 Successful runs save full challenge output and phase counts in a slim checkpoint.

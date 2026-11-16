@@ -17,40 +17,62 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.parametrize(
-    "template,gap",
+    "reply,gap",
     [
         (
-            "${spec.agentType}: agent returned null (dispatch failed) "
-            "\u2014 dimensions ${spec.dimensions.join('/')} not covered${conditionalNote}",
-            "code-gauntlet:test-analyzer: agent returned null (dispatch failed) "
-            "\u2014 dimensions test_coverage not covered",
+            None,
+            "code-gauntlet:test-analyzer: agent returned null (dispatch failed) — dimensions test_coverage not covered",
         ),
-        (
-            "${spec.agentType}: malformed result (no findings array)",
-            "code-gauntlet:test-analyzer: malformed result (no findings array)",
-        ),
+        ({}, "code-gauntlet:test-analyzer: malformed result (no findings array)"),
     ],
 )
-def test_discovery_failure_gap_wording_matches_producer(tmp_path, template, gap):
-    source = (ROOT / "workflows/src/discover.js").read_text(encoding="utf-8")
-    assert f"gaps.push(`{template}`);" in source
-    assert (
-        "gaps.push(`removed-test audit: ${removedTestAudit.status}"
-        "${removedTestAudit.reason ? ` (${removedTestAudit.reason})` : ''}"
-        "${removedTestAudit.omitted ? ` (${removedTestAudit.omitted} omitted)` : ''}`);"
-    ) in source
+def test_discovery_failure_gap_wording_matches_producer(tmp_path, reply, gap):
+    result = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            """
+import { readFileSync } from 'node:fs';
+import { discover } from './workflows/src/discover.js';
+const reply = JSON.parse(readFileSync(0, 'utf8'));
+const out = await discover({agent: async (_, o) => o.agentType === 'code-gauntlet:test-analyzer' ? reply : {findings: [], complete: true, total_seen: 0}, parallel: async ts => Promise.all(ts.map(t=>t()))}, {removedTests:{status:'available',items:[],omitted:0}});
+console.log(JSON.stringify(out.gaps));
+""",
+        ],
+        cwd=ROOT,
+        input=json.dumps(reply),
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=True,
+    )
+    produced = json.loads(result.stdout)
+    assert any(actual.startswith(gap) for actual in produced)
+    audit_gap = (
+        "removed-test audit: gap ("
+        + (
+            "audit dispatch did not complete"
+            if reply is None
+            else "malformed audit rows"
+        )
+        + ")"
+    )
+    assert audit_gap in produced
     record = tmp_path / "workflows/wf_discovery.json"
     record.parent.mkdir()
     record.write_text(
         json.dumps(
             {
                 "workflowName": invoke.PIPELINE_META_NAME,
-                "result": {"ok": True, "gaps": [gap]},
+                "result": {"ok": True, "gaps": produced},
             }
         ),
         encoding="utf-8",
     )
-    assert check.workflow_stage_outcomes(tmp_path)[0] == ("discovery execution failed",)
+    failures, disclosures = check.workflow_stage_outcomes(tmp_path)
+    assert failures == ("discovery execution failed",)
+    assert "Recorded limitation: " + audit_gap in disclosures
 
 
 def _collect_discovery_attempt(tmp_path, fingerprint, out, checkpoint=None):
@@ -381,3 +403,50 @@ def test_window_attempt_requires_terminal_measurement_status(
     missing = not measurement
     assert attempt.validity.state == ("invalid" if missing else "valid")
     assert ("measurement_trace_missing" in attempt.validity.reasons) is missing
+
+
+@pytest.mark.parametrize(
+    "reply", [None, {}, {"findings": [], "complete": False, "total_seen": 0}]
+)
+def test_optional_hunter_failures_remain_disclosures_not_primary_execution_failures(
+    tmp_path, reply
+):
+    result = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            """
+import {readFileSync} from 'node:fs';
+import {discover} from './workflows/src/discover.js';
+import {withPreparedPlan} from './workflows/test/helpers/diskDiscovery.js';
+const reply=JSON.parse(readFileSync(0,'utf8'));
+const input={contextLines:10,removedTests:{status:'available',items:[],omitted:0},discoveryPlan:{version:2,status:'available',fact_packets:[],regions:[{id:'r',file:'source',line_start:1,line_end:2,reads:[{offset:3,limit:2,bytes:100}]}]}};
+const ctx={agent:async(_p,o)=>o.agentType==='code-gauntlet:gap-hunter'?reply:{findings:[],complete:true,total_seen:0,removed_test_audit:[]},parallel:async ts=>Promise.all(ts.map(t=>t()))};
+const out=await withPreparedPlan(ctx,input,discover,{materialize:false});
+console.log(JSON.stringify(out.gaps));
+""",
+        ],
+        cwd=ROOT,
+        input=json.dumps(reply),
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=True,
+    )
+    gaps = json.loads(result.stdout)
+    assert any("gap-hunter" in gap for gap in gaps)
+    record = tmp_path / "workflows/wf_hunter.json"
+    record.parent.mkdir()
+    record.write_text(
+        json.dumps(
+            {
+                "workflowName": invoke.PIPELINE_META_NAME,
+                "result": {"ok": True, "gaps": gaps},
+            }
+        ),
+        encoding="utf-8",
+    )
+    failures, disclosures = check.workflow_stage_outcomes(tmp_path)
+    assert failures == ()
+    assert any("gap-hunter" in item for item in disclosures)

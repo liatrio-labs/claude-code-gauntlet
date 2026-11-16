@@ -1,3 +1,4 @@
+import { confirmedComment } from './verdict.js';
 // Owns local report rendering: multiline prose keeps Markdown, while evidence and receipts keep their fence grammars.
 // Line fields use the outbound line contract, and repository spans preserve copyable normalized text in dynamic delimiters.
 import { canonicalRange, locationAllows, deliveryAllows } from './location.js';
@@ -142,6 +143,7 @@ function consolidateForReport(findings, delivery = false, sources = new WeakMap(
         report_tag: c.report_tag ?? c.report_destination,
         title: c.title,
         description: c.description,
+        verdict: c.verdict,
       })),
     };
   });
@@ -181,6 +183,8 @@ function reportCorroboration(value) {
     const text = reportOptionalText(safeReportField(value, key));
     if (text !== undefined) out[key] = text;
   }
+  const verdict = safeReportField(value, 'verdict');
+  if (verdict) out.verdict = verdict;
   const confidence = reportAsConfidence(safeReportField(value, 'confidence'));
   if (confidence !== undefined) out.confidence = confidence;
   return out;
@@ -205,7 +209,8 @@ function coerceReportFinding(finding, severities) {
       value = reportAsConfidence(raw);
     } else if (key === 'verdict') {
       value = plainReportObject(raw) ? { claim: reportOptionalText(safeReportField(raw, 'claim')),
-        consequence: reportOptionalText(safeReportField(raw, 'consequence')) } : undefined;
+        consequence: reportOptionalText(safeReportField(raw, 'consequence')),
+        comment: confirmedComment({ verdict: raw }) } : undefined;
     } else if (key === 'corroborations') {
       value = Array.isArray(raw) ? raw.map(reportCorroboration) : undefined;
     } else if (key === 'sites') {
@@ -468,6 +473,16 @@ function renderFinding(builder, finding, unverified, permalinks) {
 
   if (bullets.length) blocks.push(() => bullets.forEach((line) => builder.addSpans(line, [where])));
 
+  if (finding.verdict?.comment) blocks.push(() => {
+    builder.add(`**Confirmed statement:** ${inline(finding.verdict.comment.title)}`);
+    builder.add();
+    builder.add(foldedProse(finding.verdict.comment.body));
+    if (finding.verdict.comment.fix) {
+      builder.add();
+      builder.add(`**Confirmed fix:** ${foldedProse(finding.verdict.comment.fix)}`);
+    }
+  });
+
   if (isPresent(finding.description)) blocks.push(() => builder.add(foldedProse(finding.description)));
   if (isPresent(finding.evidence)) {
     blocks.push(() => {
@@ -517,6 +532,12 @@ function renderFinding(builder, finding, unverified, permalinks) {
         const dimension = preparedCodeSpan(corroboration.dimension, false, undefined, REPORT_FOLD_LIMITS.inlineChars);
         const title = inline(corroboration.title);
         builder.addSpans(`- **Corroborated by** ${agent} (${dimension}, severity ${inline(normalizeReportSeverity(corroboration.severity))}, tier ${inline(corroboration.report_tag ?? 'main')}): ${title}`, [agent, dimension]);
+        const comment = confirmedComment(corroboration);
+        if (comment) {
+          builder.add(`  **Confirmed statement:** ${inline(comment.title)}`);
+          builder.add(foldedProse(comment.body).split(/\r?\n/).map((line) => `  ${line}`).join('\n'));
+          if (comment.fix) builder.add(`  **Confirmed fix:** ${foldedProse(comment.fix)}`);
+        }
         if (isPresent(corroboration.description)) {
           builder.add(foldedProse(corroboration.description).split(/\r?\n/).map((line) => `  ${line}`).join('\n'));
         }
@@ -692,7 +713,7 @@ function summaryBlock(builder, input, findingsRight = 'body') {
     const link = url ? `[${where}](${url})` : where;
     const suggestion = (finding.report_tag ?? finding.report_destination) === 'suggestion' ? PUBLIC_SUMMARY.suggestion : '';
     const bullet = outboundTildeRuns(
-      publicSummaryText(PUBLIC_SUMMARY.index, { mark: severityMark(severity), severity: severity.toUpperCase(), location: link, suggestion, title: prepareSummaryTitle(finding.title) }),
+      publicSummaryText(PUBLIC_SUMMARY.index, { mark: severityMark(severity), severity: severity.toUpperCase(), location: link, suggestion, title: prepareSummaryTitle((local ? null : confirmedComment(finding))?.title ?? finding.title) }),
     );
     records.push({ lead_id: selection.references.get(finding), bullet });
     const nextChars = [...bullet].length + (bullets.length ? 1 : 0);

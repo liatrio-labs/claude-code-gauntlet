@@ -7,7 +7,9 @@ import json
 import os
 import re
 import stat
-from collections.abc import Mapping, Sequence
+import tempfile
+import time
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, cast
@@ -409,6 +411,29 @@ def _local_bytes(root: Path, parts: tuple[str, ...]) -> bytes:
 
 
 @dataclass(frozen=True, slots=True)
+class SnapshotFile:
+    file: str
+    oid: str
+    size: int
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotInventory:
+    files: tuple[SnapshotFile, ...]
+    available: bool
+    truncated: bool
+    excluded: int = 0
+    unreadable: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotRead:
+    files: Mapping[str, tuple[str, ...]]
+    unreadable: int
+    deadline_reached: bool
+
+
+@dataclass(frozen=True, slots=True)
 class SourceAdapter:
     root: Path
     target_kind: TargetKind
@@ -509,6 +534,330 @@ class SourceAdapter:
         except (OSError, ValueError, UnicodeError, proc.TimeoutExpired):
             return None
 
+    def tracked_files(
+        self,
+        include: Callable[[str], bool],
+        *,
+        deadline: float,
+        max_listing_bytes: int,
+        priority_directories: Sequence[str] = (),
+    ) -> SnapshotInventory:
+        """Use the captured tree, or the local index, as the membership authority."""
+        if time.monotonic() >= deadline:
+            return SnapshotInventory((), False, True)
+        if self.target_kind != "local" and self.captured_head is None:
+            return SnapshotInventory((), False, False)
+        command = (
+            ["git", "ls-files", "--stage", "-z"]
+            if self.target_kind == "local"
+            else [
+                "git",
+                "ls-tree",
+                "-r",
+                "-l",
+                "-z",
+                "--full-tree",
+                cast(str, self.captured_head),
+            ]
+        )
+        try:
+            directories = [
+                d for d in priority_directories if self._parts(d) is not None
+            ]
+            commands = []
+            if directories:
+                commands.append(
+                    [*command, "--", *(f":(literal){d}" for d in directories)]
+                )
+            commands.append(command)
+            remaining = max_listing_bytes
+            records: list[bytes] = []
+            limited = False
+            available = False
+            for index, query in enumerate(commands):
+                if remaining <= 0:
+                    limited = True
+                    break
+                cap = max(1, remaining // 2) if index < len(commands) - 1 else remaining
+                result = proc.run_bounded_bytes(
+                    query,
+                    cwd=str(self.root),
+                    timeout=max(0, deadline - time.monotonic()),
+                    max_output=cap,
+                )
+                remaining -= len(result.stdout)
+                if result.returncode and not result.truncated:
+                    limited = True
+                    continue
+                available = True
+                limited |= result.truncated
+                records.extend(result.stdout.split(b"\0")[:-1])
+            if not available:
+                return SnapshotInventory((), False, limited)
+            files = []
+            excluded = 0
+            unreadable = 0
+            seen: set[str] = set()
+            for record in records:
+                if time.monotonic() >= deadline:
+                    limited = True
+                    break
+                metadata, raw_path = record.split(b"\t", 1)
+                path = raw_path.decode("utf-8", "surrogateescape")
+                if path in seen:
+                    continue
+                seen.add(path)
+                parts = self._parts(path)
+                values = metadata.split()
+                if self.target_kind == "local":
+                    mode, oid, stage = values
+                    if stage != b"0":
+                        unreadable += 1
+                        continue
+                else:
+                    mode, kind, oid, raw_size = values
+                    if kind != b"blob":
+                        excluded += 1
+                        continue
+                if (
+                    mode not in (b"100644", b"100755")
+                    or parts is None
+                    or not include(path)
+                ):
+                    excluded += 1
+                    continue
+                if self.target_kind == "local":
+                    try:
+                        if not stat.S_ISREG(_local_mode(self.root, parts)):
+                            unreadable += 1
+                            continue
+                        size = (
+                            self.root.joinpath(*parts)
+                            .stat(follow_symlinks=False)
+                            .st_size
+                        )
+                    except OSError:
+                        unreadable += 1
+                        continue
+                else:
+                    size = int(raw_size)
+                files.append(SnapshotFile(path, oid.decode("ascii"), size))
+            return SnapshotInventory(tuple(files), True, limited, excluded, unreadable)
+        except (OSError, ValueError, UnicodeError, proc.TimeoutExpired):
+            return SnapshotInventory((), False, time.monotonic() >= deadline)
+
+    def unignored_files(
+        self, inventory: SnapshotInventory, *, deadline: float, max_listing_bytes: int
+    ) -> SnapshotInventory:
+        """Intersect snapshot membership with Git's current and captured ignore rules."""
+        if not inventory.available:
+            return SnapshotInventory(
+                (), False, inventory.truncated, inventory.excluded, inventory.unreadable
+            )
+        files = inventory.files
+        if not files:
+            return inventory
+
+        def ignored(worktree: str | None = None) -> set[str]:
+            command = [
+                "git",
+                *(["--work-tree=" + worktree] if worktree else []),
+                "check-ignore",
+                "--no-index",
+                "-z",
+                "--stdin",
+            ]
+            result = proc.run_bounded_bytes(
+                command,
+                cwd=str(self.root),
+                timeout=max(0, deadline - time.monotonic()),
+                max_output=max_listing_bytes,
+                input=b"\0".join(
+                    f.file.encode("utf-8", "surrogateescape") for f in files
+                )
+                + b"\0",
+            )
+            if result.returncode not in (0, 1) or result.truncated:
+                raise ValueError("ignore check unavailable")
+            return {
+                p.decode("utf-8", "surrogateescape")
+                for p in result.stdout.split(b"\0")
+                if p
+            }
+
+        try:
+            excluded = ignored()
+            if self.target_kind != "local":
+                rules = [f for f in files if f.file.rsplit("/", 1)[-1] == ".gitignore"]
+                if inventory.truncated:
+                    ancestors = {".gitignore"}
+                    for item in files:
+                        parts = item.file.split("/")[:-1]
+                        ancestors.update(
+                            "/".join([*parts[:n], ".gitignore"])
+                            for n in range(1, len(parts) + 1)
+                        )
+                    records = []
+                    remaining = max_listing_bytes
+                    pending: list[str] = []
+                    cost = 0
+                    queries: list[list[str]] = []
+                    for name in sorted(ancestors):
+                        pathspec = ":(literal)" + name
+                        size = len(pathspec.encode("utf-8", "surrogateescape")) + 1
+                        if pending and cost + size > 8192:
+                            queries.append(pending)
+                            pending, cost = [], 0
+                        pending.append(pathspec)
+                        cost += size
+                    if pending:
+                        queries.append(pending)
+                    for query in queries:
+                        result = proc.run_bounded_bytes(
+                            [
+                                "git",
+                                "ls-tree",
+                                "-l",
+                                "-z",
+                                "--full-tree",
+                                cast(str, self.captured_head),
+                                "--",
+                                *query,
+                            ],
+                            cwd=str(self.root),
+                            timeout=max(0, deadline - time.monotonic()),
+                            max_output=remaining,
+                        )
+                        remaining -= len(result.stdout)
+                        if result.returncode or result.truncated:
+                            raise ValueError("ignore listing unavailable")
+                        records.extend(result.stdout.split(b"\0")[:-1])
+                    rules = []
+                    for record in records:
+                        metadata, raw_path = record.split(b"\t", 1)
+                        mode, kind, oid, raw_size = metadata.split()
+                        if mode in (b"100644", b"100755") and kind == b"blob":
+                            rules.append(
+                                SnapshotFile(
+                                    raw_path.decode("utf-8", "surrogateescape"),
+                                    oid.decode("ascii"),
+                                    int(raw_size),
+                                )
+                            )
+
+                if sum(f.size for f in rules) > 256 * 1024:
+                    raise ValueError("ignore rules exceed budget")
+                read = self.read_snapshot(rules, deadline=deadline)
+                if read.unreadable or read.deadline_reached:
+                    raise ValueError("ignore snapshot unavailable")
+                with tempfile.TemporaryDirectory(
+                    prefix="gauntlet-ignore-"
+                ) as directory:
+                    for file, lines in read.files.items():
+                        path = Path(directory).joinpath(*file.split("/"))
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_text(
+                            "\n".join(lines) + "\n", encoding="utf-8", newline=""
+                        )
+                    excluded |= ignored(directory)
+            return SnapshotInventory(
+                tuple(f for f in files if f.file not in excluded),
+                True,
+                inventory.truncated,
+                inventory.excluded + len(excluded),
+                inventory.unreadable,
+            )
+        except (OSError, ValueError, proc.TimeoutExpired):
+            return SnapshotInventory(
+                (),
+                False,
+                time.monotonic() >= deadline,
+                inventory.excluded,
+                inventory.unreadable,
+            )
+
+    def read_snapshot(
+        self, files: Sequence[SnapshotFile], *, deadline: float
+    ) -> SnapshotRead:
+        """Read only pre-budgeted tracked files, with one Git batch for a pinned tree."""
+        loaded: dict[str, tuple[str, ...]] = {}
+        if not files:
+            return SnapshotRead(loaded, 0, time.monotonic() >= deadline)
+        try:
+            if self.target_kind == "local":
+                for item in files:
+                    if time.monotonic() >= deadline:
+                        break
+                    parts = self._parts(item.file)
+                    if parts is None:
+                        continue
+                    try:
+                        with os.fdopen(_local_open(self.root, parts), "rb") as handle:
+                            before = os.fstat(handle.fileno())
+                            if (
+                                not stat.S_ISREG(before.st_mode)
+                                or before.st_size != item.size
+                            ):
+                                continue
+                            content = handle.read(item.size)
+                            after = os.fstat(handle.fileno())
+                            if (
+                                after.st_size != item.size
+                                or after.st_mtime_ns != before.st_mtime_ns
+                            ):
+                                continue
+                        decoded = _decode_source(content)
+                        if decoded is not None:
+                            loaded[item.file] = decoded
+                    except OSError:
+                        continue
+            else:
+                request = b"".join(item.oid.encode("ascii") + b"\n" for item in files)
+                result = proc.run_bounded_bytes(
+                    ["git", "cat-file", "--batch"],
+                    cwd=str(self.root),
+                    timeout=max(0, deadline - time.monotonic()),
+                    input=request,
+                    max_output=sum(item.size + 100 for item in files),
+                )
+                if result.returncode or result.truncated:
+                    return SnapshotRead({}, len(files), time.monotonic() >= deadline)
+                offset = 0
+                for item in files:
+                    end = result.stdout.index(b"\n", offset)
+                    header = result.stdout[offset:end].split()
+                    offset = end + 1
+                    if header == [item.oid.encode("ascii"), b"missing"]:
+                        continue
+                    # Consume the declared payload even when this object's identity is wrong,
+                    # so a bad entry cannot shift subsequent files onto another blob's bytes.
+                    if len(header) != 3 or not header[2].isdigit():
+                        break
+                    size = int(header[2])
+                    content = result.stdout[offset : offset + size]
+                    if (
+                        len(content) != size
+                        or result.stdout[offset + size : offset + size + 1] != b"\n"
+                    ):
+                        break
+                    offset += size + 1
+                    if header != [
+                        item.oid.encode("ascii"),
+                        b"blob",
+                        str(item.size).encode("ascii"),
+                    ]:
+                        continue
+                    decoded = _decode_source(content)
+                    if decoded is not None:
+                        loaded[item.file] = decoded
+            return SnapshotRead(
+                loaded, len(files) - len(loaded), time.monotonic() >= deadline
+            )
+        except (OSError, ValueError, UnicodeError, proc.TimeoutExpired):
+            return SnapshotRead(
+                loaded, len(files) - len(loaded), time.monotonic() >= deadline
+            )
+
     def valid_path(self, file: str) -> bool:
         return self._parts(file) is not None
 
@@ -577,10 +926,15 @@ class SourceAdapter:
         try:
             if self.target_kind == "local":
                 return _decode_source(_local_bytes(self.root, parts))
-            if self.captured_head is None:
-                return None
             tree = proc.run_bytes(
-                ["git", "ls-tree", "-z", self.captured_head, "--", f":(literal){file}"],
+                [
+                    "git",
+                    "ls-tree",
+                    "-z",
+                    cast(str, self.captured_head),
+                    "--",
+                    f":(literal){file}",
+                ],
                 cwd=str(self.root),
                 timeout=3,
             )
