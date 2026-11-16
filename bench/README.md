@@ -330,7 +330,8 @@ qualifies it with `auth_mode` on the ledger row:
   marker, and **excludes** it from the run-cost tile and from every derived
   per-golden cost figure.
 - Any cost figure quoted in this README or in [`MEASUREMENT.md`](MEASUREMENT.md)
-  is `auth_mode=api` spend only.
+  is `auth_mode=api` spend only, except the labelled v4.0 estimate under
+  [Measurement history](#measurement-history).
 
 ### Usage limits
 
@@ -395,8 +396,23 @@ The [committed ledger](experiments.jsonl) records these runs:
 | v4.0.0 (Full test set) | 2026-11-16 | Lane 1: `subset-20261115-230910-3bab948e` + `custom-20261116-034129-3911db9e`; Lane 2: `subset-20261115-231648-3bab948e` + `custom-20261116-034135-3911db9e`; Lane 3: `subset-20261115-231656-3bab948e` + `custom-20261116-034141-3911db9e` | 0.788 (156/198) | — |
 
 Each v4.0 lane pools the four PRs from its custom run at 3911db9e with the other eleven PRs from its subset run at 3bab948e.
-Session: Sonnet at effort low; judge: `claude-opus-4-5-20251101`.
+Session: Sonnet at effort low; judge: `claude-opus-4-5-20251101`; Claude Code 2.1.323.
 Pooled noise is not reported.
+
+The other v4.0 measures, pooled over the same three lanes:
+
+| Measure | Lane 1 | Lane 2 | Lane 3 | Pooled |
+| --- | --- | --- | --- | --- |
+| Recall, 13 PRs with no prompt overlap (50 bugs) | 80.0% | 80.0% | 80.0% | 80.0% (120/150) |
+| Recall, PRs outside the six-PR mini set (21 bugs) | 71.4% | 76.2% | 71.4% | 73.0% (46/63) |
+| Strict precision, all 15 PRs | 40.2% | 40.0% | 36.7% | 38.9% |
+| Inline comments per PR, all 15 PRs | 9.3 | 9.1 | 9.5 | 9.3 |
+
+Time and cost cover the 45 pooled reviews.
+Wall time, from each attempt's recorded start and end, had a median of 11.8 minutes and ranged from 3.5 to 22.4.
+Cost is Claude Code's own `total_cost_usd` for each review: median $4.97, 10th percentile $2.49, 90th percentile $8.55.
+Thirty-three of the 45 reviews ran on a subscription, so for those the figure is Claude Code's estimate at API prices, not billed spend.
+The other twelve are `auth_mode=api` spend.
 
 The v3.12 row combines a five-PR mini and its one-PR completion leg.
 The v3.26 mini met the pre-registered 0.24 noise ceiling.

@@ -15,4 +15,4 @@ Delivery posts one comment per defect, and grouping cannot change which findings
 
 Project rules come as prose from `REVIEW.md`, `CLAUDE.md`, `AGENTS.md`, and `QODO.md`.
 They do not configure filtering or delivery ([format reference](../skills/code-gauntlet/references/review-md-spec.md)).
-[CONTRIBUTING.md](../CONTRIBUTING.md) maps the stages to the source files.
+[CONTRIBUTING.md](../CONTRIBUTING.md#architecture) names each phase, and `workflows/src/` holds the stage modules, such as `mergeFindings.js` and `admission.js`.

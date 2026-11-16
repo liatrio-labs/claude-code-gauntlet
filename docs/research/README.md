@@ -1,6 +1,6 @@
 # Research
 
-Research artifacts that informed the design of claude-deep-review. Each document covers a specific aspect of AI code review architecture, validated against production systems and published research.
+Research artifacts that informed the design of Code Gauntlet. Each document covers a specific aspect of AI code review architecture, validated against production systems and published research.
 
 ## Artifacts
 

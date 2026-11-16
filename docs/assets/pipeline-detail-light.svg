@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 3006" role="img" aria-labelledby="pipeline-title pipeline-desc">
   <title id="pipeline-title">Code Gauntlet review pipeline in detail</title>
-  <desc id="pipeline-desc">A GitHub pull request, GitLab merge request or local change is prepared in your session, then reviewed inside one Workflow call. On a full review seven specialist agents discover candidate findings in parallel; a light review, offered when every changed file is low risk and the change is under 50 lines, runs only the bug and security reviewers. A gap hunter agent then reads changed regions no specialist cited, within a fixed read budget, and the report lists what the budget left out; light reviews and fully cited changes skip it. Code merges and deduplicates the findings and verifies each cited file, line and symbol against the source. An independent validator agent tries to disprove each finding and returns a fixed verdict, and on a confirmation writes the title, body and fix that would be posted. Code filters by verdict and removes prompt-injection patterns, then admission requires each finding kind to carry the evidence it needs. A blind challenge by a fresh agent sees only the claim and its location. The two readers' verdicts are resolved into one final verdict and the confirming reader writes the posted comment. A confirmed present failure posts at its severity, a confirmed latent defect, or a defect in a test or standalone documentation, posts at low severity, comment wording or no practical effect stays in the local report, a refutation with a verified code citation drops the finding, and a finding not established is held back and listed as unverified. A security finding is dropped only when both readers refute it with verified citations. A group agent joins findings that one change would fix. Code ranks and selects the delivery set and renders the report, with incomplete checks in a separate unverified section, then hands the results back to your session. On an interactive run the session always saves a Markdown report, asks before posting inline comments to an open pull or merge request, and offers an optional task board. A headless run asks nothing, delivers to chat, Markdown or PR comments as configured, and defaults posting to dry-run.</desc>
+  <desc id="pipeline-desc">A GitHub pull request, GitLab merge request or local change is prepared in your session, then reviewed inside one Workflow call. On a full review seven specialist agents discover candidate findings in parallel; a light review, offered when every changed file is low risk and the change is under 50 lines, runs only the bug and security reviewers. A gap hunter agent then reads changed code that no specialist's finding pointed at, within a fixed read budget, and a coverage file records what the budget left out; light reviews skip it, and so do changes the specialists' findings already cover. Code merges the findings into one list and verifies each cited file, line and symbol against the source. An independent validator agent tries to disprove each finding and returns a fixed verdict, and on a confirmation writes the title, body and fix that would be posted. Code filters by verdict and removes known prompt-injection patterns, then admission requires each finding kind to carry the evidence it needs. A blind challenge by a fresh agent sees only the claim and its location. The two readers' verdicts are resolved into one final verdict and the confirming reader writes the posted comment. A confirmed present failure posts at its severity, a confirmed latent defect, or a defect in a test or standalone documentation, posts at low severity, comment wording or no practical effect stays in the local report, a refutation with a verified code citation drops the finding, and a finding not established is held back and listed as unverified. A security finding is dropped only when both readers refute it with verified citations. A group agent joins findings that one change would fix. Code ranks and selects the delivery set and renders the report, with incomplete checks in a separate unverified section, then hands the results back to your session. On an interactive run the session always saves a Markdown report, asks before posting inline comments to an open pull or merge request, and offers an optional task board. A headless run asks nothing, delivers to chat, Markdown or PR comments as configured, and defaults posting to dry-run.</desc>
   <defs>
     <style>
       text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 18px; fill: #1f2937; }
@@ -54,7 +54,7 @@
   <text class="kind" x="68" y="219">YOUR SESSION</text>
   <text class="section" x="68" y="250">Prepare shared context</text>
   <text class="detail" x="68" y="280">Eligibility, checkout, diff, risk triage, test discovery</text>
-  <text class="detail" x="68" y="305">CLAUDE.md and REVIEW.md rules gathered into one shared context</text>
+  <text class="detail" x="68" y="305">Project rule files gathered into one shared context</text>
   <line class="divider" x1="780" y1="210" x2="780" y2="307"/>
   <text class="effect" x="802" y="252">Platform detected from the remote</text>
   <text class="effect" x="802" y="278">Re-review: delta since last run</text>
@@ -66,7 +66,7 @@
   <text class="agent-kind" x="92" y="452">AGENTS</text>
   <text class="section" x="92" y="483">Parallel discovery</text>
   <text class="detail" x="304" y="483">candidates only, nothing trusted yet</text>
-  <text class="detail" x="92" y="513">Full review: seven specialists in parallel, each with the full diff, pulling its own context with Read, Grep and LSP</text>
+  <text class="detail" x="92" y="513">Full review: seven specialists in parallel, each with the full diff, pulling context with Read, Grep, Glob and LSP</text>
   <path class="fan" d="M160 553 V539 H1043.2 V553 M307.2 539 V553 M454.4 539 V553 M601.6 539 V553 M748.8 539 V553 M896 539 V553"/>
   <rect class="agent-node" x="92" y="553" width="136" height="84" rx="7"/>
   <text class="reviewer" x="160" y="590">Bugs</text>
@@ -103,11 +103,11 @@
   <text class="section" x="92" y="827">Gap hunter</text>
   <text class="detail" x="236" y="827">Sonnet</text>
   <text class="detail" x="92" y="857">Runs after the specialists return</text>
-  <text class="detail" x="92" y="882">Reads changed regions none of them cited, within a fixed read budget</text>
+  <text class="detail" x="92" y="882">Reads changed code no finding pointed at, in a fixed read budget</text>
   <line class="divider" x1="780" y1="787" x2="780" y2="884"/>
   <text class="effect" x="802" y="815.5">Skipped on light reviews</text>
-  <text class="effect" x="802" y="841.5">Skipped when every change is cited</text>
-  <text class="effect" x="802" y="867.5">Report lists what the budget left out</text>
+  <text class="effect" x="802" y="841.5">Skipped if all changes are covered</text>
+  <text class="effect" x="802" y="867.5">Coverage file lists what it skipped</text>
   <path class="flow" d="M128 906 V934" marker-end="url(#arrow)"/>
   <rect class="panel" x="64" y="936" width="1072" height="141" rx="10"/>
   <text class="kind" x="92" y="967">CODE</text>
@@ -207,7 +207,7 @@
   <text class="strong" x="92" y="2516">Pure functions</text>
   <text class="detail" x="92" y="2542">Merge, filter, rank and render are code</text>
   <text class="strong" x="449" y="2516">Failures recorded as gaps</text>
-  <text class="detail" x="449" y="2542">The report counts them, chat lists each</text>
+  <text class="detail" x="449" y="2542">Listed in the report and in chat</text>
   <text class="strong" x="807" y="2516">Untrusted input</text>
   <text class="detail" x="807" y="2542">Fenced going in, escaped coming out</text>
   <line class="divider" x1="421.333" y1="2496" x2="421.333" y2="2548"/>

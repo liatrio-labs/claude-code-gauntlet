@@ -10,7 +10,7 @@
   "plugins": [
     {
       "name": "code-gauntlet",
-      "description": "Adversarial code review for Claude Code. Seven specialist agents review each GitHub PR, GitLab MR or local change for bugs, security, tests and cross-file impact, and an eighth checks changed code they did not cite. Every finding must survive verification, a skeptical validator and a blind challenge before it posts.",
+      "description": "Adversarial code review for Claude Code. Seven specialist agents review each GitHub PR, GitLab MR or local change for bugs, security, tests and cross-file impact, and an eighth reads the changed code their findings missed. Every finding must survive verification, a skeptical validator and a blind challenge before it posts.",
       "source": "./",
       "strict": true
     }
