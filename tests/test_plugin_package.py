@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -58,21 +59,22 @@ def _package_files() -> dict[str, str]:
     }
 
 
-def _source_files(version: str = "1.0.0") -> dict[str, str]:
+def _source_files() -> dict[str, str]:
     return {
         **_package_files(),
-        ".claude-plugin/plugin.json": _manifest(version),
         ".claude-plugin/marketplace.json": "{}\n",
         "agents/AGENTS.md": "# agents\n",
         "scripts/gauntlet/measurement.py": "",
         "workflows/build.js": "",
         "README.md": "# Demo\n\n<picture>\n"
         '  <img alt="Overview" src="docs/assets/pipeline-overview-light.svg">\n'
-        "</picture>\n\nSee [the tests](tests/t.py) and [the license](LICENSE).\n",
+        "</picture>\n\nSee [the tests](tests/t.py), [the docs](docs/), "
+        "[the assets](docs/assets/) and [the license](LICENSE).\n",
         "LICENSE": "license\n",
         "PRIVACY.md": "privacy\n",
         "SECURITY.md": "security\n",
         "docs/assets/pipeline-overview-light.svg": "<svg/>\n",
+        "docs/guide.md": "guide\n",
         "tests/t.py": "",
     }
 
@@ -97,8 +99,10 @@ def _files(root: Path) -> list[str]:
 def test_real_tree_ships_runtime_files_with_resolvable_links(tmp_path, capsys):
     out = tmp_path / "package"
     assert MODULE.main(["build", "--out", str(out)]) == 0
-    assert capsys.readouterr().out.startswith("package checks passed")
     shipped = set(_files(out))
+    assert capsys.readouterr().out.startswith(
+        f"package checks passed: {len(shipped)} files\n"
+    )
     manifest = json.loads((ROOT / ".claude-plugin/plugin.json").read_bytes())
     assert {agent[2:] for agent in manifest["agents"]} <= shipped
     assert not shipped & MODULE.DEV_ONLY
@@ -125,7 +129,9 @@ def test_real_tree_ships_runtime_files_with_resolvable_links(tmp_path, capsys):
 SHIPPED = MODULE._with_parents(
     {"README.md", "LICENSE", "docs/assets/a.svg", "skills/s/SKILL.md", "skills/s/r.md"}
 )
-TRACKED = SHIPPED | MODULE._with_parents({"bench/README.md", "docs/guide.md"})
+TRACKED = SHIPPED | MODULE._with_parents(
+    {"bench/README.md", "docs/guide.md", "docs/a(1).md"}
+)
 
 
 @pytest.mark.parametrize(
@@ -153,28 +159,43 @@ TRACKED = SHIPPED | MODULE._with_parents({"bench/README.md", "docs/guide.md"})
             "`[x](gone.md)`\n\n````md\n[y](gone.md)\n```\n````\n",
         ),
         ("README.md", "[g]: bench/README.md\n", f"[g]: {BLOB}bench/README.md\n"),
+        ("README.md", "[^1]: A footnote, not a path.\n", None),
         (
             "README.md",
             "[![b](https://img.test/b.svg)](docs/guide.md)\n",
             f"[![b](https://img.test/b.svg)]({BLOB}docs/guide.md)\n",
         ),
+        ("README.md", "[a](<docs/guide.md>)\n", f"[a](<{BLOB}docs/guide.md>)\n"),
+        ("README.md", "[p](docs/a(1).md)\n", f"[p]({BLOB}docs/a%281%29.md)\n"),
+        (
+            "README.md",
+            '<a href="docs/guide.md">g</a>\n',
+            f'<a href="{BLOB}docs/guide.md">g</a>\n',
+        ),
     ],
-    ids=["readme", "nested", "picture", "code", "reference", "badge"],
+    ids=[
+        *("readme", "nested", "picture", "code", "reference", "footnote", "badge"),
+        *("angle", "parens", "anchor"),
+    ],
 )
 def test_markdown_links_resolve_in_package_or_on_github(path, text, expected):
-    assert MODULE.rewrite_markdown(text, path, SHIPPED, TRACKED, BLOB) == expected
+    rewritten = MODULE.rewrite_markdown(text, path, SHIPPED, TRACKED, BLOB)
+    assert rewritten == (text if expected is None else expected)
 
 
 @pytest.mark.parametrize(
     ("text", "problem"),
     [
         ("[x](gone.md)\n", "README.md: link gone.md points at no tracked file"),
+        ("[x](<gone file.md>)\n", "link gone file.md points at no tracked file"),
+        ("[x](gone(1).md)\n", "link gone(1).md points at no tracked file"),
+        ("<a href='gone.md'>x</a>\n", "link gone.md points at no tracked file"),
         ("![x](bench/README.md)\n", "image bench/README.md is not in the package"),
         ("[x](../outside.md)\n", "link ../outside.md leaves the repository"),
         ('<img src="docs/assets/a.svg">\n', "HTML image tag"),
         ("<picture><source></picture>\n", "<picture> has no <img src>"),
     ],
-    ids=["dangling", "image", "escape", "html", "picture"],
+    ids=["dangling", "angle", "parens", "anchor", "image", "escape", "html", "picture"],
 )
 def test_markdown_rewrite_fails_on_links_that_would_break(text, problem):
     with pytest.raises(MODULE.PackageError) as raised:
@@ -226,6 +247,17 @@ def _track_symlink(root: Path, out: Path) -> None:
         ),
         (
             lambda root: _write(
+                root,
+                {
+                    ".claude-plugin/plugin.json": _manifest().replace(
+                        "./agents", "agents"
+                    )
+                },
+            ),
+            ".claude-plugin/plugin.json: agents entry 'agents/a.md' must start with ./",
+        ),
+        (
+            lambda root: _write(
                 root, {"agents/a.md": AGENT.replace("Read", "Read  # why")}
             ),
             "agents/a.md: frontmatter value of tools needs quoting",
@@ -240,7 +272,12 @@ def _track_symlink(root: Path, out: Path) -> None:
             lambda root: _write(
                 root, {"skills/s/SKILL.md": "---\ntools:\n  - Read\n---\n"}
             ),
-            "skills/s/SKILL.md: frontmatter line 'tools:' is not `key: value`",
+            # The second of two problems: a failure prints every problem it found.
+            "skills/s/SKILL.md: frontmatter line '  - Read' is not `key: value`",
+        ),
+        (
+            lambda root: (root / "agents/a.md").write_bytes(b"---\nname: \xff\n---\n"),
+            "agents/a.md: not valid UTF-8",
         ),
         (
             lambda root: _write(
@@ -252,16 +289,16 @@ def _track_symlink(root: Path, out: Path) -> None:
             lambda root: (root / "scripts/gauntlet/paths.py").unlink(),
             "scripts/gauntlet/core.py:1: imports gauntlet.paths, which is not shipped",
         ),
+        (
+            lambda root: _write(root, {"scripts/entry.py": "def (\n"}),
+            "scripts/entry.py:1: not valid Python",
+        ),
     ],
     ids=[
         *("valid", "bundle-exempt", "oversize", "count", "dev-path", "symlink"),
-        *(
-            "manifest-path",
-            "frontmatter-comment",
-            "frontmatter-key",
-            "frontmatter-list",
-        ),
-        *("dev-import", "missing-module"),
+        *("manifest-path", "manifest-prefix", "frontmatter-comment"),
+        *("frontmatter-key", "frontmatter-list", "undecodable"),
+        *("dev-import", "missing-module", "syntax"),
     ],
 )
 def test_check_enforces_directory_limits(tmp_path, capsys, mutate, problem):
@@ -290,20 +327,44 @@ def test_check_enforces_directory_limits(tmp_path, capsys, mutate, problem):
             lambda root, out: _write(root, {"SECURITY.md": "[x](missing.md)\n"}),
             "SECURITY.md: link missing.md points at no tracked file",
         ),
-        (
-            lambda root, out: _write(
-                root, {"agents/a.md": AGENT.replace("Read", "Read  # why")}
-            ),
-            "agents/a.md: frontmatter value of tools needs quoting",
-        ),
     ],
-    ids=["reused-output", "symlink", "untracked", "dangling", "checked"],
+    ids=["reused-output", "symlink", "untracked", "dangling"],
 )
 def test_build_refuses_what_it_cannot_ship(tmp_path, source, capsys, mutate, problem):
     out = tmp_path / "package"
     mutate(source, out)
     assert MODULE.main(["build", "--source", str(source), "--out", str(out)]) == 2
     assert any(problem in line for line in capsys.readouterr().err.splitlines())
+
+
+def _raise(error: BaseException):
+    def raiser(*args, **kwargs):
+        raise error
+
+    return raiser
+
+
+@pytest.mark.parametrize(
+    ("target", "error", "message"),
+    [
+        (
+            subprocess,
+            UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad"),
+            "command output is not valid UTF-8",
+        ),
+        (subprocess, FileNotFoundError(), "command failed (127): git ls-files -z"),
+        (MODULE.shutil, PermissionError(), "file operation failed: "),
+    ],
+    ids=["undecodable-output", "missing-command", "file-error"],
+)
+def test_cli_reports_failures_on_stderr_with_exit_2(
+    tmp_path, source, capsys, monkeypatch, target, error, message
+):
+    attribute = "run" if target is subprocess else "copy2"
+    monkeypatch.setattr(target, attribute, _raise(error))
+    out = tmp_path / "package"
+    assert MODULE.main(["build", "--source", str(source), "--out", str(out)]) == 2
+    assert capsys.readouterr().err == message + "\n"
 
 
 def test_build_ships_the_allowlist_from_a_source_tree(tmp_path, source):
@@ -319,9 +380,11 @@ def test_build_ships_the_allowlist_from_a_source_tree(tmp_path, source):
         ),
         *("scripts/gauntlet/paths.py", "skills/s/SKILL.md", "workflows/pipeline.js"),
     ]
+    # docs/ ships only its assets, so a link to it goes to GitHub; docs/assets/ ships whole.
     assert (out / "README.md").read_text(encoding="utf-8") == (
         "# Demo\n\n![Overview](docs/assets/pipeline-overview-light.svg)\n\n"
-        f"See [the tests]({BLOB}tests/t.py) and [the license](LICENSE).\n"
+        f"See [the tests]({BLOB}tests/t.py), [the docs]({BLOB}docs), "
+        "[the assets](docs/assets/) and [the license](LICENSE).\n"
     )
 
 
@@ -338,28 +401,30 @@ def test_build_links_left_out_files_to_the_given_ref(tmp_path, source):
     assert "/blob/main/" not in readme
 
 
-def test_publish_keeps_one_linear_commit_per_release(tmp_path: Path, source: Path):
+def _release(source: Path, version: str) -> None:
+    _write(source, {".claude-plugin/plugin.json": _manifest(version)})
+    git(source, "commit", "-q", "--all", "-m", f"release {version}")
+    git(source, "tag", f"v{version}")
+
+
+def test_publish_builds_each_tag_into_one_linear_commit(tmp_path: Path, source: Path):
     remote = tmp_path / "remote.git"
     git(tmp_path, "init", "-q", "--bare", str(remote))
     git(source, "remote", "add", "origin", str(remote))
-
-    def release(version: str) -> Path:
-        _write(source, {".claude-plugin/plugin.json": _manifest(version)})
-        out = tmp_path / f"package-{version}"
-        MODULE.build(source, out)
-        return out
-
-    first = release("1.0.0")
+    git(source, "tag", "v1.0.0")
+    git(source, "tag", "v9.0.0")
     with pytest.raises(MODULE.InputError, match="malformed release tag"):
-        MODULE.publish("1.0.0", first, source)
-    assert MODULE.publish("v1.0.0", first, source).startswith("published v1.0.0")
-    assert MODULE.publish("v1.0.0", first, source) == (
+        MODULE.publish("1.0.0", source)
+    assert MODULE.publish("v1.0.0", source)[-1].startswith("published v1.0.0")
+    assert MODULE.publish("v1.0.0", source)[-1] == (
         "plugin-release already holds the v1.0.0 package"
     )
-    second = release("1.1.0")
-    with pytest.raises(MODULE.PackageError, match=r"does not match v1\.0\.0"):
-        MODULE.publish("v1.0.0", second, source)
-    MODULE.publish("v1.1.0", second, source)
+    with pytest.raises(MODULE.PackageError, match=r"does not match v9\.0\.0"):
+        MODULE.publish("v9.0.0", source)
+    _release(source, "1.1.0")
+    MODULE.publish("v1.1.0", source)
+    with pytest.raises(MODULE.InputError, match=r"already holds v1\.1\.0"):
+        MODULE.publish("v1.0.0", source)
 
     history = git(remote, "log", "--format=%H %P|%s", "plugin-release").splitlines()
     (newest, newest_subject), (oldest, oldest_subject) = (
@@ -368,10 +433,22 @@ def test_publish_keeps_one_linear_commit_per_release(tmp_path: Path, source: Pat
     assert [newest_subject, oldest_subject] == ["release: v1.1.0", "release: v1.0.0"]
     assert newest.split()[1:] == oldest.split()[:1] and oldest.split()[1:] == []
     listed = git(remote, "ls-tree", "-r", "--name-only", "plugin-release").splitlines()
-    assert listed == _files(second)
-    # The private index leaves the release checkout and its other branches alone.
-    assert git(source, "status", "--porcelain") == "M .claude-plugin/plugin.json"
+    assert "README.md" in listed and "tests/t.py" not in listed
+    assert f"{BLOB.replace('/main/', '/v1.1.0/')}tests/t.py" in git(
+        remote, "show", "plugin-release:README.md"
+    )
+    # Worktrees and the private index leave the checkout and its refs as they were.
+    assert git(source, "status", "--porcelain") == ""
+    assert git(source, "worktree", "list", "--porcelain").count("worktree ") == 1
     assert (
         git(remote, "for-each-ref", "--format=%(refname)")
         == "refs/heads/plugin-release"
     )
+
+    # Only publish writes the branch, so a hand-pushed head stops the next release.
+    tree = git(remote, "rev-parse", "plugin-release^{tree}")
+    hand = git(remote, "commit-tree", tree, "-p", "plugin-release", "-m", "hotfix")
+    git(remote, "update-ref", "refs/heads/plugin-release", hand)
+    _release(source, "1.2.0")
+    with pytest.raises(MODULE.InputError, match="is not a release commit: 'hotfix'"):
+        MODULE.publish("v1.2.0", source)

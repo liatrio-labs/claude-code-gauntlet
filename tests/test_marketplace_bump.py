@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -411,7 +412,7 @@ def test_runner_smoke_and_failure(failed, monkeypatch, capsys):
             returncode=0, stdout=json.dumps(output[tuple(argv)]), stderr=""
         )
 
-    monkeypatch.setattr(MODULE.subprocess, "run", run)
+    monkeypatch.setattr(subprocess, "run", run)
     assert MODULE.main(["remind", "--repo", "owner/repo"], run=MODULE.run_command) == (
         2 if failed else 0
     )

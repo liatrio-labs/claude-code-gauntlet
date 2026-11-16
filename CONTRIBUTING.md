@@ -373,6 +373,7 @@ request, so a local run is a fast pre-check, not the enforcement. Skip it only i
 Anthropic's plugin directory installs a runtime-only copy of the plugin that each release pushes to the
 `plugin-release` branch. `SHIPPED` in `.github/plugin_package.py` lists what it holds. To build and check it,
 run `python3 .github/plugin_package.py build --out <empty directory>`, then `claude plugin validate` on that directory.
+If a release's publish step fails, run the Semantic Release workflow from `main` with that tag to retry it.
 
 One required check has no local command and is **CI-only**: `lint-pr-title` (needs the PR title). Everything else in the
 merge gate is reproducible from the block above.
