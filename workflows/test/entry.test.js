@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { classifyReviewTarget, parseEntryArgs, entryArgs, SKILL_RECOVERY_LINE } from '../src/entry.js';
 import { runWith } from '../src/run.js';
-import { interactiveArgs } from './helpers/argsFixtures.js';
+import { interactiveArgs, validArgs } from './helpers/argsFixtures.js';
 
 const CLASSIFIER_ROWS = [
   { name: "number upper bound", input: 9999999,
@@ -103,10 +103,6 @@ const REFUSAL_ROWS = [
   { name: 'malformed', input: 'not valid json {{{',
     expected: "args was a raw string: \"not valid json {{{\", not the assembled argsVersion:1 waist object \u2014 do not invoke " +
     "this workflow directly; run the code-gauntlet skill (Phases 1-2 build the args). Run this instead: " +
-    "Skill(\"code-gauntlet:code-gauntlet\", args=\"<your PR number or URL>\")" },
-  { name: 'escaped echo', input: '{\n\t',
-    expected: "args was a raw string: \"{\\n\\t\", not the assembled argsVersion:1 waist object \u2014 do not invoke this workflow " +
-    "directly; run the code-gauntlet skill (Phases 1-2 build the args). Run this instead: " +
     "Skill(\"code-gauntlet:code-gauntlet\", args=\"<your PR number or URL>\")" },
   { name: 'truncated echo', input: 'x'.repeat(81),
     expected: "args was a raw string: \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\u2026\", " +
@@ -218,3 +214,96 @@ const RECOVERY_ROWS = [
 for (const { name, input, expected } of RECOVERY_ROWS) {
   test(`recovery: ${name}`, () => assert.equal(input, expected));
 }
+
+
+for (const depth of [0, 2]) test(`malformed waist diagnosis locates an extra brace with positionless host errors: wrapping=${depth}`, async () => {
+  const waist = validArgs({
+    changedFiles: Array.from({ length: 40 }, (_, i) => `src/module-${i}.txt`),
+    checkpoints: { summarize: { summary: 'Inspected {"literal":[true,false,null,1.2e3]} \\"quoted\\" C:\\tmp 😀\n'.repeat(160), gaps: [] } },
+    persist: { returnPrimaries: true }, contextLines: 100, contextChars: 12000,
+  });
+  const encoded = JSON.stringify(waist);
+  assert.deepEqual(parseEntryArgs(encoded), waist);
+  const marker = `"checksum":"${waist.checkpoints.checksum}"}`;
+  const insertion = encoded.indexOf(marker) + marker.length;
+  assert.ok(insertion > 7000);
+  const broken = ' \n\t' + encoded.slice(0, insertion) + '}' + encoded.slice(insertion);
+  const offset = 3 + insertion + 1;
+  assert.ok(broken.length > 10000);
+  let raw = broken;
+  for (let i = 0; i < depth; i++) raw = JSON.stringify(raw);
+  const nativeParse = JSON.parse;
+  const calls = [];
+  JSON.parse = (text, ...rest) => {
+    if (text === broken) throw new SyntaxError('JSON Parse error: Unable to parse JSON string');
+    return nativeParse(text, ...rest);
+  };
+  try {
+    const out = await runWith({ agent: async () => calls.push('agent'), parallel: async () => calls.push('parallel') }, raw);
+    assert.equal(out.ok, false);
+    assert.equal(out.failingPhase, 'args');
+    assert.match(out.error, /args JSON does not parse: unexpected data after the top-level JSON value/);
+    assert.ok(out.error.includes(`character offset ${offset} (zero-based UTF-16)`));
+    assert.ok(out.error.length < 1000);
+    assert.doesNotMatch(out.error, /Skill\(|raw string|[\n\r\u2028\u2029]/);
+    const excerpt = out.error.match(/Excerpt \[(\d+), (\d+)\): ("(?:\\.|[^"\\])*")\./);
+    assert.ok(excerpt, out.error);
+    const shown = nativeParse(excerpt[3]);
+    assert.ok(shown.length <= 80);
+    assert.ok(Number(excerpt[1]) <= offset && Number(excerpt[2]) > offset);
+    assert.equal(shown, broken.slice(Number(excerpt[1]), Number(excerpt[2])));
+    assert.ok(shown.includes(marker + '}'));
+    assert.ok(shown.includes('"persist"'));
+    assert.deepEqual(out.gaps, [out.error]);
+    assert.throws(() => parseEntryArgs(raw), { message: out.error });
+    assert.deepEqual(calls, []);
+  } finally { JSON.parse = nativeParse; }
+});
+
+const SYNTAX_ROWS = [
+  ['truncated object', '{\n\t', 3, "expected a quoted property name or '}'"],
+  ['unquoted key', '{key:1}', 1, "expected a quoted property name or '}'"],
+  ['missing colon', '{"a" 1}', 5, "expected ':' after property name"],
+  ['missing value', '{"a":}', 5, 'expected a JSON value'],
+  ['missing object comma', '{"a":1 "b":2}', 7, "expected ',' or '}'"],
+  ['missing array comma', '{"a":[1 2]}', 8, "expected ',' or ']'"],
+  ['trailing object comma', '{"a":1,}', 7, 'expected a quoted property name'],
+  ['trailing array comma', '{"a":[1,]}', 8, 'expected a JSON value'],
+  ['truncated array', '{"a":[', 6, "expected a JSON value or ']'"],
+  ['wrong close', '{"a":[1}', 7, "expected ',' or ']'"],
+  ['missing close', '{"a":[]', 7, "expected ',' or '}'"],
+  ['truncated string', '{"a":"open', 10, 'unterminated JSON string'],
+  ['unescaped control', '{"a":"x\ny"}', 7, 'unescaped control character in JSON string'],
+  ['invalid escape', '{"a":"\\q"}', 7, 'invalid escape in JSON string'],
+  ['incomplete escape', '{"a":"\\', 7, 'incomplete escape in JSON string'],
+  ['invalid Unicode escape', '{"a":"\\u12z4"}', 10, 'expected four hexadecimal digits in Unicode escape'],
+  ['truncated Unicode escape', '{"a":"\\u12', 10, 'expected four hexadecimal digits in Unicode escape'],
+  ['missing integer', '{"a":-}', 6, 'expected a digit in JSON number'],
+  ['leading zero', '{"a":01}', 6, 'leading zero in JSON number'],
+  ['missing fraction', '{"a":1.}', 7, 'expected a digit after decimal point'],
+  ['missing exponent', '{"a":1e+}', 8, 'expected a digit in JSON exponent'],
+  ['bad literal', '{"a":trXe}', 7, "expected 'true'"],
+  ['second JSON value', '{} {}', 3, 'unexpected data after the top-level JSON value'],
+  ['Unicode excerpt', '{"a":"😀\u2028","b":}', 15, 'expected a JSON value'],
+];
+for (const [name, raw, offset, reason] of SYNTAX_ROWS) test(`args JSON syntax: ${name}`, () => {
+  assert.throws(() => parseEntryArgs(raw), (error) => {
+    assert.ok(error.message.startsWith(`args JSON does not parse: ${reason} at character offset ${offset} `), error.message);
+    assert.ok(error.message.length < 1000);
+    assert.doesNotMatch(error.message, /[^\x20-\x7e]/);
+    return true;
+  });
+});
+
+test('a native parser refusal does not turn the syntax scanner into a decoder or guess a location', () => {
+  const raw = '{"argsVersion":1,"values":[{},[],true,false,null,0,-12.5e+3,1E-2,"\\u1234\\\"\\\\\\/\\b\\f\\n\\r\\t"]}';
+  const nativeParse = JSON.parse;
+  assert.doesNotThrow(() => nativeParse(raw));
+  JSON.parse = () => { throw new SyntaxError('JSON Parse error'); };
+  try {
+    const entry = entryArgs(raw);
+    assert.equal(entry.ok, false);
+    assert.match(entry.envelope.error, /JSON parser rejected it without a locatable syntax fault/);
+    assert.doesNotMatch(entry.envelope.error, /offset/);
+  } finally { JSON.parse = nativeParse; }
+});

@@ -45,6 +45,11 @@ Do not claim an `ok`, count, or gap you have not read.
 
 ## Diagnostics and recovery
 
+An args string starting with `{` after whitespace is refused before dispatch if its JSON is invalid, with the first syntax fault,
+a zero-based UTF-16 character offset in the decoded JSON text, and a quoted excerpt of at most 80 code
+units around that offset. The workflow does not repair or accept malformed JSON. Direct review
+references retain the skill recovery message.
+
 Partial coverage records gaps; total discovery loss with no findings or challenge replay returns
 `ok:false` with `all-degraded:` and means no review occurred. Surface per-agent gaps and
 `resolvedPolicy`. Use [crash-recovery.md](crash-recovery.md) for resume, checksum refusals,
