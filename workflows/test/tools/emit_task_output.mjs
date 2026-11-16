@@ -7,18 +7,18 @@
 // REAL pipeline output rather than a hand-authored payload: if a stage stops emitting a
 // field, or writeArtifacts stops carrying the primaries home, the Python side sees it.
 //
-// usage: node emit_task_output.mjs <out.output> <outputDir> [nonce]
 import { writeFileSync } from 'node:fs';
 import { runWith } from '../../src/run.js';
 import { validArgs } from '../helpers/argsFixtures.js';
 import { makeCtx, makeFinding } from '../helpers/pipelineMock.js';
 import { hardenEscapeRuns } from '../../src/persistPlan.js';
+import { decodeMeasurement } from '../helpers/decodeMeasurement.js';
 import { RETURN_CHAR_BUDGET } from '../../src/wire.js';
 import assert from 'node:assert/strict';
 
 const [outPath, outputDir, nonce, size, fractional] = process.argv.slice(2);
 if (!outPath || !outputDir) {
-  console.error('usage: node emit_task_output.mjs <out.output> <outputDir> [nonce]');
+  console.error('usage: node emit_task_output.mjs <out.output> <outputDir> [nonce] [size] [fractional]');
   process.exit(2);
 }
 
@@ -69,8 +69,11 @@ assert.equal(ctx.calls.some(({ label }) => /artifact-writer|assemble-artifacts/.
 if (large) {
   assert.equal(JSON.parse(result.persistReturn.entries[0].text).length, count);
   assert.ok(JSON.stringify(result).length > RETURN_CHAR_BUDGET);
-  assert.equal(result.measurement.status, 'unavailable');
-  assert.ok(result.gaps.some((gap) => /trace not persisted.*return budget/.test(gap)));
+  assert.equal(result.measurement.status, 'available');
+  assert.ok(JSON.stringify(result.measurement).length <= RETURN_CHAR_BUDGET);
+  assert.deepEqual(decodeMeasurement(result.measurement).dropped_stages, []);
+  assert.deepEqual(result.measurement.replay, { status: 'unavailable', reason: 'return_budget' });
+  assert.ok(result.gaps.some((gap) => /delivery replay not persisted.*return budget/.test(gap)));
   if (!fractional) assert.ok(result.persistReturn.entries[2].text.length < count * 1000,
     'the persist plan must reference finding fields rather than repeat their prose');
 }

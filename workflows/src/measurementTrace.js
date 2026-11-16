@@ -89,31 +89,30 @@ export function recordStage(trace, stage, output, details = {}) {
     cap: details.cap ?? null, cap_hit: !!details.cap_hit,
     ...(output.gaps?.length ? { gaps: deepClone(output.gaps) } : {}) });
 }
+// Completed artifacts must not reduce the independent allowance for telemetry.
+function measurementFitsBudget(measurement) {
+  return JSON.stringify(measurement).length <= RETURN_CHAR_BUDGET;
+}
+
 export function appendMeasurement(envelope, trace) {
   if (!trace) return envelope;
   const unavailable = { status: 'unavailable', reason: 'return_budget' };
-  // There is no room to recover by compressing telemetry when primaries alone
-  // exceed the soft ceiling. Avoid copying and compressing their entire history.
-  if (JSON.stringify(envelope).length > RETURN_CHAR_BUDGET) return appendBudgetedMeasurement(envelope, unavailable, unavailable);
   const candidate = deepClone(trace);
-  const available = (compress = false) => {
+  const available = () => {
     const text = JSON.stringify(candidate);
-    const disclosed = candidate.dropped_stages.length ? {
-      ...envelope, gaps: [...(envelope.gaps || []), `measurement: trace stages ${candidate.dropped_stages.join(', ')} not persisted because of the optional return budget`],
-    } : envelope;
-    const plain = { ...disclosed, measurement: { status: 'available', text } };
-    if (!compress || JSON.stringify(plain).length <= RETURN_CHAR_BUDGET) return plain;
-    // Rich finding history shares the return budget with persisted primaries; compress before discarding stages.
-    return { ...disclosed, measurement: { status: 'available', encoding: 'json-pool-lzw16-base64-v1', text: compressMeasurement(text) } };
+    const plain = { status: 'available', text };
+    if (measurementFitsBudget(plain)) return plain;
+    // Compress rich history before discarding coverage or stages.
+    return { status: 'available', encoding: 'json-pool-lzw16-base64-v1', text: compressMeasurement(text) };
   };
-  let result = available(true);
-  if (JSON.stringify(result).length > RETURN_CHAR_BUDGET && candidate.coverage_ledger) {
+  let measurement = available();
+  if (!measurementFitsBudget(measurement) && candidate.coverage_ledger) {
     candidate.coverage_ledger = boundedCoverageLedger(candidate.coverage_ledger, 0);
-    result = available(true);
+    measurement = available();
   }
   // Keep the discovery prefix longest, and never turn a cut stage into an observed empty set.
   for (const snapshot of [...candidate.snapshots].reverse()) {
-    if (JSON.stringify(result).length <= RETURN_CHAR_BUDGET) return result;
+    if (measurementFitsBudget(measurement)) break;
     if (candidate.dropped_stages.includes(snapshot.stage)) continue;
     snapshot.finding_version_ids = [];
     snapshot.decisions = [];
@@ -128,19 +127,22 @@ export function appendMeasurement(envelope, trace) {
       identities.add(v.trace_id);
       return true;
     });
-    result = available(true);
+    measurement = available();
   }
-  return appendBudgetedMeasurement(envelope, result.measurement, unavailable);
+  const result = appendBudgetedMeasurement(envelope, measurement, unavailable);
+  if (result.measurement.status === 'available' && candidate.dropped_stages.length) {
+    result.gaps = [...(result.gaps || []), `measurement: trace stages ${candidate.dropped_stages.join(', ')} not persisted because of the optional return budget`];
+  }
+  return result;
 }
 export function appendBudgetedMeasurement(envelope, available, unavailable) {
   const candidate = { ...envelope, measurement: available };
-  if (JSON.stringify(candidate).length <= RETURN_CHAR_BUDGET) return candidate;
-  // Even when primaries alone exceed the soft ceiling, carry the small refusal
-  // and its disclosure so absence cannot be mistaken for an unmeasured run.
+  if (measurementFitsBudget(available)) return candidate;
+  // Keep refusal metadata and disclosure even when no optional content fits.
   const gaps = (missing) => [...(envelope.gaps || []), `measurement: ${missing} not persisted because of the optional return budget`];
   const fallback = { ...envelope, measurement: unavailable,
     gaps: gaps(unavailable.replay ? 'delivery replay' : 'trace') };
-  if (unavailable.replay && envelope.measurement?.status === 'available' && JSON.stringify(fallback).length > RETURN_CHAR_BUDGET) {
+  if (unavailable.replay && envelope.measurement?.status === 'available' && !measurementFitsBudget(unavailable)) {
     return { ...envelope, measurement: { status: 'unavailable', reason: 'return_budget', replay: unavailable.replay },
       gaps: gaps('trace and delivery replay') };
   }

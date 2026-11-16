@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeArtifacts, parseWriterPayload } from '../src/persist.js';
-import { writerPayload, persistPrimaries, persistPlan } from '../src/persistPlan.js';
+import { writerPayload, persistPrimaries, persistPlan, hardenEscapeRuns } from '../src/persistPlan.js';
 import { fnv1a32 } from '../src/wire.js';
 import { deriveFromPlan } from './helpers/deriveFromPlan.js';
 import { renderReport } from '../src/renderReport.js';
@@ -323,7 +323,7 @@ for (const patch of [
   { postReview: [{ id: 'FOREIGN' }] },
 ]) test(`return channel transports nonderivable artifacts: ${JSON.stringify(patch)}`, async () => {
   const ctx = persistCtx();
-  const input = persistInput({ ...patch, persist: { returnPrimaries: true } });
+  const input = persistInput({ ...patch, persist: { returnPrimaries: true }, report: '# Report\r\nC:\\tmp\\out 😀\n\n' });
   const out = await writeArtifacts(ctx, input);
   assert.deepEqual(labels(ctx), []);
   assert.equal(out.partial, false);
@@ -331,6 +331,8 @@ for (const patch of [
   const entries = out.persistReturn.entries;
   const payload = writerPayload(input);
   assert.deepEqual(entries.map((e) => e.path), Object.values(PATHS));
-  assert.deepEqual(entries.filter((_, i) => i !== 1).map((e) => JSON.parse(e.text)),
-    [payload.findings, payload.postReview, payload.checkpoints]);
+  assert.deepEqual(entries.map((e) => e.text), [
+    hardenEscapeRuns(JSON.stringify(payload.findings, null, 2)), payload.report,
+    JSON.stringify(payload.postReview, null, 2), JSON.stringify(payload.checkpoints, null, 2),
+  ]);
 });
