@@ -86,7 +86,8 @@ Each review used a median of $4.97 at API prices, and 80% fell between $2.49 and
 
 ## How it reviews
 
-A full review starts seven specialist reviewers in parallel:
+A full review uses eight discovery agents.
+The first seven are specialists that run in parallel, and the gap hunter runs after them:
 
 | Agent | Model | Focus |
 | --- | --- | --- |
@@ -97,9 +98,9 @@ A full review starts seven specialist reviewers in parallel:
 | conventions-and-intent | Sonnet | Project rules, documented intent, comment accuracy |
 | type-design-analyzer | Sonnet | Invariants, invalid states, type boundaries |
 | code-simplifier | Sonnet | Simplifications that keep behavior, and defects found along the way |
+| gap-hunter | Sonnet | Changed code that none of the seven specialists cited |
 
-After the specialists return, an eighth agent, **gap-hunter** (Sonnet), reviews changed regions that no specialist cited.
-It works within a fixed read budget, and the report lists what the budget left out.
+The gap hunter works within a fixed read budget, and the report lists what the budget left out.
 Light reviews and fully cited changes skip it.
 
 The security reviewer runs on Opus, a judgment call that the [routing research](docs/research/artifacts/12-model-routing-for-code-review.md) explains.
