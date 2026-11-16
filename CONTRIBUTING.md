@@ -370,6 +370,10 @@ This will:
 no extra dependency. CI installs a pinned version (`.github/workflows/validate.yml`) and runs it on every pull
 request, so a local run is a fast pre-check, not the enforcement. Skip it only if you do not have the CLI.
 
+Anthropic's plugin directory installs a runtime-only copy of the plugin that each release pushes to the
+`plugin-release` branch. `SHIPPED` in `.github/plugin_package.py` lists what it holds. To build and check it,
+run `python3 .github/plugin_package.py build --out <empty directory>`, then `claude plugin validate` on that directory.
+
 One required check has no local command and is **CI-only**: `lint-pr-title` (needs the PR title). Everything else in the
 merge gate is reproducible from the block above.
 

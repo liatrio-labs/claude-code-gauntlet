@@ -74,8 +74,29 @@ jobs:
           after_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
           if [ -n "$after_tag" ] && [ "$after_tag" != "$before_tag" ]; then
             echo "released=true" >> "$GITHUB_OUTPUT"
+            echo "tag=${after_tag}" >> "$GITHUB_OUTPUT"
             echo "Released ${after_tag} (was ${before_tag:-none})"
           else
             echo "released=false" >> "$GITHUB_OUTPUT"
             echo "No release (tag still ${after_tag:-none})"
           fi
+
+      # Anthropic's directory tracks the plugin-release branch, which holds only the files the
+      # plugin runs; marketplace users keep installing main.
+      - name: Build and check the directory package
+        if: steps.release.outputs.released == 'true'
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git worktree add --detach "$RUNNER_TEMP/release-source" "$TAG"
+          python3 .github/plugin_package.py build \
+            --source "$RUNNER_TEMP/release-source" --out "$RUNNER_TEMP/plugin-package"
+
+      - name: Publish the directory package
+        if: steps.release.outputs.released == 'true'
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: >-
+          python3 .github/plugin_package.py publish
+          --tag "$TAG" --package "$RUNNER_TEMP/plugin-package"

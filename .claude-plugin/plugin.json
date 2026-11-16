@@ -1,10 +1,18 @@
 {
   "name": "code-gauntlet",
+  "displayName": "Code Gauntlet",
   "version": "4.0.1",
   "description": "Adversarial code review for Claude Code. Seven specialist agents review each GitHub PR, GitLab MR or local change for bugs, security, tests and cross-file impact, and an eighth reads the changed code their findings missed. Every finding must survive verification, a skeptical validator and a blind challenge before it posts.",
   "author": {
-    "name": "Lee Hopper"
+    "name": "Liatrio Labs",
+    "url": "https://github.com/liatrio-labs"
   },
+  "homepage": "https://github.com/liatrio-labs/claude-code-gauntlet",
+  "repository": "https://github.com/liatrio-labs/claude-code-gauntlet",
+  "license": "Apache-2.0",
+  "documentationUrl": "https://github.com/liatrio-labs/claude-code-gauntlet/blob/main/README.md",
+  "supportUrl": "https://github.com/liatrio-labs/claude-code-gauntlet/issues",
+  "privacyPolicyUrl": "https://github.com/liatrio-labs/claude-code-gauntlet/blob/main/PRIVACY.md",
   "agents": [
     "./agents/artifact-writer.md",
     "./agents/bug-detector.md",
