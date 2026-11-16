@@ -2,6 +2,20 @@
 
 <!-- version list -->
 
+## v4.0.0 (2026-11-16)
+
+### Features
+
+- Decide findings by typed verdicts, not a confidence score (#46)
+  ([#590](https://github.com/liatrio-labs/claude-code-gauntlet/pull/590),
+  [`ff8b5d1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ff8b5d1c00ae3e41746ff9893fb8c26af917c576))
+
+### Breaking Changes
+
+- `REVIEW.md` no longer accepts a configuration block. The `confidence_threshold`, severity
+  threshold, `ignore` list and per-directory overrides are gone.
+
+
 ## v3.62.1 (2026-11-11)
 
 ### Bug Fixes
