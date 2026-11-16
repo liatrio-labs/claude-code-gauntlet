@@ -717,7 +717,7 @@ def normalize(data, tmp_path, root=ROOT):
         text = path_text.normalize_path_text(text, source, replacement)
     for pattern, replacement in (
         (
-            r'(pipeline_version=|"pipeline_version"\s*:\s*")3\.\d+\.\d+',
+            r'(pipeline_version=|"pipeline_version"\s*:\s*")\d+\.\d+\.\d+',
             r"\1<BUNDLE_VERSION>",
         ),
         (r"fnv1a32:0x[0-9a-f]{8}", "<CHECKSUM>"),

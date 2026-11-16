@@ -49,15 +49,15 @@ Two cautions about attachments:
 
 ## Supported versions
 
-Only the latest released 3.x minor line receives security fixes; `.claude-plugin/plugin.json` carries the version
+Only the latest released 4.x minor line receives security fixes; `.claude-plugin/plugin.json` carries the version
 number of the current release. Fixes ship forward on that line as new releases, patch releases included; they are
-not backported to earlier 3.x minors, and nothing is backported to 2.x, which is the retired architecture (the
-former deep-review pipeline) and is no longer maintained.
+not backported to earlier 4.x minors or to 3.x, and nothing is backported to 2.x, which is the retired architecture
+(the former deep-review pipeline) and is no longer maintained.
 
 | Version | Security fixes |
 |---|---|
-| Latest released 3.x minor | Yes |
-| Earlier 3.x | No — upgrade to the latest 3.x |
+| Latest released 4.x minor | Yes |
+| Earlier 4.x and 3.x | No — upgrade to the latest 4.x |
 | 2.x and earlier | No — retired architecture, no backports |
 
 ## OpenSSF Scorecard
