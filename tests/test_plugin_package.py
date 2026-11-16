@@ -70,6 +70,7 @@ def _source_files() -> dict[str, str]:
         '  <img alt="Overview" src="docs/assets/pipeline-overview-light.svg">\n'
         "</picture>\n\nSee [the tests](tests/t.py), [the docs](docs/), "
         "[the assets](docs/assets/) and [the license](LICENSE).\n",
+        ".claude-plugin/icon.png": "png\n",
         "LICENSE": "license\n",
         "PRIVACY.md": "privacy\n",
         "SECURITY.md": "security\n",
@@ -371,7 +372,8 @@ def test_build_ships_the_allowlist_from_a_source_tree(tmp_path, source):
     out = tmp_path / "package"
     MODULE.build(source, out)
     assert _files(out) == [
-        *(".claude-plugin/plugin.json", "LICENSE", "PRIVACY.md", "README.md"),
+        *(".claude-plugin/icon.png", ".claude-plugin/plugin.json", "LICENSE"),
+        *("PRIVACY.md", "README.md"),
         *("SECURITY.md", "agents/a.md", "docs/assets/pipeline-overview-light.svg"),
         *(
             "scripts/entry.py",

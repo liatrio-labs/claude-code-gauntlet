@@ -48,6 +48,7 @@ RELEASE_SUBJECT = re.compile(r"release: v([0-9]+)\.([0-9]+)\.([0-9]+)")
 # whole, so a new runtime module or reference needs no edit here.
 SHIPPED = (
     MANIFEST,
+    ".claude-plugin/icon.png",
     "skills",
     "scripts",
     "workflows/pipeline.js",
