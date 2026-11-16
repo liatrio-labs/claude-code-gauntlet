@@ -6,8 +6,8 @@
 
 Code review for Claude Code where every finding has to survive a fight before it reaches your PR.
 
-Seven specialist agents review each GitHub PR, GitLab MR, or local change for bugs, security, tests, and cross-file impact.
-An eighth agent then reads the changed code that no specialist's finding pointed at.
+In a full review, seven specialist agents check a GitHub PR, GitLab MR, or local change for bugs, security, tests, and cross-file impact.
+An eighth agent then reads changed code that none of their findings pointed at, within a fixed budget.
 A finding is posted only after it is checked against the source, attacked by a skeptical validator, and re-examined by a blind challenger.
 
 On a public benchmark of 15 real PRs with 66 known bugs, it caught 79% of them over three runs ([benchmark results](#benchmark-results)).
@@ -19,7 +19,7 @@ On a public benchmark of 15 real PRs with 66 known bugs, it caught 79% of them o
 
 ## What a finding looks like
 
-This is a comment it wrote for [cal.com PR 10600](https://github.com/calcom/cal.diy/pull/10600) in a benchmark run.
+This is a comment it wrote for [cal.com PR 10600](https://github.com/calcom/cal.com/pull/10600) in a benchmark run.
 Benchmark runs post nothing, so you will not find it on the PR.
 Seven agents reported this race separately, and the plugin joined their reports into this one comment:
 
@@ -43,7 +43,7 @@ claude plugin install code-gauntlet@code-gauntlet
 ```
 
 Open Claude Code in your repository and enter `/code-gauntlet 42` to review PR #42.
-PR and MR reviews need the `gh` or `glab` CLI logged in first, and they cover open PRs and MRs only.
+PR and MR reviews need the `gh` or `glab` CLI logged in first, and interactive runs review open PRs and MRs only.
 A PR review checks out the PR branch and leaves you on it, so commit your work first.
 Plain words work too, because the plugin triggers on code review requests:
 
@@ -121,9 +121,9 @@ When every file is low risk and the change is under 50 lines, the plugin offers 
 A light review runs only `bug-detector` and `security-reviewer`, with no gap hunter.
 
 Agents see the full diff and follow callers, dependencies, and tests across files.
-Discovery produces candidates, and each one then runs the gauntlet:
+Discovery produces candidates, and the gauntlet then checks them in this order:
 
-1. Merge collects the agents' findings into one list and drops malformed entries.
+1. Merge collects the agents' findings into one list, dropping malformed entries and repeated IDs.
 2. Verify checks the cited files, lines, and symbols against the source.
 3. Validate asks an independent skeptic to disprove each finding and return a verdict.
 4. Filter routes each finding by that verdict and strips text that matches known prompt-injection patterns.
@@ -145,7 +145,8 @@ If verification or validation itself breaks, the report records the gap.
 
 Git blame separates new issues from older ones your changes exposed.
 The older ones drop one severity level and are marked as pre-existing in the report.
-When a PR or MR that already has a posted review gets new commits, an interactive run offers to review only what changed.
+When a PR or MR with a posted review gets new commits, an interactive run offers to review only what changed.
+If the earlier reviewed commit is no longer in the branch history, it runs a full review instead.
 
 [How it works](docs/how-it-works.md) shows the full design, stage by stage.
 
@@ -155,7 +156,7 @@ The plugin saves a markdown report locally.
 For an open PR or MR, it then asks whether to post the selected findings as inline comments.
 GitHub receives them as one review, and GitLab receives a summary note plus one discussion per finding.
 Findings that one fix would solve share one short comment, which lists the other places it applies.
-The reader that confirmed the defect writes the comment: a title, one or two sentences, and a fix when it verified one.
+The reader that confirmed the defect normally writes the comment: a title, one or two sentences, and a fix when it has one.
 A finding whose location cannot be confirmed appears in the review summary without an inline comment.
 In interactive runs you can also turn the selected findings into Claude Code tasks.
 
@@ -170,8 +171,10 @@ Headless mode runs a review with no questions, for CI and scripts:
 CODE_GAUNTLET_HEADLESS=1 claude -p "/code-gauntlet 42"
 ```
 
-A headless run never checks out a branch and posts nothing by default.
-It saves the markdown report and delivers at most the 25 highest-ranked findings.
+A headless run never checks out a branch, so start it from a checkout of the PR's head commit, as CI does.
+Otherwise it stops with an input error.
+By default it posts nothing.
+It saves the markdown report and, by default, selects up to 25 of the highest-ranked findings to deliver.
 To post comments, set `CODE_GAUNTLET_DELIVERY=pr_comments` and `CODE_GAUNTLET_POST_MODE=live`.
 It needs the workflow rule above plus permission to run git, `gh` or `glab`, and Python through Bash.
 [Headless configuration](skills/code-gauntlet/references/headless-mode.md) lists every setting.
@@ -215,15 +218,16 @@ We reviewed the same 15 PRs three times from a Sonnet session at low effort, and
 | Known bugs caught, all 15 PRs (66 bugs) | 78.8% |
 | Known bugs caught, 13 PRs with no overlap with our prompts (50 bugs) | 80.0% |
 | Known bugs caught, PRs outside our six-PR tuning set (21 bugs) | 73.0% |
-| Comments that match a known bug, all 15 PRs | 38.9% |
+| Comments that match a known bug (strict precision), all 15 PRs | 38.9% |
 | Inline comments per PR | 9.3 |
 
 The benchmark lists only some of each PR's real problems.
 A comment that matches no known bug may still be valid, and we have not measured how many are.
 
 Two limits apply.
-Eleven of the PRs ran on a build from five days before the release.
-Its later fixes matter only for reviews with more than 40 findings, and the four PRs that large were rerun after the fixes. Only the reruns count.
+Eleven of the PRs ran on a pre-release build.
+The fixes made after it matter only for reviews with more than 40 findings, and the four PRs that large were rerun after the fixes.
+Only the reruns count, and the [run history](bench/README.md#measurement-history) lists what changed between the builds.
 The judge and the plugin both use Anthropic models, and same-vendor bias has not been measured here.
 
 We run the benchmark by hand, not on every release.

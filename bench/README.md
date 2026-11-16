@@ -396,6 +396,12 @@ The [committed ledger](experiments.jsonl) records these runs:
 | v4.0.0 (Full test set) | 2026-11-16 | Lane 1: `subset-20261115-230910-3bab948e` + `custom-20261116-034129-3911db9e`; Lane 2: `subset-20261115-231648-3bab948e` + `custom-20261116-034135-3911db9e`; Lane 3: `subset-20261115-231656-3bab948e` + `custom-20261116-034141-3911db9e` | 0.788 (156/198) | — |
 
 Each v4.0 lane pools the four PRs from its custom run at 3911db9e with the other eleven PRs from its subset run at 3bab948e.
+Three fixes separate 3bab948e from 3911db9e.
+A review whose returned payload passed about 1,000,000 characters now keeps its artifacts.
+The default 40-finding challenge cap is gone.
+The trace budget is now separate from the artifacts, which affects benchmark instrumentation only.
+The first two touch only large reviews: the four rerun PRs had 60 to 67 findings, and no other PR reached the cap.
+The release adds one later change, a clearer error when the session sends malformed arguments.
 Session: Sonnet at effort low; judge: `claude-opus-4-5-20251101`; Claude Code 2.1.323.
 Pooled noise is not reported.
 
