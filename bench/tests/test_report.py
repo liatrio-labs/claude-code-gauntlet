@@ -664,8 +664,12 @@ def test_report_counts_review_once_and_scoring_and_attribution_per_score(score_c
 
 
 def test_real_ledger_historical_render_carries_no_subscription_marker():
-    rows = report.load_ledger(REAL_LEDGER)
     baselines = report.load_baselines(report.HISTORICAL_BASELINES)
+    rows = [
+        r
+        for r in report.load_ledger(REAL_LEDGER)
+        if report.score_identity(r).epoch_id == baselines["epoch_id"]
+    ]
     assert all(report.cost_is_billable(r) for r in rows)
     out = report.render_html(rows, baselines, "abc1234", "2026-07-18")
     assert "Historical epoch " + baselines["epoch_id"] in out
@@ -679,12 +683,104 @@ def test_committed_report_is_reproduced_from_committed_inputs(tmp_path):
     assert out.read_bytes() == report.DEFAULT_OUT.read_bytes()
 
 
+def test_current_release_renders_published_pool_separately_from_raw_scores():
+    rows = report.load_ledger(REAL_LEDGER)
+    doc = report.render_html(rows, report.load_baselines(REAL_BASELINES), "sha", "date")
+    active, historical = doc.split('<section id="epoch-scores">')[1].split(
+        '<section id="historical-epoch">'
+    )
+    release, ledger = active.split("<h2>Run ledger</h2>")
+    assert "<h2>Current release</h2>" in release
+    assert '<h3 class="release-label">v4.0</h3>' in release
+    assert "Sonnet at effort low" in release
+    assert "claude-opus-4-5-20251101" in release
+    assert "four PRs from the custom run at 3911db9e" in release
+    assert "other eleven PRs from the subset run at 3bab948e" in release
+    for name, values in (
+        (
+            "Full test set recall (15 PRs, 66 bugs)",
+            ("80.3%", "78.8%", "77.3%", "78.8% (156/198)"),
+        ),
+        (
+            "Fair test set recall (13 PRs, 50 bugs)",
+            ("80.0%", "80.0%", "80.0%", "80.0% (120/150)"),
+        ),
+        ("Unseen PRs recall (21 bugs)", ("71.4%", "76.2%", "71.4%", "73.0% (46/63)")),
+        ("Strict precision", ("40.2%", "40.0%", "36.7%", "38.9%")),
+        ("Inline comments per PR", ("9.3", "9.1", "9.5", "9.3")),
+    ):
+        assert (
+            f'<th scope="row">{name}</th>'
+            + "".join(f'<td class="num">{v}</td>' for v in values)
+        ) in release
+    for subset, custom in (
+        ("230910", "034129"),
+        ("231648", "034135"),
+        ("231656", "034141"),
+    ):
+        subset_id = f"subset-20261115-{subset}-3bab948e"
+        custom_id = f"custom-20261116-{custom}-3911db9e"
+        assert f'{subset_id}</span> + <span class="mono">{custom_id}' in release
+        for run_id in (subset_id, custom_id):
+            row = next(r for r in rows if r["run_id"] == run_id)
+            assert run_id in ledger and row["score_id"] in ledger
+            assert "recall " + report.fmt_pct(row["golden_recall"]) in ledger
+            assert report.fmt_pct(row["golden_recall"]) not in release
+    assert "current release" not in historical
+    assert '<h3 class="release-label">v4.0</h3>' not in historical
+
+
+def test_pooled_release_requires_all_source_runs_in_its_epoch():
+    rows = report.load_ledger(REAL_LEDGER)
+    baselines = report.load_baselines(REAL_BASELINES)
+    missing = "custom-20261116-034141-3911db9e"
+    for replacement in (
+        [],
+        [{**next(r for r in rows if r["run_id"] == missing), "epoch_id": "other"}],
+    ):
+        doc = report.render_html(
+            [r for r in rows if r["run_id"] != missing] + replacement,
+            baselines,
+            "sha",
+            "date",
+        )
+        assert "<h2>Current release</h2>" not in doc
+        assert '<h3 class="release-label">v4.0</h3>' not in doc
+
+
+def test_active_release_can_be_added_as_one_ordinary_entry(monkeypatch):
+    rows = report.load_ledger(REAL_LEDGER)
+    row = next(r for r in rows if r.get("schema_version") == 2)
+    monkeypatch.setattr(
+        report,
+        "RELEASES",
+        (
+            {
+                "label": "next release",
+                "epoch_id": row["epoch_id"],
+                "legs": ({"name": "test set", "run_id": row["run_id"]},),
+                "what_changed": "Release summary.",
+            },
+        ),
+    )
+    doc = report.render_html(rows, report.load_baselines(REAL_BASELINES), "sha", "date")
+    release = doc.split("<h2>Current release</h2>")[1].split("<h2>Run ledger</h2>")[0]
+    assert '<h3 class="release-label">next release</h3>' in release
+    assert row["run_id"] in release
+    assert "recall " + report.fmt_pct(row["golden_recall"]) in release
+
+
 def test_active_and_historical_scores_render_in_separate_epoch_sections(score_case):
     active = score_case.execute()["ledger_row"]
-    historical_rows = report.load_ledger(REAL_LEDGER)
+    recorded_rows = report.load_ledger(REAL_LEDGER)
     baselines = report.load_baselines(report.DEFAULT_BASELINES)
     historical_baselines = report.load_baselines(report.HISTORICAL_BASELINES)
-    doc = report.render_html([*historical_rows, active], baselines, "sha", "date")
+    historical_rows = [
+        r
+        for r in recorded_rows
+        if report.score_identity(r).epoch_id == historical_baselines["epoch_id"]
+    ]
+    doc = report.render_html([*recorded_rows, active], baselines, "sha", "date")
     active_section, historical_section = doc.split('<section id="epoch-scores">')[
         1
     ].split('<section id="historical-epoch">')

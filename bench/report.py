@@ -136,13 +136,56 @@ MILESTONE_LABELS = {
 GATE2_RUN_ID = "custom-20260721-220637-5337f6c"
 
 # Long-term release-progression ledger — the headline section of the report.
-# Newest first. Each release lists the ledger run_id(s) that define it; every
-# number rendered for a leg (recall, noise, tokens, cost) is read live from the
-# ledger via row_by_run_id(), never hardcoded here. Only what the ledger cannot
-# supply — prose describing what changed, and one owner-supplied paired-context
-# comparison that has no ledger row of its own — is a literal string below.
+# Newest first. Ordinary legs read their metrics from the ledger. Pooled releases
+# carry published metrics because aggregate ledger rows cannot select PRs within
+# a run; their source lanes bind the literals to an epoch's recorded runs.
 # Adding a future release is one more entry in this list.
 RELEASES = (
+    {
+        "label": "v4.0",
+        "epoch_id": "e616e84-v1",
+        "pooled": {
+            "lanes": (
+                (
+                    "subset-20261115-230910-3bab948e",
+                    "custom-20261116-034129-3911db9e",
+                ),
+                (
+                    "subset-20261115-231648-3bab948e",
+                    "custom-20261116-034135-3911db9e",
+                ),
+                (
+                    "subset-20261115-231656-3bab948e",
+                    "custom-20261116-034141-3911db9e",
+                ),
+            ),
+            "metrics": (
+                (
+                    "Full test set recall (15 PRs, 66 bugs)",
+                    ("80.3%", "78.8%", "77.3%"),
+                    "78.8% (156/198)",
+                ),
+                (
+                    "Fair test set recall (13 PRs, 50 bugs)",
+                    ("80.0%", "80.0%", "80.0%"),
+                    "80.0% (120/150)",
+                ),
+                (
+                    "Unseen PRs recall (21 bugs)",
+                    ("71.4%", "76.2%", "71.4%"),
+                    "73.0% (46/63)",
+                ),
+                ("Strict precision", ("40.2%", "40.0%", "36.7%"), "38.9%"),
+                ("Inline comments per PR", ("9.3", "9.1", "9.5"), "9.3"),
+            ),
+            "session": "Sonnet at effort low",
+            "judge": "claude-opus-4-5-20251101",
+            "note": (
+                "Per lane, pools the four PRs from the custom run at 3911db9e "
+                "with the other eleven PRs from the subset run at 3bab948e."
+            ),
+        },
+    },
     {
         "label": "v3.1",
         "legs": (
@@ -403,9 +446,7 @@ def row_by_run_id(rows, run_id):
     Earliest ts wins on a k=5 re-score (byte-identical per judge_sd=0), matching
     the "representative row" convention used everywhere else in this module.
     """
-    cands = [
-        r for r in rows if r.get("run_id") == run_id and r.get("schema_version", 1) == 1
-    ]
+    cands = [r for r in rows if r.get("run_id") == run_id]
     return sorted(cands, key=lambda r: r.get("ts", ""))[0] if cands else None
 
 
@@ -414,7 +455,7 @@ def current_release_leg(rows, releases=RELEASES):
     present in the loaded ledger — lets the dashboard degrade gracefully against
     a smaller/offline fixture instead of rendering a release with no numbers."""
     for rel in releases:
-        for leg in rel["legs"]:
+        for leg in rel.get("legs", ()):
             row = row_by_run_id(rows, leg["run_id"])
             if row is not None:
                 return rel, leg, row
@@ -1035,7 +1076,40 @@ def _release_leg_html(rows, leg):
     )
 
 
-def build_releases_html(rows, top_anchor, v2_base, ceiling):
+def _pooled_release_html(rel, rows):
+    pooled = rel["pooled"]
+    available = {row.get("run_id") for row in rows}
+    if not all(run_id in available for lane in pooled["lanes"] for run_id in lane):
+        return ""
+    headers = "".join(
+        f'<th scope="col">Lane {i}</th>' for i in range(1, len(pooled["lanes"]) + 1)
+    )
+    metrics = "".join(
+        f'<tr><th scope="row">{html.escape(name)}</th>'
+        + "".join(f'<td class="num">{html.escape(v)}</td>' for v in (*lanes, total))
+        + "</tr>"
+        for name, lanes, total in pooled["metrics"]
+    )
+    sources = "".join(
+        f'<p class="release-leg-run">Lane {i}: '
+        + " + ".join(f'<span class="mono">{html.escape(r)}</span>' for r in lane)
+        + "</p>"
+        for i, lane in enumerate(pooled["lanes"], 1)
+    )
+    return (
+        '<article class="release-card">'
+        f'<h3 class="release-label">{html.escape(rel["label"])}</h3>'
+        f"<p>Session: {html.escape(pooled['session'])} · judge "
+        f'<span class="mono">{html.escape(pooled["judge"])}</span></p>'
+        '<div class="table-wrap"><table><thead><tr><th scope="col">Measure</th>'
+        f'{headers}<th scope="col">Pooled</th></tr></thead>'
+        f"<tbody>{metrics}</tbody></table></div>"
+        f'<p class="release-note">{html.escape(pooled["note"])}</p>'
+        f"{sources}</article>"
+    )
+
+
+def build_releases_html(rows, top_anchor, v2_base, ceiling, *, epoch_id=None):
     """The headline section: one card per release, newest first, each with its
     release-defining measurement leg(s) and a one-line "what changed". This is
     the long-term progression record; the v2->v3 rewrite is one chapter of it,
@@ -1045,6 +1119,11 @@ def build_releases_html(rows, top_anchor, v2_base, ceiling):
     """
     cards = []
     for rel in RELEASES:
+        if rel.get("epoch_id") != epoch_id:
+            continue
+        if "pooled" in rel:
+            cards.append(_pooled_release_html(rel, rows))
+            continue
         leg_htmls = [_release_leg_html(rows, leg) for leg in rel["legs"]]
         leg_htmls = [h for h in leg_htmls if h]
         note_bits = []
@@ -2272,16 +2351,19 @@ def _render_historical_html(rows, baselines, sha, generated, *, active_html=""):
     _v2_row, v3_gate_row, _ng = subset_comparison(rows, baselines)
     v3_holdout_row = latest_holdout_row(rows)
 
-    # Headline stat tiles track the current release's defining measurement (the
-    # v3.1 mini-subset, once it's in the ledger) rather than a fixed tier; this
-    # falls back to the pre-v3.1 "latest gate-grade subset" behaviour when none
-    # of the RELEASES run_ids are present (e.g. an offline test fixture).
+    # Historical tiles follow a release's defining leg rather than a fixed tier;
+    # smaller offline fixtures fall back to their latest gate-grade subset.
     rel, leg, release_row = current_release_leg(rows)
     bv2 = baselines.get("baseline_v2", {})
     if release_row is not None:
         src_label = (
-            '<p class="tiles-source">Headline numbers below are the current release: '
-            f"<b>{html.escape(rel['label'])}</b> · {html.escape(leg['name'])} · run "
+            '<p class="tiles-source">'
+            + (
+                "Release summary: "
+                if active_html
+                else "Headline numbers below are the current release: "
+            )
+            + f"<b>{html.escape(rel['label'])}</b> · {html.escape(leg['name'])} · run "
             f'<span class="mono">{html.escape(truncate_middle(str(leg["run_id"]), 32))}</span>'
             f" · {html.escape(fmt_date(release_row.get('ts', '')))}</p>"
         )
@@ -2419,7 +2501,25 @@ def render_html(rows, baselines, sha, generated):
         '<section id="epoch-scores">',
         "<h2>Active epoch " + html.escape(epoch_id) + "</h2>",
     ]
-    parts += ["<p>" + html.escape(str(spend_totals(epoch_rows))) + "</p>"]
+    releases_html = build_releases_html(epoch_rows, None, None, None, epoch_id=epoch_id)
+    if 'class="release-card"' in releases_html:
+        parts += ["<h2>Current release</h2>", releases_html]
+    parts += ["<h2>Run ledger</h2>"]
+    # Cents, not raw sums: float summation differs across Python versions, and the
+    # committed page must reproduce byte for byte on every supported one.
+    spend = spend_totals(epoch_rows)
+    parts.append(
+        "<p>Spend: "
+        + " · ".join(
+            f"{label} {'—' if spend[key] is None else f'${spend[key]:,.2f}'}"
+            for label, key in (
+                ("reviews", "review_cost_usd"),
+                ("scoring", "scoring_cost_usd"),
+                ("attribution", "attribution_cost_usd"),
+            )
+        )
+        + "</p>"
+    )
     if not epoch_rows:
         parts.append("<p>Active-epoch measurements pending.</p>")
     for group in ledger_groups(epoch_rows):
