@@ -1,7 +1,7 @@
 {
   "name": "code-gauntlet",
   "version": "4.0.0",
-  "description": "Adversarial code review for Claude Code: seven specialist reviewers investigate bugs, security, tests and cross-file impact, with a budgeted gap hunter for uncited regions. Findings pass verification, skeptical validation and blind challenge before posting.",
+  "description": "Adversarial code review for Claude Code. Seven specialist agents review each GitHub PR, GitLab MR or local change for bugs, security, tests and cross-file impact, and an eighth checks changed code they did not cite. Every finding must survive verification, a skeptical validator and a blind challenge before it posts.",
   "author": {
     "name": "Lee Hopper"
   },
