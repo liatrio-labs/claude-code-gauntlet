@@ -2505,7 +2505,21 @@ def render_html(rows, baselines, sha, generated):
     if 'class="release-card"' in releases_html:
         parts += ["<h2>Current release</h2>", releases_html]
     parts += ["<h2>Run ledger</h2>"]
-    parts += ["<p>" + html.escape(str(spend_totals(epoch_rows))) + "</p>"]
+    # Cents, not raw sums: float summation differs across Python versions, and the
+    # committed page must reproduce byte for byte on every supported one.
+    spend = spend_totals(epoch_rows)
+    parts.append(
+        "<p>Spend: "
+        + " · ".join(
+            f"{label} {'—' if spend[key] is None else f'${spend[key]:,.2f}'}"
+            for label, key in (
+                ("reviews", "review_cost_usd"),
+                ("scoring", "scoring_cost_usd"),
+                ("attribution", "attribution_cost_usd"),
+            )
+        )
+        + "</p>"
+    )
     if not epoch_rows:
         parts.append("<p>Active-epoch measurements pending.</p>")
     for group in ledger_groups(epoch_rows):
