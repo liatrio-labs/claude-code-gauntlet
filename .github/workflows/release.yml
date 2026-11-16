@@ -91,7 +91,7 @@ jobs:
           set -euo pipefail
           git worktree add --detach "$RUNNER_TEMP/release-source" "$TAG"
           python3 .github/plugin_package.py build \
-            --source "$RUNNER_TEMP/release-source" --out "$RUNNER_TEMP/plugin-package"
+            --source "$RUNNER_TEMP/release-source" --out "$RUNNER_TEMP/plugin-package" --ref "$TAG"
 
       - name: Publish the directory package
         if: steps.release.outputs.released == 'true'

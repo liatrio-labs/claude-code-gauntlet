@@ -313,8 +313,12 @@ def _tracked_files(source: Path) -> list[str]:
     return [path for path in output.split("\0") if path]
 
 
-def build(source: Path, out: Path) -> PackageReport:
-    """Copy the shipped files of `source` into `out`, rewrite Markdown links, and check."""
+def build(source: Path, out: Path, ref: str = "main") -> PackageReport:
+    """Copy the shipped files of `source` into `out`, rewrite Markdown links, and check.
+
+    Links to files left out of the package point at `ref` on GitHub; the release job passes
+    its tag so a packaged version links to the same revision it was built from.
+    """
     if out.exists() and (not out.is_dir() or any(out.iterdir())):
         raise PackageError([f"{out}: output must be a new or empty directory"])
     manifest = _manifest(source / MANIFEST)
@@ -324,7 +328,7 @@ def build(source: Path, out: Path) -> PackageReport:
     tracked = _tracked_files(source)
     selection = select_paths(tracked, _paths(manifest, "agents"))
     shipped, known = _with_parents(selection), _with_parents(tracked)
-    blob_base = repository.rstrip("/") + "/blob/main/"
+    blob_base = repository.rstrip("/") + "/blob/" + quote(ref, safe="") + "/"
     problems: list[str] = []
     for relative in selection:
         origin, target = source / relative, out / relative
@@ -539,6 +543,7 @@ def _parser() -> ArgumentParser:
     build_command = commands.add_parser("build")
     build_command.add_argument("--source", type=Path, default=ROOT)
     build_command.add_argument("--out", type=Path, required=True)
+    build_command.add_argument("--ref", default="main")
     check_command = commands.add_parser("check")
     check_command.add_argument("package", type=Path)
     publish_command = commands.add_parser("publish")
@@ -554,7 +559,7 @@ def main(argv: list[str] | None = None) -> int:
             print(publish(args.tag, args.package, ROOT))
             return 0
         report = (
-            build(args.source, args.out)
+            build(args.source, args.out, args.ref)
             if args.command == "build"
             else check(args.package)
         )

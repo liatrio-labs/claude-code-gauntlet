@@ -325,6 +325,19 @@ def test_build_ships_the_allowlist_from_a_source_tree(tmp_path, source):
     )
 
 
+def test_build_links_left_out_files_to_the_given_ref(tmp_path, source):
+    out = tmp_path / "package"
+    assert (
+        MODULE.main(
+            ["build", "--source", str(source), "--out", str(out), "--ref", "v1.2.3"]
+        )
+        == 0
+    )
+    readme = (out / "README.md").read_text(encoding="utf-8")
+    assert f"({BLOB.replace('/blob/main/', '/blob/v1.2.3/')}tests/t.py)" in readme
+    assert "/blob/main/" not in readme
+
+
 def test_publish_keeps_one_linear_commit_per_release(tmp_path: Path, source: Path):
     remote = tmp_path / "remote.git"
     git(tmp_path, "init", "-q", "--bare", str(remote))
