@@ -1,5 +1,7 @@
+import { hasAdmission, evaluateAdmission } from './admission.js';
+import { confirmedComment } from './verdict.js';
 import { canonicalRange } from './location.js';
-import { WS_TRIM_RE, asText, asConfidence, deepFreeze } from './wire.js';
+import { WS_TRIM_RE, asText, deepFreeze } from './wire.js';
 import { INJECTION_STRIPPED_PROSE_FIELDS } from './registry.js';
 
 export const INJECTION_TITLE_PATTERNS = deepFreeze([
@@ -72,15 +74,7 @@ const INJECTION_VULN_INTRO_PATTERNS = deepFreeze([
   /\bdisable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+security[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:check|feature|control)\b/i,
 ]);
 
-const MIN_BODY_WORDS = 10;
 
-const HIGH_CONFIDENCE_THRESHOLD = 85;
-
-export const WORD_SPLIT_RE = /[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+/;
-
-export function countWords(text) {
-  return (text || '').split(WORD_SPLIT_RE).filter(Boolean).length;
-}
 
 // Packed Unicode tables are decoded once; explicit mappings avoid runtime normalization drift.
 const CONFUSABLE_FOLD_PACKED =
@@ -294,8 +288,6 @@ export const INJECTION_RULES = deepFreeze([
     patterns: INJECTION_ENCODED_PATTERNS, prose: true },
   { kind: 'pattern', domain: 'combined', label: 'contains bypass/auto-approve instruction',
     patterns: INJECTION_BYPASS_PATTERNS, prose: true },
-  { kind: 'shortBody', minimumWords: MIN_BODY_WORDS, confidence: HIGH_CONFIDENCE_THRESHOLD,
-    label: 'suspiciously short description ({words} words) with high confidence ({confidence})' },
   { kind: 'pattern', domain: 'combined', label: 'uses instructional tone',
     patterns: INJECTION_INSTRUCTIONAL_PATTERNS, prose: true },
   { kind: 'pattern', domain: 'combined', label: 'recommends introducing vulnerability',
@@ -324,6 +316,16 @@ function stripInjectionField(finding, field, reason) {
   return kept;
 }
 
+function proseInjection(value, rules) {
+  const folded = foldConfusables(value);
+  for (const row of rules) {
+    if (!row.prose) continue;
+    const match = firstMatch(value, folded, row.patterns);
+    if (match) return { row, match };
+  }
+  return null;
+}
+
 function stripInjectedProseFields(finding, rules) {
   let kept = finding;
   let firstPatternStrip = null;
@@ -333,18 +335,21 @@ function stripInjectedProseFields(finding, rules) {
       continue;
     }
     const value = typeof kept[field] === 'string' ? kept[field] : '';
-    if (!value) continue;
-    const valueFolded = foldConfusables(value);
-    for (const row of rules) {
-      if (!row.prose) continue;
-      const m = firstMatch(value, valueFolded, row.patterns);
-      if (m) {
-        kept = stripInjectionField(kept, field, `${field} ${row.label}: ${JSON.stringify(m)}`);
-        // First field and rule win so propagated fix-removal reasons remain deterministic.
-        if (firstPatternStrip === null) firstPatternStrip = [field, row.label];
-        break;
-      }
+    const injection = value && proseInjection(value, rules);
+    if (injection) {
+      const { row, match } = injection;
+      kept = stripInjectionField(kept, field, `${field} ${row.label}: ${JSON.stringify(match)}`);
+      // First field and rule win so propagated fix-removal reasons remain deterministic.
+      firstPatternStrip ??= [field, row.label];
     }
+  }
+  const comment = confirmedComment(kept);
+  const injection = comment?.fix && proseInjection(comment.fix, rules);
+  if (injection) {
+    const statement = { ...comment };
+    delete statement.fix;
+    kept = { ...kept, verdict: { ...kept.verdict, comment: statement } };
+    firstPatternStrip ??= ['comment.fix', injection.row.label];
   }
   return [kept, firstPatternStrip];
 }
@@ -369,20 +374,23 @@ function stripSuggestedFixCodeIfNeeded(finding, firstPatternStrip) {
 
 export function applyInjectedProseStrip(finding, rules = INJECTION_RULES) {
   const [stripped, firstPatternStrip] = stripInjectedProseFields(finding, rules);
-  return stripSuggestedFixCodeIfNeeded(stripped, firstPatternStrip);
+  const kept = stripSuggestedFixCodeIfNeeded(stripped, firstPatternStrip);
+  // The stamp binds verdict prose; only a valid incoming stamp can authorize this rewrite.
+  return kept.verdict !== finding.verdict && hasAdmission(finding) ? evaluateAdmission(kept) : kept;
 }
 
-// Rule order fixes diagnostic reason order; replay scans stage outputs without reapplying discovery's short-body heuristic.
-function injectionScanCore(findings, includeH4, rules) {
+// Rule order fixes diagnostic reason order.
+export function applyInjectionFilter(findings, rules = INJECTION_RULES) {
   const kept = [];
   const eliminated = [];
   const seenSignatures = new Map();
 
   for (const finding of findings) {
-    const title = asText(finding.title);
-    const description = asText(finding.description);
+    const comment = confirmedComment(finding);
+    const discoveryTitle = asText(finding.title);
+    const title = [discoveryTitle, comment?.title].filter(Boolean).join('\n');
+    const description = [asText(finding.description), comment?.body].filter(Boolean).join('\n');
     const filepath = asText(finding.file);
-    const confidence = asConfidence(finding.confidence);
     const combined = `${title}\n${description}`;
     const combinedFolded = foldConfusables(combined);
     const titleFolded = foldConfusables(title);
@@ -395,22 +403,17 @@ function injectionScanCore(findings, includeH4, rules) {
         const folded = row.domain === 'title' ? titleFolded : combinedFolded;
         const m = firstMatch(raw, folded, row.patterns);
         if (m) reasons.push(`${row.label}: ${JSON.stringify(m)}`);
-      } else if (row.kind === 'shortBody' && includeH4) {
-        const wordCount = countWords(description);
-        if (wordCount < row.minimumWords && confidence >= row.confidence) {
-          reasons.push(row.label.replace('{words}', wordCount).replace('{confidence}', confidence));
-        }
       } else if (row.kind === 'path') {
         if (!filepath || row.pattern.test(filepath)) {
           reasons.push(`${row.label}: ${JSON.stringify(filepath)}`);
         }
       } else if (row.kind === 'duplicate') {
         // Ordered tuple encoding keeps title and location boundaries unambiguous for duplicate detection.
-        const sig = JSON.stringify([title.toLowerCase().replace(WS_TRIM_RE, ''), filepath, canonicalRange(finding) ? ['resolved', finding.line_start] : ['unconfirmed', finding.id]]);
+        const sig = JSON.stringify([discoveryTitle.toLowerCase().replace(WS_TRIM_RE, ''), filepath, canonicalRange(finding) ? ['resolved', finding.line_start] : ['unconfirmed', finding.id]]);
         if (seenSignatures.has(sig)) {
           reasons.push(`${row.label} ${JSON.stringify(seenSignatures.get(sig))}`);
         } else {
-          seenSignatures.set(sig, finding.id !== undefined && finding.id !== null ? finding.id : title);
+          seenSignatures.set(sig, finding.id !== undefined && finding.id !== null ? finding.id : discoveryTitle);
         }
       }
     }
@@ -425,12 +428,4 @@ function injectionScanCore(findings, includeH4, rules) {
   }
 
   return { kept, eliminated };
-}
-
-export function applyInjectionFilter(findings, rules = INJECTION_RULES) {
-  return injectionScanCore(findings, true, rules);
-}
-
-export function applyReplayInjectionScan(findings, rules = INJECTION_RULES) {
-  return injectionScanCore(findings, false, rules);
 }

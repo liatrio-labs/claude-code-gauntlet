@@ -1,8 +1,0 @@
-{
-  "config": {
-    "confidence_threshold": 50,
-    "ignore": [
-      "root"
-    ]
-  }
-}

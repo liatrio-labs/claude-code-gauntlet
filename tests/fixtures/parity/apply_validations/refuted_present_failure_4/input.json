@@ -1,0 +1,28 @@
+{
+  "findings": [
+    {
+      "id": "f",
+      "file": "src",
+      "line_start": 10,
+      "severity": "high",
+      "confidence": 90
+    }
+  ],
+  "validations": [
+    {
+      "id": "f",
+      "claim": "refuted",
+      "justification": "Guard exists",
+      "refutation_kind": "guard_exists",
+      "refutation_check": {
+        "verified": true
+      },
+      "refutation": {
+        "file": "guard",
+        "line_start": 1,
+        "line_end": 1,
+        "anchor": "return safe;"
+      }
+    }
+  ]
+}

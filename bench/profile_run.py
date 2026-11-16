@@ -50,7 +50,7 @@ UNAVAILABLE = "UNAVAILABLE"
 DEFAULT_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 
 # Discovery agentTypes that make up the "discover" stage (the 7-agent list,
-# minus change-summarizer/artifact-writer/executor/validator/challenger, which have
+# minus change-summarizer/artifact-writer/executor/validator/challenger/grouper, which have
 # their own stages).
 DISCOVER_AGENT_TYPES = {
     "code-gauntlet:bug-detector",
@@ -85,6 +85,7 @@ STAGE_RULES = (
         "label": "validate-batch-",
     },
     {"name": "challenge", "match": "prefix", "label": "challenge-"},
+    {"name": "group-findings", "match": "exact", "label": "group-findings"},
     {
         "name": "report-writer",
         "match": "exact",

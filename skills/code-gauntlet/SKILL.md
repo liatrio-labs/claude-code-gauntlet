@@ -10,7 +10,7 @@ Prepare the review, run one Workflow through Report, and deliver its payload unc
 Inspect this session's tools for `Workflow`; if absent, print exactly this and stop:
 
 ```
-code-gauntlet v3 requires Claude Code >= 2.1.154 with dynamic workflows. Install the pre-rename deep-review v2.x for older CLIs.
+code-gauntlet requires Claude Code >= 2.1.154 with dynamic workflows. Install the pre-rename deep-review v2.x for older CLIs.
 ```
 
 If Bash is absent, print `Install Git for Windows to run code-gauntlet in Bash.` and stop.

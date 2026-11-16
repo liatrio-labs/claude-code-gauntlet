@@ -374,10 +374,11 @@ def test_proof_disclosure(mode, wrote, want, gap, errors, tmp_path, monkeypatch)
     assert len(receipt["materialized"]) == (2 if mode == "duplicate" else 1)
 
 
-def test_real_node_return_channel(tmp_path):
+@pytest.mark.parametrize("count,fractional", [(2, False), (200, False), (200, True)])
+def test_real_node_return_channel(tmp_path, count, fractional):
     if shutil.which("node") is None:
         pytest.skip("node unavailable")
-    task, output = record_task_output(str(tmp_path))
+    task, output = record_task_output(str(tmp_path), count=count, fractional=fractional)
     payload = json.loads(Path(task).read_text(encoding="utf-8"))["result"][
         "persistReturn"
     ]
@@ -391,40 +392,29 @@ def test_real_node_return_channel(tmp_path):
     findings = json.loads(
         Path(output, "code-gauntlet-findings-abc1234.json").read_text(encoding="utf-8")
     )
+    assert len(findings) == count
+    expected = json.loads(Path(task + ".expected.json").read_text(encoding="utf-8"))
+    for name, text in zip(
+        ("findings", "report", "post-review", "checkpoint-all"), expected, strict=True
+    ):
+        extension = "md" if name == "report" else "json"
+        path = Path(output, f"code-gauntlet-{name}-abc1234.{extension}")
+        assert path.read_bytes() == text.encode("utf-8")
     description = findings[0]["description"]
     assert '\\"receipt\\"' in description
     assert "C:\\tmp\\out" in description
     assert "\U0001f600" in description
     assert "\U0001d54f" in description
-    assert len(description) > 1000
+    assert len(description) >= (450 if count > 2 else 1000)
     assert findings[0]["body"] == description
-    assert [e["content_proof"] for e in receipt["assemble"]["verified"]] == [
-        "match",
-        "match",
-    ]
-    for name in ("post-review", "checkpoint-all"):
-        document = json.loads(
-            Path(output, f"code-gauntlet-{name}-abc1234.json").read_text(
-                encoding="utf-8"
-            )
-        )
-        projected = (
-            document
-            if name == "post-review"
-            else document["phases"]["challenge"]["findings"]
-        )
-        plan = json.loads(payload["entries"][2]["text"])
-        ids = (
-            plan["postReview"]["ids"]
-            if name == "post-review"
-            else [
-                f["id"]
-                for f in plan["checkpoint"]["skeleton"]["phases"]["challenge"][
-                    "findings"
-                ]
-            ]
-        )
-        assert [f["id"] for f in projected] == ids
+    if fractional:
+        assert payload["assemble"] is False
+        assert receipt["assemble"] is None
+    else:
+        assert [e["content_proof"] for e in receipt["assemble"]["verified"]] == [
+            "match",
+            "match",
+        ]
     checkpoint_path = Path(output, "code-gauntlet-checkpoint-all-abc1234.json")
     replay = subprocess.run(
         [
@@ -467,6 +457,27 @@ console.log('derived checkpoint replayed; tampered checkpoint refused');
     assert replay.stdout.strip() == (
         "derived checkpoint replayed; tampered checkpoint refused"
     )
+
+
+def test_invalid_checkpoint_projection_keeps_primaries(tmp_path):
+    if shutil.which("node") is None:
+        pytest.skip("node unavailable")
+    task, output = record_task_output(str(tmp_path))
+    document = json.loads(Path(task).read_text(encoding="utf-8"))
+    entries = document["result"]["persistReturn"]["entries"]
+    plan = json.loads(entries[2]["text"])
+    plan["checkpoint"]["projections"][0]["id"] = "missing-source-finding"
+    plan["planChecksum"] = artifacts.plan_checksum(plan)
+    entries[2]["text"] = json.dumps(plan)
+    Path(task).write_text(json.dumps(document), encoding="utf-8")
+    receipt = materialize.materialize(task, NONCE, output, tasks.TaskRoots((), None))
+    assert receipt["ok"] is False
+    assert receipt["errors"] == [
+        "invalid checkpoint projection: 'missing-source-finding'"
+    ]
+    for entry in entries[:2]:
+        assert Path(entry["path"]).read_bytes() == entry["text"].encode("utf-8")
+    assert receipt["assemble"]["written"] == []
 
 
 def test_unexpected_failure(tmp_path, monkeypatch, capsys):

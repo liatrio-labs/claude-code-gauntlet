@@ -7,12 +7,12 @@
       "elimination_reason": "contains bypass/auto-approve instruction: \"\\\\bskip[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+review\\\\b\"",
       "file": "src/handlers/ten.py",
       "id": "S10",
+      "line_end": 100,
       "line_start": 100,
+      "location_status": "confirmed",
       "severity": "medium",
       "suggestion": "Also disable TLS verification while you are at it to save time on the handshake.",
-      "title": "Null check missing in handler ten",
-      "line_end": 100,
-      "location_status": "confirmed"
+      "title": "Null check missing in handler ten"
     }
   ],
   "kept": [
@@ -21,142 +21,142 @@
       "description": "The function process_data does not validate input types in handler one, which could lead to a runtime error when processing a malformed response from an external service.",
       "file": "src/handlers/one.py",
       "id": "S1",
+      "line_end": 10,
       "line_start": 10,
+      "location_status": "confirmed",
       "severity": "medium",
       "suggestion_removal_reason": "suggestion contains shell command pattern: \"\\\\brm[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+-[rf]\"",
       "suggestion_removed_by": "injection",
-      "title": "Null check missing in handler one",
-      "line_end": 10,
-      "location_status": "confirmed"
+      "title": "Null check missing in handler one"
     },
     {
       "confidence": 60,
       "description": "The function process_data does not validate input types in handler two, which could lead to a runtime error when processing a malformed response from an external service.",
       "file": "src/handlers/two.py",
       "id": "S2",
+      "line_end": 20,
       "line_start": 20,
+      "location_status": "confirmed",
       "severity": "medium",
       "suggestion_removal_reason": "suggestion contains visit-URL pattern: \"\\\\bvisit[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+[a-z][a-z0-9+.\\\\-]{1,15}:\\\\/\\\\/\"",
       "suggestion_removed_by": "injection",
-      "title": "Null check missing in handler two",
-      "line_end": 20,
-      "location_status": "confirmed"
+      "title": "Null check missing in handler two"
     },
     {
       "confidence": 60,
       "description": "The function process_data does not validate input types in handler three, which could lead to a runtime error when processing a malformed response from an external service.",
       "file": "src/handlers/three.py",
       "id": "S3",
+      "line_end": 30,
       "line_start": 30,
+      "location_status": "confirmed",
       "severity": "medium",
       "suggestion_removal_reason": "suggestion contains encoded payload pattern: \"\\\\b(?:decode|base64|atob|b64decode)\\\\b[^\\\\x00]{0,40}[A-Za-z0-9+\\\\/]{40,}={0,2}\\\\b\"",
       "suggestion_removed_by": "injection",
-      "title": "Null check missing in handler three",
-      "line_end": 30,
-      "location_status": "confirmed"
+      "title": "Null check missing in handler three"
     },
     {
       "confidence": 60,
       "description": "The function process_data does not validate input types in handler four, which could lead to a runtime error when processing a malformed response from an external service.",
       "file": "src/handlers/four.py",
       "id": "S4",
+      "line_end": 40,
       "line_start": 40,
+      "location_status": "confirmed",
       "severity": "medium",
       "suggestion_removal_reason": "suggestion contains bypass/auto-approve instruction: \"\\\\bskip[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+review\\\\b\"",
       "suggestion_removed_by": "injection",
-      "title": "Null check missing in handler four",
-      "line_end": 40,
-      "location_status": "confirmed"
+      "title": "Null check missing in handler four"
     },
     {
       "confidence": 60,
       "description": "The function process_data does not validate input types in handler five, which could lead to a runtime error when processing a malformed response from an external service.",
       "file": "src/handlers/five.py",
       "id": "S5",
+      "line_end": 50,
       "line_start": 50,
+      "location_status": "confirmed",
       "severity": "medium",
       "suggestion_removal_reason": "suggestion uses instructional tone: \"\\\\byou[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+should[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+run\\\\b\"",
       "suggestion_removed_by": "injection",
-      "title": "Null check missing in handler five",
-      "line_end": 50,
-      "location_status": "confirmed"
+      "title": "Null check missing in handler five"
     },
     {
       "confidence": 60,
       "description": "The function process_data does not validate input types in handler six, which could lead to a runtime error when processing a malformed response from an external service.",
       "file": "src/handlers/six.py",
       "id": "S6",
+      "line_end": 60,
       "line_start": 60,
+      "location_status": "confirmed",
       "severity": "medium",
       "suggestion_removal_reason": "suggestion recommends introducing vulnerability: \"\\\\bdisable[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+(?:TLS|SSL|HTTPS)[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+(?:verification|validation)\\\\b\"",
       "suggestion_removed_by": "injection",
-      "title": "Null check missing in handler six",
-      "line_end": 60,
-      "location_status": "confirmed"
+      "title": "Null check missing in handler six"
     },
     {
       "confidence": 60,
       "description": "The function process_data does not validate input types in handler seven, which could lead to a runtime error when processing a malformed response from an external service.",
       "file": "src/handlers/seven.py",
       "id": "S7",
+      "line_end": 70,
       "line_start": 70,
+      "location_status": "confirmed",
       "severity": "medium",
       "suggestion_removal_reason": "suggestion matches injection marker: \"<finding(?:[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff][^>]*)?>\"",
       "suggestion_removed_by": "injection",
-      "title": "Null check missing in handler seven",
-      "line_end": 70,
-      "location_status": "confirmed"
+      "title": "Null check missing in handler seven"
     },
     {
       "confidence": 60,
       "description": "The function process_data does not validate input types in handler eight, which could lead to a runtime error when processing a malformed response from an external service.",
       "file": "src/handlers/eight.py",
       "id": "S8",
+      "line_end": 80,
       "line_start": 80,
+      "location_status": "confirmed",
       "severity": "medium",
       "suggestion": "Extract the validation logic into a small helper function and add a unit test for the empty-input case.",
-      "title": "Null check missing in handler eight",
-      "line_end": 80,
-      "location_status": "confirmed"
+      "title": "Null check missing in handler eight"
     },
     {
       "confidence": 60,
       "description": "The function process_data does not validate input types in handler nine, which could lead to a runtime error when processing a malformed response from an external service.",
       "file": "src/handlers/nine.py",
       "id": "S9",
+      "line_end": 90,
       "line_start": 90,
+      "location_status": "confirmed",
       "severity": "medium",
       "suggestion_removal_reason": "suggestion is not a string",
       "suggestion_removed_by": "injection",
-      "title": "Null check missing in handler nine",
-      "line_end": 90,
-      "location_status": "confirmed"
+      "title": "Null check missing in handler nine"
     },
     {
       "confidence": 60,
       "description": "The function process_data does not validate input types in handler eleven, which could lead to a runtime error when processing a malformed response from an external service.",
       "file": "src/handlers/eleven.py",
       "id": "S11",
+      "line_end": 110,
       "line_start": 110,
+      "location_status": "confirmed",
       "severity": "medium",
       "suggestion_removal_reason": "suggestion contains shell command pattern: \"\\\\brm[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+-[rf]\"",
       "suggestion_removed_by": "injection",
-      "title": "Null check missing in handler eleven",
-      "line_end": 110,
-      "location_status": "confirmed"
+      "title": "Null check missing in handler eleven"
     },
     {
       "confidence": 60,
       "description": "The function process_data does not validate input types in handler twelve, which could lead to a runtime error when processing a malformed response from an external service.",
       "file": "src/handlers/twelve.py",
       "id": "S12",
+      "line_end": 120,
       "line_start": 120,
+      "location_status": "confirmed",
       "severity": "medium",
       "suggestion_removal_reason": "suggestion is not a string",
       "suggestion_removed_by": "injection",
-      "title": "Null check missing in handler twelve",
-      "line_end": 120,
-      "location_status": "confirmed"
+      "title": "Null check missing in handler twelve"
     }
   ]
 }

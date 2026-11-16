@@ -1,0 +1,27 @@
+{
+  "adjusted_count": 1,
+  "findings": [
+    {
+      "confidence": 90,
+      "file": "src",
+      "id": "f",
+      "line_start": 10,
+      "report_destination": "main",
+      "report_tag": "main",
+      "severity": "high",
+      "validation_justification": "Caller inspected",
+      "validator_verdict": {
+        "claim": "confirmed",
+        "consequence": "present_failure",
+        "justification": "Caller inspected"
+      },
+      "verdict": {
+        "claim": "confirmed",
+        "consequence": "present_failure",
+        "justification": "Caller inspected"
+      },
+      "verdict_route": "posted"
+    }
+  ],
+  "unmatched_ids": []
+}

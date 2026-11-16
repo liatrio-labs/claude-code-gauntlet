@@ -7,11 +7,11 @@
       "elimination_reason": "contains encoded payload pattern: \"\\\\b(?:decode|base64|atob|b64decode)\\\\b[^\\\\x00]{0,40}[A-Za-z0-9+\\\\/]{40,}={0,2}\\\\b\"",
       "file": "src/handler.py",
       "id": "I2",
-      "line_start": 20,
-      "severity": "medium",
-      "title": "Suspicious payload note",
       "line_end": 20,
-      "location_status": "confirmed"
+      "line_start": 20,
+      "location_status": "confirmed",
+      "severity": "medium",
+      "title": "Suspicious payload note"
     }
   ],
   "kept": []

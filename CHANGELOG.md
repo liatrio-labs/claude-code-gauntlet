@@ -2,6 +2,69 @@
 
 <!-- version list -->
 
+## v4.0.0 (2026-11-16)
+
+### Features
+
+- Decide findings by typed verdicts, not a confidence score (#46)
+  ([#590](https://github.com/liatrio-labs/claude-code-gauntlet/pull/590),
+  [`ff8b5d1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ff8b5d1c00ae3e41746ff9893fb8c26af917c576))
+
+### Breaking Changes
+
+- `REVIEW.md` no longer accepts a configuration block. The `confidence_threshold`, severity
+  threshold, `ignore` list and per-directory overrides are gone.
+
+
+## v3.62.1 (2026-11-11)
+
+### Bug Fixes
+
+- Keep reviews alive through three executor and args faults (#46)
+  ([#594](https://github.com/liatrio-labs/claude-code-gauntlet/pull/594),
+  [`00abfed`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/00abfedc9101565456197240b9125322d99e14c8))
+
+### Documentation
+
+- Document the Workflow allow rule for interactive sessions
+  ([#593](https://github.com/liatrio-labs/claude-code-gauntlet/pull/593),
+  [`3efd3de`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3efd3dec72ce448eb9950774da1ace48d087ec9b))
+
+
+## v3.62.0 (2026-11-11)
+
+### Features
+
+- **bench**: Add --child-effort for the child orchestrator session (#46)
+  ([#591](https://github.com/liatrio-labs/claude-code-gauntlet/pull/591),
+  [`b4450e6`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b4450e60598a67bd5157f1e9bdc75dd8d6aaeea3))
+
+
+## v3.61.3 (2026-11-10)
+
+### Bug Fixes
+
+- Raise the headless comment cap and name the Workflow approval fix
+  ([#586](https://github.com/liatrio-labs/claude-code-gauntlet/pull/586),
+  [`c92e8ca`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c92e8ca51d2546827a184cc9b7e973d3213bd1ea))
+
+- Raise the headless comment cap and name the Workflow approval fix (#46)
+  ([#586](https://github.com/liatrio-labs/claude-code-gauntlet/pull/586),
+  [`c92e8ca`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c92e8ca51d2546827a184cc9b7e973d3213bd1ea))
+
+### Documentation
+
+- Trim leftover reference guidance before v4 (#46)
+  ([#584](https://github.com/liatrio-labs/claude-code-gauntlet/pull/584),
+  [`90f7ced`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/90f7ced8bc236151ae5409cd391750e0a23906df))
+
+### Testing
+
+- Guard fixture defaults and workflow allow rules
+  ([#586](https://github.com/liatrio-labs/claude-code-gauntlet/pull/586),
+  [`c92e8ca`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c92e8ca51d2546827a184cc9b7e973d3213bd1ea))
+
+
 ## v3.61.2 (2026-11-09)
 
 ### Bug Fixes

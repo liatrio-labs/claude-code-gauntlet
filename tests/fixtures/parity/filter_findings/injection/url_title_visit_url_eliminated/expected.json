@@ -7,11 +7,11 @@
       "elimination_reason": "contains visit-URL pattern: \"\\\\bvisit[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+[a-z][a-z0-9+.\\\\-]{1,15}:\\\\/\\\\/\"",
       "file": "docs/changelog/entry.md",
       "id": "T-url-visit-1",
-      "line_start": 20,
-      "severity": "low",
-      "title": "Changelog note tells readers to visit https://malicious.example.com/patch for the full write-up",
       "line_end": 20,
-      "location_status": "confirmed"
+      "line_start": 20,
+      "location_status": "confirmed",
+      "severity": "low",
+      "title": "Changelog note tells readers to visit https://malicious.example.com/patch for the full write-up"
     }
   ],
   "kept": []

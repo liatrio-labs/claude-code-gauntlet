@@ -77,11 +77,11 @@ The pipeline's declaration lives in `workflows/src/registry.js`. A field this ta
 | `confidence` | number | yes | 0-100 CERTAINTY score |
 | `dimension` | string | yes | Review dimension (bug, security, cross-file, etc.) |
 | `origin` | string | no | Blame classification stamped by `scripts/verify_findings.py`. |
-| `evidence` | string | no | Code snippet or behavior demonstrating the issue. Required and non-empty in the discovery schema. |
+| `evidence` | string | yes | Code snippet or behavior demonstrating the issue. Required and non-empty in the discovery schema. |
 | `anchor` | string | yes | Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters. |
 | `suggested_fix_code` | string | no | Complete replacement for file lines line_start through line_end, including indentation; include line_end. Omit if uncertain or incomplete. |
 | `sites` | array | no | Additional locations of this issue. |
-| `suggestion` | string | no | Prose fix advice; rendered by `post_review.py` as a "Suggested fix:" block. |
+| `suggestion` | string | no | Discovery fix advice; rendered by `post_review.py` only on discovery fallback. Reader comments use `comment.fix` instead. |
 | `claude_md_rule` | string | conditional | The cited project rule, quoted with its source file; required by contract for convention findings; OMITTED (never null) when no rule applies. |
 | `cross_file_refs` | array | no | Other files involved in the finding |
 
@@ -112,6 +112,8 @@ For convention findings, `rule_source` selects the heading for `claude_md_rule`:
 | `precedent` | object | simplification | no | Source reference to an existing repository idiom supporting the change. |
 | `behavior_preserved` | string | simplification | no | Why the simpler equivalent preserves observable behavior. |
 
+The existing blame-based Origin line is the public provenance annotation.
+
 Required is tri-state. A `yes` field is required in the owning agent's dispatch; a `conditional` field is schema-required for its dimension on first-party direct dispatches. Runtime intake enforces both requirements for the owning row on every provider and gateway, including kind-specific evidence requirements. A `no` field is optional unless its admission kind requires it. Omit inapplicable fields; never emit null.
 
 <!-- generated-from-registry-location: do not edit; scripts/generate_contract_requirements.py -->
@@ -130,6 +132,7 @@ Unconfirmed findings remain in the review body, labelled `location unconfirmed`.
 ## Final Disposition and Rights
 
 Missing or unknown disposition or admission is held back. Delivery intersects admission, disposition and location rights. Body fix tasks additionally require the persisted current-defect eligibility stamp; patches and fences remain denied.
+Typed posting verdicts supersede semantic kind defaults; deterministic kind defaults and factual gates still apply.
 
 | Disposition | inline | body | report | fixTask | patch | fence | sourceLink |
 |---|---|---|---|---|---|---|---|
@@ -152,7 +155,7 @@ Missing or unknown disposition or admission is held back. Delivery intersects ad
 - `quality_basis: duplication`: {"description": "Duplicated behavior identified by duplicate_of.", "phase": "semantic", "predicates": ["resolved_duplicate", "confirmed_duplication"], "required": ["duplicate_of"], "tier": "suggestion"}; default disposition `held_back`.
 - `quality_basis: simpler_equivalent`: {"anyOf": ["suggestion", "suggested_fix_code"], "description": "Simpler replacement preserving observable behavior.", "phase": "semantic", "predicates": ["concrete_equivalent", "behavior_preserved"], "required": ["behavior_preserved"], "tier": "suggestion"}; default disposition `held_back`.
 - `quality_basis: stack_idiom`: {"description": "Behavior-preserving replacement grounded in existing repository precedent.", "phase": "semantic", "predicates": ["resolved_precedent", "precedent_not_added", "applicable"], "required": ["precedent"], "tier": "suggestion"}; default disposition `held_back`.
-- `quality_basis: other`: {"defaultDisposition": "report_only", "description": "No demonstrated defect, duplication, simpler equivalent or applicable precedent.", "phase": "deterministic", "predicates": [], "required": [], "tier": "suggestion"}; default disposition `report_only`.
+- `quality_basis: other`: {"description": "No demonstrated defect, duplication, simpler equivalent or applicable precedent.", "phase": "semantic", "predicates": [], "required": [], "tier": "suggestion"}; default disposition `held_back`.
 
 ### simplification admission
 
@@ -160,7 +163,7 @@ Missing or unknown disposition or admission is held back. Delivery intersects ad
 - `quality_basis: duplication`: {"description": "Duplicated behavior identified by duplicate_of.", "phase": "semantic", "predicates": ["resolved_duplicate", "confirmed_duplication"], "required": ["duplicate_of"], "tier": "suggestion"}; default disposition `held_back`.
 - `quality_basis: simpler_equivalent`: {"anyOf": ["suggestion", "suggested_fix_code"], "description": "Simpler replacement preserving observable behavior.", "phase": "semantic", "predicates": ["concrete_equivalent", "behavior_preserved"], "required": ["behavior_preserved"], "tier": "suggestion"}; default disposition `held_back`.
 - `quality_basis: stack_idiom`: {"description": "Behavior-preserving replacement grounded in existing repository precedent.", "phase": "semantic", "predicates": ["resolved_precedent", "precedent_not_added", "applicable"], "required": ["precedent"], "tier": "suggestion"}; default disposition `held_back`.
-- `quality_basis: other`: {"defaultDisposition": "report_only", "description": "No demonstrated defect, duplication, simpler equivalent or applicable precedent.", "phase": "deterministic", "predicates": [], "required": [], "tier": "suggestion"}; default disposition `report_only`.
+- `quality_basis: other`: {"description": "No demonstrated defect, duplication, simpler equivalent or applicable precedent.", "phase": "semantic", "predicates": [], "required": [], "tier": "suggestion"}; default disposition `held_back`.
 <!-- /generated-from-registry-location -->
 
 ---
@@ -199,9 +202,14 @@ This summary describes the change context for the report.
 #### {finding.title}
 
 - **Location:** `{finding.file}:10-12`
-- **Dimension:** {finding.dimension}
+- **Dimension:** {finding.dimension} · **Verdict:** confirmed / present_failure
 - **Origin:** surfaced — pre-existing, surfaced by this change
-- **Contested:** the challenger could not confirm the cited location
+
+**Confirmed statement:** {finding.verdict.comment.title}
+
+{finding.verdict.comment.body}
+
+**Confirmed fix:** {finding.verdict.comment.fix}
 
 {finding.description}
 
@@ -229,7 +237,10 @@ This summary describes the change context for the report.
 
 - **Cross-file refs:** {finding.cross_file_refs}
 
-- **Corroborated by** `{corroboration.agent}` (`{corroboration.dimension}`, confidence ) — {corroboration.title}
+- **Corroborated by** `{corroboration.agent}` (`{corroboration.dimension}`, severity low, tier main): {corroboration.title}
+  **Confirmed statement:** {corroboration.verdict.comment.title}
+  {corroboration.verdict.comment.body}
+  **Confirmed fix:** {corroboration.verdict.comment.fix}
   {corroboration.description}
 
 ### 🟠 High
@@ -271,7 +282,7 @@ These did not clear the full pipeline (a stage was skipped or failed) and carry 
 
 - **Location:** `{finding.file}:10`
 - **Dimension:** {finding.dimension}
-- **Unverified because:** the validator did not score this finding, so it was not skeptically validated; the verify slice could not be proven against the dispatched document; the challenge cap was reached, so this finding was not challenge-verified
+- **Unverified because:** neither the validator nor the challenger established this finding; the verify slice could not be proven against the dispatched document; the challenge cap was reached, so this finding was not challenge-verified
 
 {finding.description}
 
@@ -287,7 +298,7 @@ These did not clear the full pipeline (a stage was skipped or failed) and carry 
 
 - **Location:** `{finding.file}:10`
 - **Dimension:** {finding.dimension}
-- **Unverified because:** the challenger failed or returned no score, so this finding was not challenge-verified
+- **Unverified because:** the challenger failed or returned no typed verdict, so this finding was not challenge-verified
 
 {finding.description}
 
@@ -310,7 +321,6 @@ Resolved config:
   model_tier=optimized (fixed)
   pr_comment_cap=null (default)
   delivery_tier=all (default)
-  review_md=absent (discovery)
   pipeline_version={pipeline_version} (bundle)
   plugin_root=/absolute/path/to/claude-code-gauntlet (resolved)
 ```
@@ -319,12 +329,12 @@ Resolved config:
 |--------|---------|
 | Version | {pipeline_version} (plugin and pipeline) |
 | Provider | provider=firstParty; gateway=false; conditional schema active=true |
-| Per-stage models | change-summarizer=claude-sonnet-5-5, bug-detector=claude-sonnet-5-5, security-reviewer=claude-opus-5-5, cross-file-impact=claude-sonnet-5-5, test-analyzer=claude-sonnet-5-5, conventions-and-intent=claude-sonnet-5-5, type-design-analyzer=claude-sonnet-5-5, code-simplifier=claude-sonnet-5-5, validator=claude-sonnet-5-5, challenger=claude-sonnet-5-5, executor=claude-sonnet-5-5, artifact-writer=claude-sonnet-5-5 |
+| Per-stage models | change-summarizer=claude-sonnet-5-5, bug-detector=claude-sonnet-5-5, security-reviewer=claude-opus-5-5, cross-file-impact=claude-sonnet-5-5, test-analyzer=claude-sonnet-5-5, conventions-and-intent=claude-sonnet-5-5, type-design-analyzer=claude-sonnet-5-5, code-simplifier=claude-sonnet-5-5, gap-hunter=claude-sonnet-5-5, validator=claude-sonnet-5-5, challenger=claude-sonnet-5-5, grouper=claude-sonnet-5-5, executor=claude-sonnet-5-5, artifact-writer=claude-sonnet-5-5 |
 | Delivery selection | selection policy: tier=all, cap=uncapped |
 | Review scope | Full |
 | Findings pipeline | discovered={stats.discovered}; validate: accepted={stats.validate.accepted}, rejected={stats.validate.rejected}; filter: accepted={stats.filter.accepted}, rejected={stats.filter.rejected}; challenge: accepted={stats.challenge.accepted}, rejected={stats.challenge.rejected}; merge: per-channel: ndjson={stats.merge.ndjson}, text_fallback={stats.merge.text_fallback}; duplicates resolved={stats.merge.duplicates_resolved}; dropped-no-id={stats.merge.dropped_no_id}; truncation warnings={stats.merge.truncation_warnings}; validation warnings={stats.merge.validation_warnings} |
 | Gaps | 0 |
-| Dimensions | dispatched=7; degraded=0 |
+| Dimensions | dispatched=8; degraded=0 |
 
 This section covers the pipeline up to the report stage; persistence, delivery, and duration are reported by the orchestrator at delivery.
 ````
@@ -361,14 +371,12 @@ report; persistence, delivery, and duration are reported by the orchestrator at 
 
 ## PR Comment Format (abbreviated)
 
-The persisted wrapper's `review_body` is exactly the report's Summary section body: the code-owned
-counts sentence, the selected findings index, and any remainder count with its selection reasons.
-The Summary contains no change-summarizer prose. Index bullets show severity, a folded title, a
-head-SHA location permalink (or a code span without a usable identity), and an improvement
-suggestion label where applicable. Locations link to source, not to discussion threads.
-The code-owned index preserves report group order and accounts for omitted units in the remainder.
-Unverified findings contribute to counts, never the index. See [delivery rendering](../../../docs/delivery-rendering.md#summary-index-and-host-rendering)
-for object membership, consolidation, display containment, index limits, and posted body budgets.
+The persisted wrapper's `review_body` contains plain issue counts, one index entry per inline lead,
+and any delivery remainder. Its `review_summary` carries these as structured data for filtering by
+lead id without parsing Markdown. Unanchored issues appear once in the poster's body section under
+`### 1 issue described here` (pluralized as needed).
+Held-back diagnostics and the full index stay in the local report. See
+[delivery rendering](../../../docs/delivery-rendering.md#summary-index-and-host-rendering).
 The footer contains `Generated by code-gauntlet | Reviewed up to: {full_sha}`. A model-authored
 title that contains footer-like text does not satisfy the footer check unless it occupies a
 standalone Markdown line separated by CR or LF.
@@ -389,6 +397,10 @@ The `code-gauntlet-findings` hidden HTML comment enables incremental review: on 
 ---
 
 ## Inline PR Comment Format
+
+Each issue renders the lead only, then confirmed additional sites. The title and body are the
+resolved reader's confirmed statement, or the discovery text when no valid statement exists.
+Other descriptions stay in the local report.
 
 **You do not compose this body — `scripts/gauntlet/delivery/compose.py::render_comment_body` does.** You supply
 the finding fields (see `references/delivery-guide.md` for the input JSON); the script renders
@@ -424,10 +436,16 @@ ends with it, once — one mark per delivered surface. Never hand-type it.
 `{emoji}` is 🔴 critical / 🟠 high / 🟡 medium / 💡 low, `{SEVERITY}` is the normalized severity uppercased.
 <!-- /generated-from-registry-identity:inline_legend -->
 
-`{body}` is the v2 alias of `description` applied at the persist boundary. The renderer emits
+`{body}` is the resolved reader's statement body; without a valid statement it is the v2 alias
+of `description` applied at the persist boundary. The renderer emits
 no permalink and no confidence footer — those belong to the report markdown, not to inline
 comments.
 Posted fields use the code-owned outbound contract in
 [delivery rendering](../../../docs/delivery-rendering.md#outbound-text-preparation).
 
-**`suggested_fix_code` field:** Delivery gates this field on `scripts/gauntlet/delivery/gate.py`'s deterministic apply-check (field must be a string, non-empty after redaction, free of `marker_shaped` text, ship a matching `line_end`, match a valid diff range, not have its finding path collide with its `a/`/`b/`-stripped form as two distinct real files in the diff, land at this render site's actual apply range, differ from the current text, and stay within the size bound — on GitLab that render-site range is the discussion anchor plus the `-m+n` offsets the poster derives from it, capped by GitLab's own offset limit; any failure strips the field from the render and the finding falls back to the prose `suggestion` field, with the reason recorded via `warn_skip`). Delivery can also withhold a fence that passed every per-finding check when an earlier, higher-priority kept fence claims an overlapping apply range in the same file — the same downgrade path, reason `overlaps_kept_fence` (see `references/delivery-guide.md`). The renderer excludes this field and its two removal stamps through the registry-derived `reportExtraFields()` projection in `workflows/src/renderReport.js`, so there is no report-path render to gate. The report *path* instead renders the kept patches through a separate read-only apply-check, `scripts/report_patches.py`, into the sibling artifact `code-gauntlet-patches-{head_sha_short}.md` — it reuses the same gate (`gauntlet.delivery.gate.evaluate_fix`) over the pinned Phase 2 diff, including the `marker_shaped` downgrade, with no platform render-site constraints and no set-level overlap withholding applied, so a patch listed there is not a guarantee delivery will also keep it. See `references/delivery-guide.md` for the findings JSON schema used by `post_review.py`.
+The confirmed statement's correction appears as **Confirmed fix** in the local report, including
+for grouped members. Discovery descriptions and suggestions remain available there. In posted
+comments, a valid reader statement suppresses discovery suggestion prose and uses only the
+reader's fix; empty or invalid fixes omit that line while validated replacement code remains.
+
+**`suggested_fix_code` field:** Delivery gates this field on `scripts/gauntlet/delivery/gate.py`'s deterministic apply-check (field must be a string, non-empty after redaction, free of `marker_shaped` text, ship a matching `line_end`, match a valid diff range, not have its finding path collide with its `a/`/`b/`-stripped form as two distinct real files in the diff, land at this render site's actual apply range, differ from the current text, and stay within the size bound — on GitLab that render-site range is the discussion anchor plus the `-m+n` offsets the poster derives from it, capped by GitLab's own offset limit; any failure strips the field from the render and the finding retains the selected reader fix or discovery fallback prose, with the reason recorded via `warn_skip`). Delivery can also withhold a fence that passed every per-finding check when an earlier, higher-priority kept fence claims an overlapping apply range in the same file — the same downgrade path, reason `overlaps_kept_fence` (see `references/delivery-guide.md`). The renderer excludes this field and its two removal stamps through the registry-derived `reportExtraFields()` projection in `workflows/src/renderReport.js`, so there is no report-path render to gate. The report *path* instead renders the kept patches through a separate read-only apply-check, `scripts/report_patches.py`, into the sibling artifact `code-gauntlet-patches-{head_sha_short}.md` — it reuses the same gate (`gauntlet.delivery.gate.evaluate_fix`) over the pinned Phase 2 diff, including the `marker_shaped` downgrade, with no platform render-site constraints and no set-level overlap withholding applied, so a patch listed there is not a guarantee delivery will also keep it. See `references/delivery-guide.md` for the findings JSON schema used by `post_review.py`.

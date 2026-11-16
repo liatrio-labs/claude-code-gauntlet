@@ -6,11 +6,11 @@
       "description": "This router component does not correctly redirect the user when the backend returns a server error.",
       "file": "src/router/errors.py",
       "id": "T-carve-url-1",
-      "line_start": 90,
-      "severity": "low",
-      "title": "Router fails to navigate to the error boundary on a 500 response",
       "line_end": 90,
-      "location_status": "confirmed"
+      "line_start": 90,
+      "location_status": "confirmed",
+      "severity": "low",
+      "title": "Router fails to navigate to the error boundary on a 500 response"
     }
   ]
 }

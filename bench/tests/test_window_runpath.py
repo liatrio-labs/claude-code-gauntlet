@@ -203,8 +203,9 @@ def test_check_attempt_returns_failure_details_in_one_shape(tmp_path, defect):
         assert failures == []
 
 
+@pytest.mark.parametrize("child_effort", [None, "low"])
 def test_window_capture_run_and_resume_with_real_preflight_and_fake_child(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, child_effort
 ):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -281,6 +282,8 @@ def test_window_capture_run_and_resume_with_real_preflight_and_fake_child(
         cli=child,
         timeout_mins="1",
     )
+    if child_effort is not None:
+        argv += ["--child-effort", child_effort]
     assert windows.main(argv) == 0
     window = v.load_window(path)
     fp = v.RunFingerprint(window.expected, window.arms["baseline"])
@@ -302,10 +305,13 @@ def test_window_capture_run_and_resume_with_real_preflight_and_fake_child(
         child_model="claude-opus-4-8",
         timeout_mins=1,
     )
+    if child_effort is not None:
+        argv += ["--child-effort", child_effort]
     assert run.main(argv) == 0
     assert len(loads) == 1
     directory = next(run.RUNS_ROOT.iterdir())
     manifest = read_json(directory / "run.json")
+    assert manifest["child_effort"] == child_effort
     assert v.same_provenance(fp.wire(), manifest["provenance"])
     selected = v.scoring_selection(directory)[url]
     assert selected.validity.state == "valid"
@@ -319,6 +325,10 @@ def test_window_capture_run_and_resume_with_real_preflight_and_fake_child(
     ).read_bytes() == trace.read_bytes()
     before = {p: p.read_bytes() for p in directory.rglob("*") if p.is_file()}
     argv = (tmp_path / "child-argv").read_bytes()
+    if child_effort is not None:
+        assert argv.splitlines()[-2:] == [b"--effort", b"low"]
+    else:
+        assert b"--effort" not in argv
     loads.clear()
     assert (
         run.main(["--resume", directory.name, "--measurement-window", str(path)]) == 0

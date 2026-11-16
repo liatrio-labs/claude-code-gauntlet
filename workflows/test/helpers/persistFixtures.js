@@ -1,3 +1,4 @@
+import { hostResult } from './hostBoundary.js';
 import { parseWriterPayload } from '../../src/persist.js';
 import assert from 'node:assert/strict';
 import { fnv1a32 } from '../../src/wire.js';
@@ -60,9 +61,10 @@ export function replaySurvivor() {
 }
 
 export function persistInput(over = {}) {
-  const findings = over.findings || [makeFinding('F1'), makeFinding('F2')].map(({ diff_validation: _diff,
+  // Persistence also accepts artifacts produced before discovery provenance was required.
+  const findings = over.findings || [makeFinding('F1'), makeFinding('F2')].map(({ verdict: _verdict, verdict_route: _route, diff_validation: _diff,
     path_role: _role, policy_subject: _subject, validation: _validation, challenge: _challenge, admission: _admission,
-    body_fix_task_eligible: _eligible, report_tag: _tag, report_destination: _destination, ...finding }) => finding);
+    body_fix_task_eligible: _eligible, report_tag: _tag, report_destination: _destination, change_origin: _changeOrigin, ...finding }) => finding);
   return {
     findings, postReview: findings, report: '# Code Gauntlet\n\nfindings rendered here',
     checkpoints: persistCheckpoints(findings),
@@ -90,7 +92,7 @@ export function persistCtx({ writer, receipt } = {}) {
   let attempt = 0;
   return {
     calls,
-    agent: async (prompt, dispatch = {}) => {
+    agent: (prompt, dispatch = {}) => hostResult((async () => {
       calls.push({ prompt, ...dispatch });
       if (dispatch.label === 'artifact-writer') {
         attempt += 1;
@@ -102,8 +104,8 @@ export function persistCtx({ writer, receipt } = {}) {
       }
       if (dispatch.label === 'assemble-artifacts') return receipt ? receipt(receiptFor(plan), attempt) : receiptFor(plan);
       return null;
-    },
-    parallel: async (thunks) => Promise.all(thunks.map((thunk) => thunk())),
+    })()),
+    parallel: async (thunks) => Promise.all(thunks.map((thunk) => hostResult(thunk()))),
   };
 }
 

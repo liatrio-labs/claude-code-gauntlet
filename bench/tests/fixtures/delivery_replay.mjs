@@ -77,9 +77,11 @@ for (const mode of ['return', 'derived', 'legacy', 'writer-failure', 'empty', 'c
   const artifacts = {};
   if (entries) {
     for (const entry of entries) artifacts[entry.path] = entry.text;
-    const derived = deriveFromPlan(JSON.parse(entries.at(-1).text), entries[0].text);
-    artifacts[paths.postReview] = JSON.stringify(derived.postReview, null, 2);
-    artifacts[paths.checkpoints] = JSON.stringify(derived.checkpoints, null, 2);
+    if (out.persistReturn?.assemble !== false) {
+      const derived = deriveFromPlan(JSON.parse(entries.at(-1).text), entries[0].text);
+      artifacts[paths.postReview] = JSON.stringify(derived.postReview, null, 2);
+      artifacts[paths.checkpoints] = JSON.stringify(derived.checkpoints, null, 2);
+    }
   } else if (payload) {
     for (const key of Object.keys(paths)) artifacts[paths[key]] = key === 'report'
       ? payload.report : JSON.stringify(payload[key], null, 2);
@@ -87,16 +89,13 @@ for (const mode of ['return', 'derived', 'legacy', 'writer-failure', 'empty', 'c
   rows[mode] = { record, out, artifacts, trace: JSON.parse(out.measurement.text) };
 }
 const duplicate = { file: 'existing', line_start: 1, line_end: 1, anchor: 'return process(value);' };
-rows.admission = ['confirmed', 'rejected'].map((status) => finding(0, {
+rows.admission = ['present_failure', 'no_practical_effect'].map((consequence) => finding(0, {
   dimension: 'simplification', origin_dimension: 'simplification', agent: 'code-simplifier',
   quality_basis: 'duplication', duplicate_of: duplicate,
   resolved_references: { duplicate_of: { ...duplicate, location_status: 'confirmed' } },
-  admission_assessments: [
-    { predicate: 'present_defect', status: 'rejected', references: ['primary'] },
-    { predicate: 'confirmed_duplication', status, references: ['primary', 'duplicate_of'] },
-  ],
+  verdict: { claim: 'confirmed', consequence, justification: 'Independent code inspection' },
 }));
 const legacy = structuredClone(rows.admission[0]);
-for (const key of ['admission', 'body_fix_task_eligible', 'resolved_references', 'admission_assessments', 'sites']) delete legacy[key];
+for (const key of ['admission', 'body_fix_task_eligible', 'resolved_references', 'verdict', 'validator_verdict', 'verdict_route', 'sites']) delete legacy[key];
 rows.admission.push(legacy);
 console.log(JSON.stringify(rows));

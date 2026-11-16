@@ -61,7 +61,7 @@ def test_derived_paths_are_confined_before_any_write(
 @pytest.mark.parametrize(
     "section,updates,blocked,error",
     [
-        (None, {"planVersion": 4}, None, "unsupported planVersion 4 (expected 3)"),
+        (None, {"planVersion": 5}, None, "unsupported planVersion 5 (expected 4)"),
         (
             None,
             {"expect": [{"path": "report.md"}]},

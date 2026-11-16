@@ -34,7 +34,7 @@ class SourceSelection:
 @dataclass(frozen=True, slots=True)
 class MaterializePlan:
     entries: list[PlanEntry]
-    plan_path: str
+    plan_path: str | None
 
 
 class MaterializeReceipt(TypedDict):
@@ -112,6 +112,8 @@ def plan_entries(
             )
             return None
         checked.append(PlanEntry(path, text))
+    if payload.get("assemble") is False:
+        return MaterializePlan(checked, None)
     plan_path = payload.get("planPath")
     if not isinstance(plan_path, str) or not plan_path:
         errors.append("persistReturn names no persist plan to derive from")
@@ -214,6 +216,9 @@ def _materialize(
     # Skip derivation after a partial write: its source could belong to an earlier run.
     if not write_entries(entries, materialized, errors):
         return _receipt(False, source, scanned, materialized, None, gaps, errors)
+
+    if plan_path is None:
+        return _receipt(True, source, scanned, materialized, None, gaps, errors)
 
     receipt = assemble(plan_path)
     # plan_entries proved plan_path is among the entries; the default is unreachable.

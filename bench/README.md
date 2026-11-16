@@ -119,7 +119,7 @@ python3 bench/run.py --tier smoke|mini|subset|holdout|full [--runs N] [--fidelit
                       [--contamination PATH] [--rule PATH] [--unseal-holdout RECEIPT]
                       [--child-auth api|subscription]
                       [--golden-epoch EPOCH_ID] [--attribution] [--surface-views]
-                      [--tool deep-review-v2|deep-review-v3] [--child-model MODEL_ID]
+                      [--tool deep-review-v2|deep-review-v3] [--child-model MODEL_ID] [--child-effort LEVEL]
                       [--measurement-window PATH --arm ARM --run-index N]
                       [--reset-confirmed-at ISO_TIMESTAMP]
                       [--baseline-equivalence-receipt PATH]
@@ -136,6 +136,7 @@ python3 bench/run.py --tier smoke|mini|subset|holdout|full [--runs N] [--fidelit
 | `--fidelity` | `dry-run` \| `live` | `dry-run` | Recorded in the run manifest. |
 | `--tool` | `deep-review-v2` \| `deep-review-v3` | `deep-review-v3` | Pipeline to invoke and record. |
 | `--child-model` | model ID | `inherit` | Child orchestrator model. A measurement window requires resolved service IDs matching its declared treatment. |
+| `--child-effort` | `low`, `medium`, `high`, `xhigh`, `max` | child default | Child orchestrator reasoning effort, recorded as `child_effort` in `run.json`; resume/retry preserve it and refuse a conflicting flag. Also accepted when creating a measurement window. |
 | `--measurement-window` | JSON path | off | Validate shared controls, arm treatment, time bounds and requested PRs before mirror work. Resume and retry require the original path and unchanged bytes. |
 | `--arm` | declared arm name | - | Arm in the window. Required for a new windowed run. |
 | `--run-index` | nonnegative integer | - | Planned run index in the window. Required for a new windowed run; `--runs` advances it for each sequential run. |
@@ -483,6 +484,8 @@ python3 bench/run.py --tier subset --measurement-window window.json \
   --child-model MODEL_ID --arm baseline --run-index 0
 ```
 
+A new windowed run must pass the same `--child-effort` used to create its window, omitting it when unset; resume takes effort from the run manifest.
+The child env never carries `CLAUDE_CODE_EFFORT_LEVEL`, `CLAUDE_CODE_SUBAGENT_EFFORT` or `MAX_THINKING_TOKENS`, so effort comes only from the flag and the agents' own files.
 The requested tier or explicit PR list must match the window's PR set. Ambient
 model, effort and provider overrides are refused before mirror work. Each PR
 rechecks window identity and treatment before mirror work; the pinned CLI is

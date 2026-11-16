@@ -96,6 +96,7 @@ def parse_args(argv=None):
     parser.add_argument("--duration-hours", required=True, type=float)
     parser.add_argument("--max-parallel-prs", type=int, choices=(1,), default=1)
     parser.add_argument("--child-model", required=True)
+    parser.add_argument("--child-effort", choices=get_args(validity.ChildEffort))
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--cli", type=Path)
     parser.add_argument("--timeout-mins", type=int, default=45)
@@ -150,6 +151,7 @@ def create_window(args):
             fingerprints[name] = validity.capture_fingerprint(
                 cli_path=args.cli or shutil.which("claude"),
                 child_model=args.child_model,
+                child_effort=args.child_effort,
                 auth_mode=args.auth_mode,
                 epoch=epoch,
                 judge_pin=epoch.judge_pin,

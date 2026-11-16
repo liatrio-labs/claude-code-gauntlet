@@ -11,6 +11,11 @@ from typing import Any, Literal, TypedDict
 from bench.runner.epochs import Profile, canonical
 
 AuthMode = Literal["api", "subscription"]
+EFFORT_KEYS = (
+    "CLAUDE_CODE_EFFORT_LEVEL",
+    "CLAUDE_CODE_SUBAGENT_EFFORT",
+    "MAX_THINKING_TOKENS",
+)
 
 
 @dataclass(frozen=True, slots=True)

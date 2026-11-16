@@ -1,0 +1,45 @@
+{
+  "adjusted_count": 1,
+  "findings": [
+    {
+      "confidence": 90,
+      "file": "src",
+      "id": "f",
+      "line_start": 10,
+      "refutation_check": {
+        "verified": false
+      },
+      "report_destination": "main",
+      "report_tag": "main",
+      "severity": "high",
+      "validation_justification": "Guard exists",
+      "validator_refutation_check": {
+        "verified": false
+      },
+      "validator_verdict": {
+        "claim": "refuted",
+        "justification": "Guard exists",
+        "refutation": {
+          "anchor": "return safe;",
+          "file": "guard",
+          "line_end": 1,
+          "line_start": 1
+        },
+        "refutation_kind": "guard_exists"
+      },
+      "verdict": {
+        "claim": "refuted",
+        "justification": "Guard exists",
+        "refutation": {
+          "anchor": "return safe;",
+          "file": "guard",
+          "line_end": 1,
+          "line_start": 1
+        },
+        "refutation_kind": "guard_exists"
+      },
+      "verdict_route": "not-established"
+    }
+  ],
+  "unmatched_ids": []
+}

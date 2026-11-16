@@ -396,6 +396,8 @@ def test_detector_real_child_degradation(tmp_path, invoke, monkeypatch):
 PATCH = "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n"
 # argv strings split on spaces before placeholders expand, so paths may hold spaces.
 MAIN_FAILURE = {
+    "plan_discovery": "--output-dir {dir} --sha abc1234 --nonce cli --phase select --plan-checksum 0000 --input-checksum fnv1a32:0x00000000 --part 0 --parts 5 --request {{}}",
+    "check_refutations": "--request invalid --repo-root {dir} --head-sha abcd --target-kind local --diff-file {missing}",
     "capture_policy_env": "",
     "check_eligibility": "--platform github --pr 7",
     "list_pr_files": "--platform github --pr 7",
@@ -425,6 +427,7 @@ MAIN_FAILURE = {
 # diff_numstat, emit_style_context and ensure_output_dir have no malformed-input
 # branch beyond the failure row.
 BAD_INPUT = {
+    "plan_discovery": "--output-dir {dir} --sha abc1234 --nonce cli --phase select --plan-checksum 0000 --input-checksum bad --part 0 --parts 1 --request {{}}",
     "check_eligibility": "--platform github --pr 7",
     "list_pr_files": "--platform github --pr 0",
     "pr_status": "--platform github --pr 0",
@@ -450,6 +453,14 @@ BAD_INPUT = {
 POST = {"platform": "github", "owner": "o", "repo": "r", "pr_number": 5, "sha": FULL}
 # Each success row is (files written under the case directory, argv).
 SUCCESS = {
+    "plan_discovery": (
+        {},
+        "--output-dir {dir} --sha abc1234 --nonce cli --phase select --plan-checksum 0000 --input-checksum fnv1a32:0x00000000 --part 0 --parts 1 --request {{}}",
+    ),
+    "check_refutations": (
+        {"diff.patch": "diff\n"},
+        '--request {{"citations":[]}} --repo-root {dir} --head-sha abcd --target-kind local --diff-file {dir}/diff.patch',
+    ),
     "capture_policy_env": ({}, ""),
     "check_eligibility": ({}, "--platform github --pr 7"),
     "list_pr_files": ({}, "--platform github --pr 7"),
@@ -706,7 +717,7 @@ def normalize(data, tmp_path, root=ROOT):
         text = path_text.normalize_path_text(text, source, replacement)
     for pattern, replacement in (
         (
-            r'(pipeline_version=|"pipeline_version"\s*:\s*")3\.\d+\.\d+',
+            r'(pipeline_version=|"pipeline_version"\s*:\s*")\d+\.\d+\.\d+',
             r"\1<BUNDLE_VERSION>",
         ),
         (r"fnv1a32:0x[0-9a-f]{8}", "<CHECKSUM>"),
@@ -812,6 +823,7 @@ def rows():
     yield from (
         (name, "help")
         for name in (
+            "plan_discovery",
             "diff_numstat",
             "incremental_diff",
             "stale_truncate",
@@ -834,7 +846,33 @@ def rows():
 
 def _assert_recorded(name, case, returncode, stdout, tmp_path):
     code, expected = RECORDED[f"{name}/{case}"]
-    assert (returncode, normalize(stdout, tmp_path)) == (code, expected)
+    if name == "write_shared_context" and case == "success":
+        assert returncode == code
+        actual, wanted = json.loads(normalize(stdout, tmp_path)), json.loads(expected)
+        paths = list(tmp_path.rglob("code-gauntlet-context-*.md"))
+        assert len(paths) == 1
+        context = paths[0].read_bytes().decode("utf-8", errors="replace")
+        measured = {
+            "contextLines": context.count("\n"),
+            "contextChars": len(context),
+            "contextMaxLineChars": max(map(len, context.split("\n"))) + 1,
+        }
+        from tests.support.phase2 import discovery_plan_payload
+
+        assert discovery_plan_payload(
+            json.loads(stdout), paths[0].parent
+        ) == wanted.pop("discoveryPlan")
+        actual.pop("discoveryPlanRef")
+        for key, value in measured.items():
+            assert actual.pop(key) == value
+            wanted.pop(key)
+        assert actual == wanted
+        return
+    actual = normalize(stdout, tmp_path)
+    if case == "help":
+        # argparse wraps usage lines differently across Python versions.
+        actual, expected = " ".join(actual.split()), " ".join(expected.split())
+    assert (returncode, actual) == (code, expected)
 
 
 @pytest.mark.parametrize(("name", "case"), list(rows()))
@@ -1342,17 +1380,6 @@ def test_patch_command_boundaries(
 @pytest.mark.parametrize(
     "case,content,error",
     [
-        _scenario_param(
-            "missing-summary",
-            "## Findings\n\nOnly findings.\n",
-            "post_review: Report does not contain a rendered Summary section.\n",
-        ),
-        _scenario_param(
-            "missing-following-heading",
-            "## Summary\n\nOnly summary.\n",
-            "post_review: Report does not contain a following code-owned "
-            "heading after Summary.\n",
-        ),
         _scenario_param("malformed-json", "{", "invalid-json"),
         _scenario_param(
             "versions-fetch",
@@ -1374,7 +1401,7 @@ def test_patch_command_boundaries(
         ),
     ],
 )
-def test_poster_report_shape_boundary(
+def test_poster_delivery_boundary(
     case, content, error, tmp_path, invoke, forge_factory
 ):
     path = tmp_path / "findings.json"
@@ -1383,8 +1410,6 @@ def test_poster_report_shape_boundary(
         **POST,
         "findings": [],
         "platform": {
-            "missing-summary": "github",
-            "missing-following-heading": "github",
             "malformed-json": "gitlab",
             "versions-fetch": "gitlab",
             "versions-parse": "gitlab",
@@ -1394,13 +1419,7 @@ def test_poster_report_shape_boundary(
     path.write_text(
         content if case == "malformed-json" else json.dumps(data), encoding="utf-8"
     )
-    if case.startswith("missing"):
-        report_path = tmp_path / "report.md"
-        report_path.write_text(content, encoding="utf-8")
-        argv += ["--report", str(report_path)]
     fake = {
-        "missing-summary": FakeForge(),
-        "missing-following-heading": FakeForge(),
         "malformed-json": FakeForge(),
         "versions-fetch": _gitlab_fake(refs=[JsonFetch(None, content)]),
         "versions-parse": _gitlab_fake(refs=[JsonFetch(None, content)]),
@@ -1411,7 +1430,7 @@ def test_poster_report_shape_boundary(
     assert result.returncode == 1
     assert result.stdout == b""
     assert result.stderr == posting_cases.ERRORS.get(error, error).encode("utf-8")
-    if case.startswith("missing") or case == "malformed-json":
+    if case == "malformed-json":
         assert fake.calls == []
         assert forge_factory.calls == []
     assert not (tmp_path / "post-review-payload.json").exists()

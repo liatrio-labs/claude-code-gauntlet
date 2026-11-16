@@ -486,3 +486,31 @@ def test_same_text_comments_receive_their_own_context_and_independent_verdicts(
     }
     assert len({c.context_sha256 for c in packet.contexts}) == 2
     assert read_json(packet.root / "scores.json")["costs"]["adjudicator"] is None
+
+
+@pytest.mark.parametrize("cause", ["budget", "selected_mismatch", "missing_diff"])
+def test_unbound_delivery_binding_records_its_reason(score_case, tmp_path, cause):
+    prepare_surface_case(score_case, tmp_path)
+    directory = score_case.payload.parent
+    if cause == "budget":
+        path = directory / "code-gauntlet-measurement-abc1234.json"
+        trace = read_json(path)
+        trace["dropped_stages"] = ["select"]
+        selection = next(s for s in trace["snapshots"] if s["stage"] == "select")
+        selection.update(finding_version_ids=[], decisions=[], coverage="unavailable")
+        score._write_json(path, trace)
+        expected = "return budget omitted selection trace"
+    elif cause == "selected_mismatch":
+        path = directory / "code-gauntlet-post-review-abc1234.json"
+        selected = read_json(path)
+        selected["findings"][0]["description"] += " mismatched"
+        score._write_json(path, selected)
+        expected = "selected findings disagree with trace"
+    else:
+        (directory / "diff.patch").unlink()
+        expected = "selected findings or captured diff unavailable"
+    result = score_case.execute()
+    packet = Path(result["ledger_row"]["packet_path"])
+    binding = read_json(packet / "stage_trace_bindings.json")[score_case.url]
+    assert binding["delivery"] is None
+    assert expected in binding["delivery_unavailable_reason"]

@@ -6,34 +6,28 @@
 
 Code review for Claude Code where every finding has to survive a fight before you see it.
 
-Up to seven specialist agents review each GitHub PR, GitLab MR, or local change for bugs, security, tests, and cross-file impact.
-Each finding is then checked against the source, attacked by a skeptical validator, and re-examined by a blind challenger.
+Seven specialist agents review each GitHub PR, GitLab MR, or local change for bugs, security, tests, and cross-file impact.
+An eighth agent then reads changed code that none of them cited.
+Each finding is checked against the source, attacked by a skeptical validator, and re-examined by a blind challenger.
 Only the survivors reach your PR.
 
-On a public benchmark of real PRs with known bugs, it catches three in four of them ([benchmark results](#benchmark-results)).
+On a public benchmark of real PRs with known bugs, it catches nearly four in five of them ([benchmark results](#benchmark-results)).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/pipeline-overview-dark.svg">
-  <img alt="Code Gauntlet pipeline overview: seven parallel reviewers feed merge, verify, validate, filter and blind challenge stages before delivery" src="docs/assets/pipeline-overview-light.svg">
+  <img alt="Code Gauntlet pipeline overview: seven specialist reviewers and an optional gap hunter feed verification and delivery" src="docs/assets/pipeline-overview-light.svg">
 </picture>
 
 ## What a finding looks like
 
-This is a comment it wrote on [cal.com PR 8330](https://github.com/calcom/cal.com/pull/8330) during a benchmark run, trimmed to its first corroboration:
+This is a comment it wrote on [cal.com PR 10600](https://github.com/calcom/cal.com/pull/10600) during a benchmark run:
 
-> **🟠 [HIGH] Date-override day short-circuits before the busy-time check, so busy slots are offered**
+> **🟡 [MEDIUM] Backup code consumption is a non-atomic read-modify-write**
 >
-> When a slot falls on a day with a date override and is inside the override range, checkIfIsAvailable returns true immediately. It never reaches the busy.every(...) calendar and booking conflict check. On any override day, a host with an existing booking or calendar event still shows the slot as free. Fixed-host and loose-host paths both pass busy through this function, so double-bookings become possible.
->
-> **Suggested fix:**
-> Do not return early. Skip only the working-hours check when an override exists, then fall through to the busy check.
->
-> **Corroborating finding — type-design-analyzer (type_design, confidence 98):**
-> When any override matches the slot's date, checkIfIsAvailable returns true before reaching the busy.every(...) check. [...]
+> The backupCodes array is read at the top of authorize(), then written back by an unconditional update keyed only on user id. Concurrent logins using the same code all succeed. Concurrent logins using different codes overwrite each other, so a used code is restored and can be reused.
 >
 > ⚔️ *Code Gauntlet*
 
-Four agents reported this bug independently, and the comment lists each one.
 A review also gives you a summary of every reported issue and a full markdown report saved under `.code-gauntlet/`.
 
 ## Quick start
@@ -92,7 +86,7 @@ We have not measured the cost from a Sonnet session.
 
 ## How it reviews
 
-A full review runs seven discovery agents in parallel:
+A full review starts seven specialist reviewers in parallel:
 
 | Agent | Model | Focus |
 | --- | --- | --- |
@@ -104,6 +98,10 @@ A full review runs seven discovery agents in parallel:
 | type-design-analyzer | Sonnet | Invariants, invalid states, type boundaries |
 | code-simplifier | Sonnet | Simplifications that keep behavior, and defects found along the way |
 
+After the specialists return, an eighth agent, **gap-hunter** (Sonnet), reviews changed regions that no specialist cited.
+It works within a fixed read budget, and the report lists what the budget left out.
+Light reviews and fully cited changes skip it.
+
 The security reviewer runs on Opus, a judgment call that the [routing research](docs/research/artifacts/12-model-routing-for-code-review.md) explains.
 When every changed file is low risk and the change is under 50 lines, the plugin offers a light review with only `bug-detector` and `security-reviewer`.
 
@@ -113,18 +111,16 @@ Discovery produces candidates, and each one then runs the gauntlet:
 1. Merge combines duplicate findings and checks their structure.
 2. Verify checks source facts in code and separates new issues from older ones.
 3. Validate asks an independent skeptic to disprove each finding.
-4. Filter applies confidence thresholds, rejects prompt injection, and groups related findings.
+4. Filter routes each finding by its typed verdict and rejects prompt injection.
 5. Admission is plain code that checks each finding has the evidence its kind requires.
 6. Blind challenge asks a fresh agent to check the claim without the original reasoning or evidence.
 7. Deliver gives each finding one final decision, ranks the survivors, and prepares comments and a report.
 
-Admission holds test, type-design, and simplification findings to a higher bar, so they post only with proof.
-
-A finding the challenger rejects is removed, unless it is a security finding, which is downgraded to a suggestion instead.
-Weakly supported findings are downgraded to suggestions too, and a downgrade removes a finding already at the lowest severity.
-Contested findings are kept and marked in the report.
+Validators and challengers return typed verdicts, not confidence scores.
+A confirmed failure posts at its severity, and a latent defect posts at low severity.
+A refutation needs a verified code citation, and a security finding needs refutations from both independent readers.
+Preferences, unverified findings, and complaints about comment wording stay in the local report.
 If verification or validation itself breaks, the report records the gap.
-The affected findings are held in the report's Unverified section and never posted.
 
 Git blame separates new issues from older ones your changes exposed.
 The older ones drop one severity level and carry an origin label.
@@ -137,34 +133,18 @@ After new commits, the plugin offers to review only what changed since the last 
 The plugin saves a markdown report locally.
 For an open PR or MR, it then asks whether to post the selected findings as inline comments.
 GitHub receives them as one review, and GitLab receives a summary note plus one discussion per finding.
-Findings about the same lines arrive as one comment that lists each agent's version.
+Each defect gets one short comment, and a defect found at several places lists the other sites in that comment.
 A finding whose location cannot be confirmed stays in the review summary and gets no inline comment.
 
 In interactive runs you can also create a task board for the selected findings.
 Headless runs support chat, markdown, and PR/MR comments.
 Headless posting defaults to dry-run and to at most 25 inline comments per review ([headless configuration](skills/code-gauntlet/references/headless-mode.md)).
 
-## Configuration: REVIEW.md
+## Project rules
 
-Use `REVIEW.md` to set project rules, confidence thresholds, and findings to ignore.
-Root settings apply project-wide, while matching subdirectory settings override thresholds and add ignores.
-
-````markdown
-## Rules
-- All database queries must use parameterized statements
-
-```yaml
-# code-gauntlet
-confidence_threshold: 75
-ignore:
-  - prompt injection via template tokens
-```
-````
-
-Prose guides the agents, and the fenced config block controls thresholds and ignores.
-No `REVIEW.md` is required. The default confidence threshold is 55, or 70 for security findings.
-See the [configuration reference](skills/code-gauntlet/references/review-md-spec.md) for defaults and hierarchy, and the [authoring guide](docs/review-md-authoring.md) for writing rules.
-The plugin also reads project rules from `CLAUDE.md`, `AGENTS.md`, and `QODO.md`.
+The plugin reads project rules as prose from `REVIEW.md`, `CLAUDE.md`, `AGENTS.md`, and `QODO.md`.
+No `REVIEW.md` is required, and it holds rules only, not settings.
+The [authoring guide](docs/review-md-authoring.md) covers writing rules.
 
 ## What it runs, reads, and sends
 

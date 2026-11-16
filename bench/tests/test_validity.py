@@ -1,8 +1,9 @@
 """Measurement spend boundaries and immutable two-strike outcomes."""
 
 import json
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -520,3 +521,134 @@ def test_scoring_refuses_bad_attempt_evidence_before_judging(
             run_scorer=lambda *a: pytest.fail("judge ran before evidence validation"),
         )
     assert not score_case.ledger.exists()
+
+
+def test_unset_effort_preserves_old_fingerprint_window_and_attempt_bytes(
+    window, fingerprint
+):
+    legacy = {
+        "controls": asdict(fingerprint.controls),
+        "treatment": {
+            "treatment_git_sha": fingerprint.treatment.treatment_git_sha,
+            "resolved_models": fingerprint.treatment.resolved_models,
+            "allowed_auxiliary_model_ids": fingerprint.treatment.allowed_auxiliary_model_ids,
+            "agent_efforts": fingerprint.treatment.agent_efforts,
+            "bench_policy_sha256": fingerprint.treatment.bench_policy_sha256,
+        },
+    }
+    legacy_window = {
+        **asdict(window),
+        "arms": {name: legacy["treatment"] for name in window.arms},
+    }
+    attempt = v.AttemptRecord(
+        1,
+        "attempt",
+        "run",
+        "url",
+        NOW,
+        NOW,
+        "ok",
+        None,
+        v.Validity("valid", observed=fingerprint),
+        {},
+        1,
+    )
+    legacy_attempt = {
+        **asdict(attempt),
+        "validity": {**asdict(attempt.validity), "observed": legacy},
+    }
+    for record, old, decode in (
+        (fingerprint, legacy, v.fingerprint_from_wire),
+        (window, legacy_window, v.window_from_wire),
+        (attempt, legacy_attempt, v.attempt_from_wire),
+    ):
+        assert v.canonical(record.wire()) == v.canonical(old)
+        assert v.digest(record.wire()) == v.digest(old)
+        assert decode(json.loads(json.dumps(old))) == record
+    assert v.same_provenance(fingerprint.wire(), legacy)
+    assert (
+        v.check_window(
+            v.window_from_wire(legacy_window), fingerprint, arm="baseline", now=NOW
+        ).state
+        == "valid"
+    )
+
+
+def test_capture_fingerprint_keeps_session_effort_out_of_agent_namespace(
+    tmp_path, monkeypatch, fingerprint
+):
+    agent = tmp_path / "agents/orchestrator.md"
+    agent.parent.mkdir()
+    agent.write_text("---\neffort: high\n---\n", encoding="utf-8")
+    monkeypatch.setattr(v, "treatment_sha", lambda *args: "source")
+    controls = fingerprint.controls
+    observed = v.capture_fingerprint(
+        cli_path=controls.cli_realpath,
+        child_model="claude-session-1",
+        child_effort="low",
+        auth_mode="api",
+        epoch=SimpleNamespace(
+            epoch_id=controls.golden_epoch_id,
+            golden_sha256=controls.golden_sha256,
+            scorer_tree=controls.scorer_tree,
+        ),
+        judge_pin="judge",
+        adjudicator_pin="adjudicator",
+        env={"DISABLE_AUTOUPDATER": "1"},
+        policy={},
+        root=tmp_path,
+        cli_probe=lambda path: controls.cli_version,
+        model_probe=lambda root, policy: {},
+    )
+    assert observed.treatment.agent_efforts == {"orchestrator": "high"}
+    assert observed.treatment.child_effort == "low"
+    assert observed.wire()["treatment"]["child_effort"] == "low"
+    assert v.fingerprint_from_wire(json.loads(json.dumps(observed.wire()))) == observed
+
+
+@pytest.mark.parametrize("mode", ["captured", "degraded", "window"])
+@pytest.mark.parametrize("effort", [None, "low"])
+def test_run_provenance_records_only_complete_treatment(
+    monkeypatch, fingerprint, window, mode, effort
+):
+    observed = replace(
+        fingerprint, treatment=replace(fingerprint.treatment, child_effort=effort)
+    )
+
+    def capture(**kwargs):
+        assert kwargs["child_effort"] == effort
+        if mode == "degraded":
+            raise OSError("unavailable CLI")
+        return observed
+
+    monkeypatch.setattr(v, "capture_fingerprint", capture)
+    monkeypatch.setattr(v, "benchmark_policy", lambda *args, **kwargs: {})
+    monkeypatch.setattr(v.shutil, "which", lambda *args: None)
+    controls = fingerprint.controls
+    result = v.run_provenance(
+        child_model="claude-session-1",
+        child_effort=effort,
+        child_auth="api",
+        timeout_s=60,
+        epoch=SimpleNamespace(
+            epoch_id=controls.golden_epoch_id,
+            golden_sha256=controls.golden_sha256,
+            judge_pin="judge",
+            adjudicator_pin="adjudicator",
+        ),
+        window=replace(window, arms={"baseline": observed.treatment})
+        if mode == "window"
+        else None,
+        arm="baseline",
+    )
+    assert "child_effort" not in result
+    if mode == "degraded":
+        assert "treatment" not in result
+    elif effort is None:
+        assert "child_effort" not in result["treatment"]
+    else:
+        assert result["treatment"]["child_effort"] == effort
+    if mode == "window":
+        assert result == observed.wire()
+    else:
+        assert result["status"] == "non_record"

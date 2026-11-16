@@ -1,3 +1,4 @@
+import { schemaAccepts } from './schema.js';
 import { canonicalRange } from './location.js';
 import { fnv1a32, isPlainObject, stripPythonWhitespace } from './wire.js';
 import { AGENT_TYPE_TEST_ANALYZER, DISPATCH_RESULTS, REMOVED_LOSS_FIELDS } from './registry.js';
@@ -44,22 +45,6 @@ export function validateRemovedTests(value) {
   return value.status === 'unavailable' ? unavailable('saved diff structure unavailable') : body;
 }
 
-// Runtime intake must enforce the contract even when a host skips schema validation.
-function matchesAuditSchema(value, schema) {
-  if (schema.type === 'object') return isPlainObject(value)
-    && (schema.required || []).every((key) => Object.hasOwn(value, key))
-    && Object.keys(value).every((key) => Object.hasOwn(schema.properties, key)
-      && matchesAuditSchema(value[key], schema.properties[key]));
-  if (schema.type === 'array') return Array.isArray(value) && value.every((entry) => matchesAuditSchema(entry, schema.items));
-  if (schema.type === 'string') return typeof value === 'string'
-    && (schema.minLength === undefined || Array.from(stripPythonWhitespace(value)).length >= schema.minLength)
-    && (!schema.enum || schema.enum.includes(value));
-  return typeof value === 'number' && Number.isFinite(value)
-    && (schema.type !== 'integer' || Number.isSafeInteger(value))
-    && (schema.minimum === undefined || value >= schema.minimum)
-    && (schema.maximum === undefined || value <= schema.maximum);
-}
-
 export function checkRemovedTestAudit(inventory, rows, repoRoot) {
   const findings = [];
   const reasons = new Set();
@@ -74,7 +59,7 @@ export function checkRemovedTestAudit(inventory, rows, repoRoot) {
   }
   if ([...items.keys()].some((id) => !counts.has(id))) reasons.add('missing inventory ids');
   for (const row of rows) {
-    if (!matchesAuditSchema(row, schema.items)) {
+    if (!schemaAccepts(row, schema.items, { stringLength: (value) => Array.from(stripPythonWhitespace(value)).length })) {
       reasons.add('malformed audit rows');
       continue;
     }
