@@ -1,6 +1,7 @@
 """Pure delivery bodies, grouping, and key material."""
 
 import hashlib
+import re
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import cast
@@ -22,6 +23,7 @@ from gauntlet.markdown import fence_run
 from gauntlet.marker import LEGACY_PRODUCT, build_footer, build_prose_footer
 from gauntlet.prior_review import site_key
 from gauntlet.text import (
+    JS_TRIM_CHARS,
     neutralize_comment_openers,
     normalize_report_severity,
     prepare_line,
@@ -44,6 +46,7 @@ __all__ = [
     "SkippedEntry",
     "compose_inline_body",
     "compose_review_body",
+    "confirmed_comment",
     "consolidate_delivery",
     "delivery_finding",
     "digest_groups",
@@ -159,6 +162,44 @@ def _key_material_finding(finding: Mapping[str, object]) -> Mapping[str, object]
     return stripped
 
 
+def confirmed_comment(finding: Mapping[str, object]) -> registry.Comment | None:
+    verdict = finding.get("verdict")
+    if not isinstance(verdict, dict) or verdict.get("claim") != "confirmed":
+        return None
+    comment = verdict.get("comment")
+    schema = registry.CONFIRMED_COMMENT_SCHEMA
+    if (
+        not isinstance(comment, dict)
+        or not set(schema["required"]) <= set(comment)
+        or not set(comment) <= set(schema["properties"])
+    ):
+        return None
+    comment = dict(comment)
+    for key, field in schema["properties"].items():
+        value = comment.get(key)
+        if (
+            not isinstance(value, str)
+            or not field.get("minLength", 0) <= len(value) <= field["maxLength"]
+            or not re.search(
+                field.get("pattern", "")
+                .replace(r"\S", f"[^{re.escape(JS_TRIM_CHARS)}]")
+                .replace("$", r"\Z"),
+                value,
+            )
+        ):
+            if key in schema["required"]:
+                return None
+            comment.pop(key, None)
+        elif key not in schema["required"] and not value.strip(JS_TRIM_CHARS):
+            comment.pop(key, None)
+    return cast(registry.Comment, comment)
+
+
+def _comment_title(finding: Mapping[str, object]) -> object:
+    comment = confirmed_comment(finding)
+    return comment["title"] if comment else finding.get("title", "")
+
+
 def render_finding_sections(
     finding: Mapping[str, object],
     *,
@@ -169,14 +210,17 @@ def render_finding_sections(
     severity = normalize_report_severity(finding.get("severity"), style.severity_emoji)
     emoji = style.severity_emoji.get(severity, style.severity_emoji_fallback)
 
-    raw_title = finding.get("title")
+    comment = confirmed_comment(finding)
+    raw_title = comment["title"] if comment else finding.get("title")
     title = prepare_line(raw_title) if isinstance(raw_title, str) else ""
-    body = prepare_prose(finding.get("body", ""))
+    body = prepare_prose(comment["body"] if comment else finding.get("body", ""))
     suggested_fix = gate.fix_code_text(finding.get("suggested_fix_code"))
 
     parts = [f"**{emoji} [{severity.upper()}] {title or 'Finding'}**", "", body]
 
-    suggestion_text = prepared_prose(finding.get("suggestion"))
+    suggestion_text = prepared_prose(
+        comment.get("fix") if comment else finding.get("suggestion")
+    )
     if suggestion_text:
         parts += ["", "**Suggested fix:**", suggestion_text]
 
@@ -263,6 +307,47 @@ def group_sites(
     return tuple(sites)
 
 
+def _additional_locations(
+    primary: Mapping[str, object], sites: Sequence[Mapping[str, object]]
+) -> tuple[str, ...]:
+    by_file: dict[str, list[tuple[int, int]]] = {}
+    for site in sites:
+        span = canonical_range(site)
+        path = site.get("file")
+        if span and isinstance(path, str):
+            by_file.setdefault(path, []).append(span)
+    compact: list[str] = []
+    covered = canonical_range(primary)
+    for path, ranges in by_file.items():
+        merged: list[tuple[int, int]] = []
+        for start, end in sorted(ranges):
+            if merged and start <= merged[-1][1] + 1:
+                merged[-1] = (merged[-1][0], max(end, merged[-1][1]))
+            else:
+                merged.append((start, end))
+        for start, end in merged:
+            pieces = [(start, end)]
+            if path == primary.get("file") and covered:
+                pieces = [
+                    (start, min(end, covered[0] - 1)),
+                    (max(start, covered[1] + 1), end),
+                ]
+            for first, last in pieces:
+                if first <= last:
+                    if path == primary.get("file"):
+                        label = (
+                            f"line {first}"
+                            if first == last
+                            else f"lines {first}-{last}"
+                        )
+                    else:
+                        label = f"{path}:{first}" + (
+                            f"-{last}" if first != last else ""
+                        )
+                    compact.append(label)
+    return tuple(compact)
+
+
 def delivery_finding(
     primary: Mapping[str, object], corroborators: Sequence[Mapping[str, object]] = ()
 ) -> Mapping[str, object]:
@@ -311,26 +396,20 @@ def render_group_sections(
         if additional_sites is None
         else additional_sites
     )
-    if sites:
+    locations = _additional_locations(primary, sites)
+    if locations:
         body += "\n\n**Additional sites:**\n" + "\n".join(
-            f"- {prepare_location(location_text(site))}" for site in sites
+            f"- {prepare_location(label)}" for label in locations
         )
     claims = list(
         dict.fromkeys(
-            (prepare_line(member.get("title", "")) or "Finding")
+            (prepare_line(_comment_title(member)) or "Finding")
             for member in corroborators
             if str(member.get("dimension", "")).lower() == "security"
         )
     )
     if claims:
         body += "\n\n**Security claim:** " + "; ".join(claims)
-    agents = {
-        agent.strip().lower()
-        for finding in (primary, *corroborators)
-        if isinstance(agent := finding.get("agent"), str) and agent.strip()
-    }
-    if len(agents) >= 2:
-        body += f"\n\n_Found independently by {len(agents)} reviewers._"
     return body
 
 
@@ -581,7 +660,7 @@ def legacy_summary(findings: Sequence[Finding]) -> ReviewSummary:
             if finding.get("report_tag", finding.get("report_destination"))
             == "suggestion"
             else "",
-            title=prepare_summary_title(finding.get("title", "")),
+            title=prepare_summary_title(_comment_title(finding)),
         )
         index.append(
             {

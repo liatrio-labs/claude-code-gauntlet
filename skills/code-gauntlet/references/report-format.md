@@ -81,7 +81,7 @@ The pipeline's declaration lives in `workflows/src/registry.js`. A field this ta
 | `anchor` | string | yes | Exact text, copied from the source at the PR head, of the 1 to 4 contiguous lines in file this finding is about; at most 400 characters. |
 | `suggested_fix_code` | string | no | Complete replacement for file lines line_start through line_end, including indentation; include line_end. Omit if uncertain or incomplete. |
 | `sites` | array | no | Additional locations of this issue. |
-| `suggestion` | string | no | Prose fix advice; rendered by `post_review.py` as a "Suggested fix:" block. |
+| `suggestion` | string | no | Discovery fix advice; rendered by `post_review.py` only on discovery fallback. Reader comments use `comment.fix` instead. |
 | `claude_md_rule` | string | conditional | The cited project rule, quoted with its source file; required by contract for convention findings; OMITTED (never null) when no rule applies. |
 | `cross_file_refs` | array | no | Other files involved in the finding |
 
@@ -202,8 +202,14 @@ This summary describes the change context for the report.
 #### {finding.title}
 
 - **Location:** `{finding.file}:10-12`
-- **Dimension:** {finding.dimension}
+- **Dimension:** {finding.dimension} · **Verdict:** confirmed / present_failure
 - **Origin:** surfaced — pre-existing, surfaced by this change
+
+**Confirmed statement:** {finding.verdict.comment.title}
+
+{finding.verdict.comment.body}
+
+**Confirmed fix:** {finding.verdict.comment.fix}
 
 {finding.description}
 
@@ -232,6 +238,9 @@ This summary describes the change context for the report.
 - **Cross-file refs:** {finding.cross_file_refs}
 
 - **Corroborated by** `{corroboration.agent}` (`{corroboration.dimension}`, severity low, tier main): {corroboration.title}
+  **Confirmed statement:** {corroboration.verdict.comment.title}
+  {corroboration.verdict.comment.body}
+  **Confirmed fix:** {corroboration.verdict.comment.fix}
   {corroboration.description}
 
 ### 🟠 High
@@ -389,8 +398,9 @@ The `code-gauntlet-findings` hidden HTML comment enables incremental review: on 
 
 ## Inline PR Comment Format
 
-Each issue renders the lead only, then confirmed additional sites and an anonymous count of
-independent reviewers when there are at least two. Other descriptions stay in the local report.
+Each issue renders the lead only, then confirmed additional sites. The title and body are the
+resolved reader's confirmed statement, or the discovery text when no valid statement exists.
+Other descriptions stay in the local report.
 
 **You do not compose this body — `scripts/gauntlet/delivery/compose.py::render_comment_body` does.** You supply
 the finding fields (see `references/delivery-guide.md` for the input JSON); the script renders
@@ -426,10 +436,16 @@ ends with it, once — one mark per delivered surface. Never hand-type it.
 `{emoji}` is 🔴 critical / 🟠 high / 🟡 medium / 💡 low, `{SEVERITY}` is the normalized severity uppercased.
 <!-- /generated-from-registry-identity:inline_legend -->
 
-`{body}` is the v2 alias of `description` applied at the persist boundary. The renderer emits
+`{body}` is the resolved reader's statement body; without a valid statement it is the v2 alias
+of `description` applied at the persist boundary. The renderer emits
 no permalink and no confidence footer — those belong to the report markdown, not to inline
 comments.
 Posted fields use the code-owned outbound contract in
 [delivery rendering](../../../docs/delivery-rendering.md#outbound-text-preparation).
 
-**`suggested_fix_code` field:** Delivery gates this field on `scripts/gauntlet/delivery/gate.py`'s deterministic apply-check (field must be a string, non-empty after redaction, free of `marker_shaped` text, ship a matching `line_end`, match a valid diff range, not have its finding path collide with its `a/`/`b/`-stripped form as two distinct real files in the diff, land at this render site's actual apply range, differ from the current text, and stay within the size bound — on GitLab that render-site range is the discussion anchor plus the `-m+n` offsets the poster derives from it, capped by GitLab's own offset limit; any failure strips the field from the render and the finding falls back to the prose `suggestion` field, with the reason recorded via `warn_skip`). Delivery can also withhold a fence that passed every per-finding check when an earlier, higher-priority kept fence claims an overlapping apply range in the same file — the same downgrade path, reason `overlaps_kept_fence` (see `references/delivery-guide.md`). The renderer excludes this field and its two removal stamps through the registry-derived `reportExtraFields()` projection in `workflows/src/renderReport.js`, so there is no report-path render to gate. The report *path* instead renders the kept patches through a separate read-only apply-check, `scripts/report_patches.py`, into the sibling artifact `code-gauntlet-patches-{head_sha_short}.md` — it reuses the same gate (`gauntlet.delivery.gate.evaluate_fix`) over the pinned Phase 2 diff, including the `marker_shaped` downgrade, with no platform render-site constraints and no set-level overlap withholding applied, so a patch listed there is not a guarantee delivery will also keep it. See `references/delivery-guide.md` for the findings JSON schema used by `post_review.py`.
+The confirmed statement's correction appears as **Confirmed fix** in the local report, including
+for grouped members. Discovery descriptions and suggestions remain available there. In posted
+comments, a valid reader statement suppresses discovery suggestion prose and uses only the
+reader's fix; empty or invalid fixes omit that line while validated replacement code remains.
+
+**`suggested_fix_code` field:** Delivery gates this field on `scripts/gauntlet/delivery/gate.py`'s deterministic apply-check (field must be a string, non-empty after redaction, free of `marker_shaped` text, ship a matching `line_end`, match a valid diff range, not have its finding path collide with its `a/`/`b/`-stripped form as two distinct real files in the diff, land at this render site's actual apply range, differ from the current text, and stay within the size bound — on GitLab that render-site range is the discussion anchor plus the `-m+n` offsets the poster derives from it, capped by GitLab's own offset limit; any failure strips the field from the render and the finding retains the selected reader fix or discovery fallback prose, with the reason recorded via `warn_skip`). Delivery can also withhold a fence that passed every per-finding check when an earlier, higher-priority kept fence claims an overlapping apply range in the same file — the same downgrade path, reason `overlaps_kept_fence` (see `references/delivery-guide.md`). The renderer excludes this field and its two removal stamps through the registry-derived `reportExtraFields()` projection in `workflows/src/renderReport.js`, so there is no report-path render to gate. The report *path* instead renders the kept patches through a separate read-only apply-check, `scripts/report_patches.py`, into the sibling artifact `code-gauntlet-patches-{head_sha_short}.md` — it reuses the same gate (`gauntlet.delivery.gate.evaluate_fix`) over the pinned Phase 2 diff, including the `marker_shaped` downgrade, with no platform render-site constraints and no set-level overlap withholding applied, so a patch listed there is not a guarantee delivery will also keep it. See `references/delivery-guide.md` for the findings JSON schema used by `post_review.py`.

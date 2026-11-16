@@ -1,9 +1,9 @@
 import { defineAgentCall } from './agentCalls.js';
 import { pathEscapeReason, persistPlanPath, plannedArtifactPaths, requireAbsoluteOutputDir } from './outputPaths.js';
-import { hardenEscapeRuns, persistDerivable, persistPlan, persistPrimaries, writerPayload } from './persistPlan.js';
+import { hardenEscapeRuns, persistDerivable, persistPlan, persistPrimaries, returnPersistPlan, writerPayload } from './persistPlan.js';
 import { trustedScriptPath } from './paths.js';
 import { modelFor, TRUSTED_SCRIPT_BASENAMES } from './registry.js';
-import { RETURN_CHAR_BUDGET, pythonArgv, shellWord } from './wire.js';
+import { pythonArgv, shellWord } from './wire.js';
 
 const WRITER_SCHEMA = {
   type: 'object',
@@ -76,18 +76,24 @@ export async function writeArtifacts(ctx, input) {
       ? trustedScriptPath(inp.pluginRoot, TRUSTED_SCRIPT_BASENAMES.assemble) : null;
     // The return channel needs no executor script, so its opt-in is independent of scriptPath.
     const wantsReturn = persist.returnPrimaries === true;
-    if (scriptPath || wantsReturn) {
+    if (wantsReturn) {
+      const derivable = persistDerivable(inp);
+      if (derivable.ok) return returnChannelPersist(inp, paths, outputDir, sha);
+      // Unsupported derivation must still use exact host transport, at any size.
+      const held = writerPayload(inp);
+      const { findingsJson, reportMd } = persistPrimaries(inp);
+      return { artifactPaths: paths, gaps: [], partial: false,
+        persistReturn: { channel: 'return', nonce: inp.nonce || null, assemble: false,
+          entries: [
+            { path: paths.findings, text: findingsJson },
+            { path: paths.report, text: reportMd },
+            { path: paths.postReview, text: JSON.stringify(held.postReview, null, 2) },
+            { path: paths.checkpoints, text: JSON.stringify(held.checkpoints, null, 2) },
+          ] } };
+    }
+    if (scriptPath) {
       const derivable = persistDerivable(inp);
       if (derivable.ok) {
-        // Prefer the return channel to avoid model transcription; oversized returns fall back with disclosure.
-        if (wantsReturn) {
-          const viaReturn = returnChannelPersist(inp, paths, outputDir, sha);
-          if (viaReturn.ok) return viaReturn.result;
-          const gap = `writeArtifacts: ${viaReturn.reason} — persisted through the artifact-writer instead, which transcribes the bytes`;
-          if (!scriptPath) return await writeArtifactsLegacy(ctx, inp, paths, outputDir, policy, partial, [gap]);
-          const fallback = await writeArtifactsDerived(ctx, inp, paths, outputDir, sha, policy, partial, scriptPath);
-          return { ...fallback, gaps: [gap].concat(fallback.gaps) };
-        }
         return await writeArtifactsDerived(ctx, inp, paths, outputDir, sha, policy, partial, scriptPath);
       }
       return await writeArtifactsLegacy(ctx, inp, paths, outputDir, policy, partial, [
@@ -132,18 +138,18 @@ async function writeArtifactsLegacy(c, inp, paths, outputDir, policy, partial, e
 
 // Both channels share serialization so their strings and checksum expectations cannot drift.
 // Plan escape hardening preserves parsed values, so the same spelling also serves the return channel.
-function persistEntries(inp, paths, outputDir, sha) {
+function persistEntries(inp, paths, outputDir, sha, viaReturn = false) {
   const planPath = persistPlanPath(outputDir, sha);
   const { findingsJson, reportMd } = persistPrimaries(inp);
   // Independent expectations prevent the receipt from grading itself.
-  const plan = persistPlan(inp, paths);
+  const plan = viaReturn ? returnPersistPlan(inp, paths) : persistPlan(inp, paths);
   return {
     plan,
     planPath,
     entries: [
       { path: paths.findings, text: findingsJson },
       { path: paths.report, text: reportMd },
-      { path: planPath, text: hardenEscapeRuns(JSON.stringify(plan, null, 2)) },
+      { path: planPath, text: hardenEscapeRuns(JSON.stringify(plan, null, viaReturn ? undefined : 2)) },
     ],
   };
 }
@@ -151,23 +157,15 @@ function persistEntries(inp, paths, outputDir, sha) {
 // The harness carries these bytes without model transcription; the caller must materialize them.
 // Returned artifact paths describe intended destinations, not files already on disk.
 function returnChannelPersist(inp, paths, outputDir, sha) {
-  const { planPath, entries } = persistEntries(inp, paths, outputDir, sha);
-  const chars = JSON.stringify(entries).length;
-  if (chars > RETURN_CHAR_BUDGET) {
-    return {
-      ok: false,
-      reason: `the persisted primaries serialize to ${chars} chars, over the ${RETURN_CHAR_BUDGET}-char return budget`,
-    };
-  }
+  const { planPath, entries } = persistEntries(inp, paths, outputDir, sha, true);
+  // The host serializes the complete result to its task file without a character-count
+  // gate. A soft budget may shed measurement data, never the completed review.
   return {
-    ok: true,
-    result: {
-      artifactPaths: paths,
-      gaps: [],
-      partial: false,
-      // The nonce lets the caller identify this run's returned payload when no task id is available.
-      persistReturn: { channel: 'return', nonce: inp.nonce || null, planPath, entries },
-    },
+    artifactPaths: paths,
+    gaps: [],
+    partial: false,
+    // The nonce lets the caller identify this run's returned payload when no task id is available.
+    persistReturn: { channel: 'return', nonce: inp.nonce || null, planPath, entries },
   };
 }
 

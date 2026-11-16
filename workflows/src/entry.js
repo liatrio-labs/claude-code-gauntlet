@@ -1,4 +1,5 @@
 import { isPlainObject, deepFreeze } from './wire.js';
+import { jsonSyntaxFault } from './jsonSyntax.js';
 
 const REVIEW_TARGET_LABEL = deepFreeze({
   pr_url: 'a GitHub PR URL',
@@ -58,10 +59,24 @@ function unwrapWaist(raw) {
     if (isPlainObject(value)) return { waist: value, terminal: value };
     if (typeof value !== 'string' || depth === MAX_JSON_UNWRAP) break;
     let next;
-    try { next = JSON.parse(value); } catch { break; }
+    try { next = JSON.parse(value); } catch {
+      return { waist: null, terminal: value, malformedJson: value.trimStart().startsWith('{') ? value : null };
+    }
     value = next;
   }
   return { waist: null, terminal: value };
+}
+
+function malformedArgsMessage(text) {
+  const fault = jsonSyntaxFault(text);
+  // A parser resource failure need not be a syntax fault; never invent a location.
+  if (!fault) return 'args JSON does not parse: the JSON parser rejected it without a locatable syntax fault. No args were accepted.';
+  const start = Math.max(0, fault.offset - 40);
+  const end = Math.min(text.length, fault.offset + 40);
+  const excerpt = JSON.stringify(text.slice(start, end)).replace(/[\u007f-\uffff]/g,
+    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  return `args JSON does not parse: ${fault.reason} at character offset ${fault.offset} (zero-based UTF-16). `
+    + `Excerpt [${start}, ${end}): ${excerpt}. Fix the JSON syntax and call this workflow again with the assembled args object. No args were accepted.`;
 }
 
 // Bound the string echo so an oversized payload cannot dominate the refusal.
@@ -91,6 +106,7 @@ function refusalFrom(raw, unwrapped) {
 
   const { waist, terminal } = unwrapped;
   if (waist !== null) return null;
+  if (unwrapped.malformedJson !== undefined && unwrapped.malformedJson !== null) return malformedArgsMessage(unwrapped.malformedJson);
 
   // Try raw references first so the recovery command preserves the caller's spelling.
   // Then try the terminal value so encoded references also recover.

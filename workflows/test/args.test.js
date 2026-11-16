@@ -299,7 +299,7 @@ const NORMALIZE_ROWS = [
     mode: 'interactive', limits: {}, configEcho: { pr_comment_cap: { value: 'null', source: 'default' } },
   }), expected: { args: {
     mode: 'interactive', limits: {
-      summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 25, maxLineSpan: 100, deliveryCap: null,
+      summarizeBucketSize: 20, validateBatch: 25, verifySliceSize: 25, maxLineSpan: 100, deliveryCap: null,
     }, configEcho: {
       pr_comment_cap: { value: 'null', source: 'default' },
     },

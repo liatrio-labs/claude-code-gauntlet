@@ -1322,3 +1322,10 @@ def test_supplemental_role_frontmatter_and_read_contract_have_single_owners(
     assert fields["model"] == "haiku" and fields["tools"] == "Read, Grep"
     assert fields["name"] == "gap-hunter"
     assert "CANONICAL_READ_SENTINEL" in generated
+
+
+def test_reader_contracts_name_every_confirmed_consequence():
+    registry = gen.load_registry(str(ROOT))
+    for rel in gen.VERIFICATION_TARGETS:
+        tokens = set(re.findall(r"\b\w+\b", (ROOT / rel).read_text(encoding="utf-8")))
+        assert set(registry["confirmedVerdictRoutes"]) <= tokens

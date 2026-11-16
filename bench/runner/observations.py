@@ -90,6 +90,7 @@ Decision = Literal[
     "demoted",
 ]
 ReasonCode = Literal[
+    "comment_text_fallback",
     "not_found",
     "duplicate_id",
     "invalid_shape",

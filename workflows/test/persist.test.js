@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeArtifacts, parseWriterPayload } from '../src/persist.js';
-import { writerPayload, persistPrimaries, persistPlan } from '../src/persistPlan.js';
+import { writerPayload, persistPrimaries, persistPlan, hardenEscapeRuns } from '../src/persistPlan.js';
 import { fnv1a32 } from '../src/wire.js';
+import { deriveFromPlan } from './helpers/deriveFromPlan.js';
 import { renderReport } from '../src/renderReport.js';
 import { makeFinding } from './helpers/pipelineMock.js';
 import { shellSplit } from './helpers/shellWords.js';
@@ -36,7 +37,7 @@ for (const channel of ['legacy', 'derived', 'return']) {
       assert.equal(report.includes(finding[field]), false, field);
     }
     const checkpoints = Array.isArray(payload)
-      ? JSON.parse(payload.at(-1).text).checkpoint.skeleton : payload.checkpoints;
+      ? deriveFromPlan(JSON.parse(payload.at(-1).text), payload[0].text).checkpoints : payload.checkpoints;
     assert.deepEqual(checkpoints, input.checkpoints);
   });
 }
@@ -287,82 +288,51 @@ for (const [name, input, commandWords = COMMAND_WORDS, expectedPaths = PATHS, ch
   });
 }
 
-const EMPTY_PLAN_TEXT = JSON.stringify({
-  'planVersion': 3,
-  'expect': [
-    { 'path': PATHS.findings, 'chars': 2, 'checksum': 'fnv1a32:0x741638a5' },
-    { 'path': PATHS.report, 'chars': 0, 'checksum': 'fnv1a32:0x811c9dc5' },
-  ],
-  'derive': [
-    { 'path': PATHS.postReview, 'chars': 2, 'checksum': 'fnv1a32:0x741638a5' },
-    { 'path': PATHS.checkpoints, 'chars': 2, 'checksum': 'fnv1a32:0x5465b825' },
-  ],
-  'postReview': { 'path': PATHS.postReview, 'source': PATHS.findings, 'ids': [], 'wrapper': null },
-  'checkpoint': { 'path': PATHS.checkpoints, 'mode': 'literal', 'skeleton': {} },
-  'planChecksum': 'fnv1a32:0xb6fb0e64',
-}, null, 2);
-const EMPTY_RETURN_INPUT = { findings: [], postReview: [], report: '', checkpoints: {}, persist: { returnPrimaries: true } };
-const RETURN_GOLDEN = {
-  artifactPaths: PATHS, gaps: [], partial: false,
-  persistReturn: { channel: 'return', nonce: null, planPath: PLAN_PATH, entries: [
-    { path: PATHS.findings, text: '[]' }, { path: PATHS.report, text: '' }, { path: PLAN_PATH, text: EMPTY_PLAN_TEXT },
-  ] },
-};
-const RETURN_ROWS = [
-  ['empty literal bytes and absent nonce', EMPTY_RETURN_INPUT, null, { literalBytes: true }],
-  ['supplied nonce', { persist: { assembleScriptPath: SCRIPT, returnPrimaries: true }, nonce: 'nonce-xyz' }, 'nonce-xyz'],
-  ['exact return budget', { ...EMPTY_RETURN_INPUT, report: 'r'.repeat(998615) }, null, { exactBudget: true }],
-];
-for (const [name, patch, nonce, checks = {}] of RETURN_ROWS) {
-  test(`return channel: ${name}`, async () => {
+for (const pluginRoot of ['/plugin', undefined]) {
+  test(`return channel preserves oversized primaries with plugin root ${pluginRoot}`, async () => {
     const ctx = persistCtx();
-    const input = persistInput(patch);
+    const input = persistInput({ pluginRoot, persist: { returnPrimaries: true },
+      report: 'r'.repeat(1000000) });
     const out = await writeArtifacts(ctx, input);
     assert.deepEqual(labels(ctx), []);
     assert.equal(out.partial, false);
     assert.deepEqual(out.gaps, []);
     assert.deepEqual(out.artifactPaths, PATHS);
-    assert.deepEqual(Object.keys(out.artifactPaths), ['findings', 'report', 'postReview', 'checkpoints']);
     assert.equal(out.persistReturn.channel, 'return');
-    assert.equal(out.persistReturn.nonce, nonce);
+    assert.equal(out.persistReturn.nonce, null);
     assert.equal(out.persistReturn.planPath, PLAN_PATH);
-    assert.deepEqual(out.persistReturn.entries.map((e) => e.path), [PATHS.findings, PATHS.report, PLAN_PATH]);
-    if (checks.literalBytes) assert.deepEqual(out, RETURN_GOLDEN);
-    else if (checks.exactBudget) {
-      assert.deepEqual({
-        ...out, persistReturn: {
-          ...out.persistReturn, entries: out.persistReturn.entries.map(({ path, text }) => ({ path, chars: text.length })),
-        },
-      }, expectedWith(RETURN_GOLDEN, { 'persistReturn.entries': [
-        { path: PATHS.findings, chars: 2 }, { path: PATHS.report, chars: 998615 }, { path: PLAN_PATH, chars: 1034 },
-      ] }));
-    } else {
-      const writer = persistCtx();
-      await writeArtifacts(writer, { ...input, persist: { assembleScriptPath: SCRIPT } });
-      assert.deepEqual(out.persistReturn.entries, parseWriterPayload(writer.calls[0].prompt));
-      const { findingsJson, reportMd } = persistPrimaries(input);
-      assert.equal(out.persistReturn.entries[0].text, findingsJson);
-      assert.equal(out.persistReturn.entries[1].text, reportMd);
-      assert.equal(JSON.parse(out.persistReturn.entries[2].text).expect[0].checksum, fnv1a32(findingsJson));
-    }
+    const entries = out.persistReturn.entries;
+    assert.deepEqual(entries.map((e) => e.path), [PATHS.findings, PATHS.report, PLAN_PATH]);
+    const { findingsJson, reportMd } = persistPrimaries(input);
+    assert.equal(entries[0].text, findingsJson);
+    assert.equal(entries[1].text, reportMd);
+    const plan = JSON.parse(entries[2].text);
+    assert.equal(plan.planVersion, 4);
+    assert.equal(entries[2].text.includes('\n'), false);
+    const derived = deriveFromPlan(plan, entries[0].text);
+    assert.deepEqual(derived.checkpoints, input.checkpoints);
+    assert.deepEqual(derived.postReview, JSON.parse(findingsJson));
+    const { planChecksum, ...body } = plan;
+    assert.equal(planChecksum, fnv1a32(JSON.stringify(body, null, 2)));
   });
 }
-const OVERSIZED_ROWS = [
-  ['script fallback', { assembleScriptPath: SCRIPT, returnPrimaries: true }, ['artifact-writer', 'assemble-artifacts']],
-  ['scriptless fallback', { returnPrimaries: true }, ['artifact-writer'], { pluginRoot: undefined }],
-];
-for (const [name, persist, dispatched, extra] of OVERSIZED_ROWS) {
-  test(`return budget: ${name}`, async () => {
-    const ctx = persistCtx();
-    const out = await writeArtifacts(ctx, persistInput({ ...EMPTY_RETURN_INPUT, persist, ...extra, report: 'r'.repeat(1000000) }));
-    assert.equal(out.partial, false);
-    assert.equal(out.persistReturn, undefined);
-    assert.deepEqual(labels(ctx), dispatched);
-    assert.deepEqual(out.artifactPaths, PATHS);
-    assert.deepEqual(out.gaps, [
-      'writeArtifacts: the persisted primaries serialize to 1001386 chars, over the '
-      + '1000000-char return budget \u2014 persisted through the artifact-writer instead, which '
-      + 'transcribes the bytes'
-    ]);
-  });
-}
+
+for (const patch of [
+  { findings: [makeFinding('FLOAT', { criticality: 0.75 })] },
+  { findings: [{ id: 'DUP' }, { id: 'DUP' }] },
+  { postReview: [{ id: 'FOREIGN' }] },
+]) test(`return channel transports nonderivable artifacts: ${JSON.stringify(patch)}`, async () => {
+  const ctx = persistCtx();
+  const input = persistInput({ ...patch, persist: { returnPrimaries: true }, report: '# Report\r\nC:\\tmp\\out 😀\n\n' });
+  const out = await writeArtifacts(ctx, input);
+  assert.deepEqual(labels(ctx), []);
+  assert.equal(out.partial, false);
+  assert.equal(out.persistReturn.assemble, false);
+  const entries = out.persistReturn.entries;
+  const payload = writerPayload(input);
+  assert.deepEqual(entries.map((e) => e.path), Object.values(PATHS));
+  assert.deepEqual(entries.map((e) => e.text), [
+    hardenEscapeRuns(JSON.stringify(payload.findings, null, 2)), payload.report,
+    JSON.stringify(payload.postReview, null, 2), JSON.stringify(payload.checkpoints, null, 2),
+  ]);
+});

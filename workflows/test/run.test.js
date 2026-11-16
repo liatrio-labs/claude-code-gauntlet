@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { runWith, compactMethodology } from '../src/run.js';
-import { checkpointArgs, validArgs, prIdentity } from './helpers/argsFixtures.js';
+import { checkpointArgs, validArgs, interactiveArgs, prIdentity } from './helpers/argsFixtures.js';
 import { makeCtx, makeFinding } from './helpers/pipelineMock.js';
 import { PATHS, challengeOutput, replayProducedCheckpoint, runAndCapture, persistCtx, persistInput } from './helpers/persistFixtures.js';
 import { captureRun, mixedSurvivors, withSandboxGlobals, drainMicrotasks } from './helpers/runFixtures.js';
@@ -124,6 +124,40 @@ test('reference diagnostics distinguish absent evidence from dropped evidence by
     const dropped = evaluateAdmission(valid[0]);
     for (const predicate of predicates) assert.equal(dropped.admission.reasons.find((r) => r.predicate === predicate).status, 'held_back');
   }
+});
+
+for (const [name, argsFor, cap] of [
+  ['headless defaults', validArgs, undefined],
+  ['interactive defaults', interactiveArgs, undefined],
+  ['explicit caller cap', validArgs, 40],
+]) test(`challenge coverage for 200 findings: ${name}`, async () => {
+  const findings = Array.from({ length: 200 }, (_, i) => makeFinding(`C${String(i).padStart(3, '0')}`));
+  const args = argsFor({ persist: { returnPrimaries: true },
+    ...(cap === undefined ? {} : { limits: { challengeCap: cap } }) });
+  assert.equal(Object.hasOwn(args.limits, 'challengeCap'), cap !== undefined);
+  const ctx = makeCtx(args, { findings });
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, true);
+  assert.equal(out.stats.merged, findings.length);
+  const expected = cap ?? findings.length;
+  const calls = ctx.calls.filter((call) => call.agentType === 'code-gauntlet:challenger');
+  assert.equal(calls.length, expected);
+  const claims = new Set(calls.map((call) => call.prompt.match(/Claim: finding (C\d{3})/)[1]));
+  assert.equal(claims.size, expected);
+  if (cap === undefined) assert.deepEqual(claims, new Set(findings.map((f) => f.id)));
+  assert.equal(out.stats.challenge.dispatched, expected);
+  assert.equal(out.stats.challenge.completed, expected);
+  assert.equal(out.stats.challenge.skipped, findings.length - expected);
+  const entries = out.persistReturn.entries;
+  const persisted = JSON.parse(entries.find((entry) => entry.path === out.artifactPaths.findings).text);
+  assert.equal(persisted.filter((f) => f.challenge === 'survived').length, expected);
+  assert.equal(persisted.filter((f) => f.challenge === 'capped').length, findings.length - expected);
+  const capGaps = out.gaps.filter((gap) => gap.includes('challengeCap='));
+  assert.deepEqual(capGaps, cap === undefined ? [] : [
+    `challenge: ${findings.length - expected} finding(s) over challengeCap=${cap} left unchallenged (challenge=capped, pipeline-degraded)`,
+  ]);
+  const report = entries.find((entry) => entry.path === out.artifactPaths.report).text;
+  assert.equal(report.includes('## Unverified / pipeline-degraded findings'), cap !== undefined);
 });
 
 test('admission precedes challenge and placement on fresh and resumed runs', async () => {
@@ -435,8 +469,7 @@ test('final disposition survives replay and persistence', async () => {
   const returned = await runAndCapture(validArgs({ persist: { returnPrimaries: true }, checkpoints: { challenge: raw } }));
   const entries = returned.out.persistReturn.entries;
   const plan = JSON.parse(entries.at(-1).text);
-  assert.equal(plan.planVersion, 3);
-  assert.equal(plan.checkpoint.mode, 'literal');
+  assert.equal(plan.planVersion, 4);
   assert.deepEqual(deriveFromPlan(plan, entries[0].text).checkpoints.phases.challenge.findings, raw.findings);
   for (const invalid of [
     { findings: [{}], postReview: [] },
@@ -639,9 +672,9 @@ for (const row of SCOPE_ROWS) test(`scope wiring: ${row.name}`, async () => {
 
 const COARSEN_ROWS = [
   { name: 'entry changed-file pressure', changedFiles: Array.from({ length: 20000 }, (_, index) => `src/f${index}.js`),
-    limits: { summarizeBucketSize: 1 }, bucketCount: 625, batchCount: 1 },
+    limits: { summarizeBucketSize: 1 }, bucketCount: 625, batchCount: 1, challengeCount: 2 },
   { name: 'post-merge finding pressure', findings: Array.from({ length: 1000 }, (_, index) => makeFinding(`F${index}`)),
-    limits: { validateBatch: 1, verifySliceSize: 2000 }, bucketCount: 0, batchCount: 125 },
+    limits: { validateBatch: 1, verifySliceSize: 2000 }, bucketCount: 0, batchCount: 63, challengeCount: 250 },
 ];
 for (const row of COARSEN_ROWS) test(`coarsening wiring: ${row.name}`, async () => {
   const args = validArgs({ ...(row.changedFiles ? { changedFiles: row.changedFiles, changedLines: 100000 } : {}),
@@ -650,6 +683,11 @@ for (const row of COARSEN_ROWS) test(`coarsening wiring: ${row.name}`, async () 
   assert.equal(out.ok, true);
   assert.equal(ctx.calls.filter((call) => call.label.startsWith('summarize-bucket-')).length, row.bucketCount);
   assert.equal(ctx.calls.filter((call) => call.label.startsWith('validate-batch-')).length, row.batchCount);
+  assert.equal(out.stats.challenge.dispatched, row.challengeCount);
+  assert.equal(out.stats.challenge.skipped, (row.findings?.length ?? 2) - row.challengeCount);
+  if (row.findings) assert.ok(out.gaps.includes(
+    'challenge: 750 finding(s) over challengeCap=250 left unchallenged (challenge=capped, pipeline-degraded)',
+  ));
 });
 
 test('fresh paths: discovery normalizes files and both reference arrays', async () => {

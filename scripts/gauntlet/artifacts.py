@@ -15,7 +15,7 @@ from gauntlet.cli import Command, Parser
 from gauntlet.fs import write_atomic
 from gauntlet.jsjson import fnv1a32, js_stringify_pretty, normalize_content, utf16_len
 
-PLAN_VERSION = 3
+PLAN_VERSION = 4
 PLAN_CHECKSUM_KEY = "planChecksum"
 ProofState = Literal["match", "mismatch"]
 
@@ -48,6 +48,13 @@ class AssembleReceipt(TypedDict):
     verified: list[VerifiedArtifact]
     written: list[WrittenArtifact]
     errors: list[str]
+
+
+class CheckpointProjection(TypedDict):
+    at: list[str | int]
+    id: str
+    keys: list[str]
+    overrides: dict[str, object]
 
 
 def _read_content(path: object) -> str:
@@ -173,6 +180,29 @@ def _serialize(document: object, label: str, errors: list[str]) -> str | None:
         return None
 
 
+def _restore_checkpoint(
+    cp: Mapping[str, object],
+    by_id: Mapping[str, Mapping[str, object]],
+) -> object:
+    skeleton = cp["skeleton"]
+    for row in cast(list[CheckpointProjection], cp["projections"]):
+        source = by_id[row["id"]]
+        overrides = row["overrides"]
+        finding = {
+            key: overrides[key] if key in overrides else source[key]
+            for key in row["keys"]
+        }
+        at = row["at"]
+        parent = cast(dict[str | int, object], skeleton)
+        for key in at[:-1]:
+            parent = cast(dict[str | int, object], parent[key])
+        if not at:
+            skeleton = finding
+        else:
+            parent[at[-1]] = finding
+    return skeleton
+
+
 def _assemble(plan_path: str | os.PathLike[str]) -> AssembleReceipt:
     errors: list[str] = []
     verified: list[VerifiedArtifact] = []
@@ -192,7 +222,7 @@ def _assemble(plan_path: str | os.PathLike[str]) -> AssembleReceipt:
         return _receipt(False, None, None, verified, [], errors)
 
     plan_version = plan.get("planVersion")
-    if type(plan_version) is not int or plan_version not in (2, PLAN_VERSION):
+    if type(plan_version) is not int or plan_version not in (2, 3, PLAN_VERSION):
         errors.append(
             f"unsupported planVersion {plan_version!r} (expected {PLAN_VERSION})"
         )
@@ -294,6 +324,17 @@ def _assemble(plan_path: str | os.PathLike[str]) -> AssembleReceipt:
 
     cp_source = cp.get("source")
     cp_by_id = _load_source(cp_source, cache, errors) if plan_version == 2 else None
+    if plan_version == 4:
+        cp_by_id = _load_source(cp_source, cache, errors)
+        if cp_by_id is not None:
+            try:
+                document = _restore_checkpoint(cp, cp_by_id)
+            except (KeyError, IndexError, TypeError) as exc:
+                errors.append(f"invalid checkpoint projection: {exc}")
+            else:
+                text = _serialize(document, "checkpoint", errors)
+                if text is not None and cp_path is not None:
+                    pending.append(PlanEntry(cp_path, text))
     if plan_version == 3:
         if cp.get("mode") != "literal" or not isinstance(cp.get("skeleton"), dict):
             errors.append("checkpoint must carry a literal skeleton")
@@ -301,7 +342,7 @@ def _assemble(plan_path: str | os.PathLike[str]) -> AssembleReceipt:
             text = _serialize(cp["skeleton"], "checkpoint", errors)
             if text is not None and cp_path is not None:
                 pending.append(PlanEntry(cp_path, text))
-    if cp_by_id is not None:
+    if plan_version == 2 and cp_by_id is not None:
         alias_fields = set(cast(Sequence[Hashable], cp.get("stripAliasFields") or []))
         cp_ids = cast(Sequence[object], cp.get("challengeFindingIds") or [])
         cp_projected = [

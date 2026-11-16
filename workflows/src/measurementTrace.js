@@ -13,7 +13,7 @@ export const TRACE_FINDING_FIELDS = ['trace_id', 'discovery_agent', 'discovery_d
   'verdict', 'validator_verdict', 'challenge_verdict', 'verdict_route', 'refutation_check', 'validator_refutation_check', 'challenge_refutation_check',
   'rule_source', 'agent', 'dimension', 'confidence', 'sites', 'admission', 'disposition', 'disposition_reasons', 'report_tag', 'report_destination',
   'consolidation_key', 'consolidation_primary', 'delivery_group', 'origin_dimension', 'policy_subject', 'path_role'];
-export const TRACE_REASONS = ['not_found', 'duplicate_id', 'invalid_shape', 'invalid_path', 'audit_overlap', 'verify_eliminated', 'verify_unproven', 'validation_skipped', 'threshold', 'exclusion', 'injection', 'suppression', 'challenge_removed', 'challenge_downgraded_removed', 'challenge_failed', 'challenge_cap', 'delivery_cap', 'delivery_tier', 'unanchored', 'body_budget', 'post_omission', 'body_routed', 'report_only', 'held_back', 'folded', 'demoted', 'refuted', 'out_of_scope', 'scope_contradicted', 'cite_unmatched', 'cite_unavailable', 'unknown'];
+export const TRACE_REASONS = ['comment_text_fallback', 'not_found', 'duplicate_id', 'invalid_shape', 'invalid_path', 'audit_overlap', 'verify_eliminated', 'verify_unproven', 'validation_skipped', 'threshold', 'exclusion', 'injection', 'suppression', 'challenge_removed', 'challenge_downgraded_removed', 'challenge_failed', 'challenge_cap', 'delivery_cap', 'delivery_tier', 'unanchored', 'body_budget', 'post_omission', 'body_routed', 'report_only', 'held_back', 'folded', 'demoted', 'refuted', 'out_of_scope', 'scope_contradicted', 'cite_unmatched', 'cite_unavailable', 'unknown'];
 const traceHistory = new WeakMap();
 const stageDecisions = new WeakMap();
 export const decisionsFor = (output) => stageDecisions.get(output) || [];
@@ -89,24 +89,30 @@ export function recordStage(trace, stage, output, details = {}) {
     cap: details.cap ?? null, cap_hit: !!details.cap_hit,
     ...(output.gaps?.length ? { gaps: deepClone(output.gaps) } : {}) });
 }
+// Completed artifacts must not reduce the independent allowance for telemetry.
+function measurementFitsBudget(measurement) {
+  return JSON.stringify(measurement).length <= RETURN_CHAR_BUDGET;
+}
+
 export function appendMeasurement(envelope, trace) {
   if (!trace) return envelope;
+  const unavailable = { status: 'unavailable', reason: 'return_budget' };
   const candidate = deepClone(trace);
-  const available = (compress = false) => {
+  const available = () => {
     const text = JSON.stringify(candidate);
-    const plain = { ...envelope, measurement: { status: 'available', text } };
-    if (!compress || JSON.stringify(plain).length <= RETURN_CHAR_BUDGET) return plain;
-    // Rich finding history shares the return budget with persisted primaries; compress before discarding stages.
-    return { ...envelope, measurement: { status: 'available', encoding: 'json-pool-lzw16-base64-v1', text: compressMeasurement(text) } };
+    const plain = { status: 'available', text };
+    if (measurementFitsBudget(plain)) return plain;
+    // Compress rich history before discarding coverage or stages.
+    return { status: 'available', encoding: 'json-pool-lzw16-base64-v1', text: compressMeasurement(text) };
   };
-  let result = available(true);
-  if (JSON.stringify(result).length > RETURN_CHAR_BUDGET && candidate.coverage_ledger) {
+  let measurement = available();
+  if (!measurementFitsBudget(measurement) && candidate.coverage_ledger) {
     candidate.coverage_ledger = boundedCoverageLedger(candidate.coverage_ledger, 0);
-    result = available(true);
+    measurement = available();
   }
   // Keep the discovery prefix longest, and never turn a cut stage into an observed empty set.
   for (const snapshot of [...candidate.snapshots].reverse()) {
-    if (JSON.stringify(result).length <= RETURN_CHAR_BUDGET) return result;
+    if (measurementFitsBudget(measurement)) break;
     if (candidate.dropped_stages.includes(snapshot.stage)) continue;
     snapshot.finding_version_ids = [];
     snapshot.decisions = [];
@@ -121,15 +127,26 @@ export function appendMeasurement(envelope, trace) {
       identities.add(v.trace_id);
       return true;
     });
-    result = available(true);
+    measurement = available();
   }
-  return appendBudgetedMeasurement(envelope, result.measurement, { status: 'unavailable', reason: 'return_budget' });
+  const result = appendBudgetedMeasurement(envelope, measurement, unavailable);
+  if (result.measurement.status === 'available' && candidate.dropped_stages.length) {
+    result.gaps = [...(result.gaps || []), `measurement: trace stages ${candidate.dropped_stages.join(', ')} not persisted because of the optional return budget`];
+  }
+  return result;
 }
 export function appendBudgetedMeasurement(envelope, available, unavailable) {
   const candidate = { ...envelope, measurement: available };
-  if (JSON.stringify(candidate).length <= RETURN_CHAR_BUDGET) return candidate;
-  const fallback = { ...envelope, measurement: unavailable };
-  return JSON.stringify(fallback).length <= RETURN_CHAR_BUDGET ? fallback : envelope;
+  if (measurementFitsBudget(available)) return candidate;
+  // Keep refusal metadata and disclosure even when no optional content fits.
+  const gaps = (missing) => [...(envelope.gaps || []), `measurement: ${missing} not persisted because of the optional return budget`];
+  const fallback = { ...envelope, measurement: unavailable,
+    gaps: gaps(unavailable.replay ? 'delivery replay' : 'trace') };
+  if (unavailable.replay && envelope.measurement?.status === 'available' && !measurementFitsBudget(unavailable)) {
+    return { ...envelope, measurement: { status: 'unavailable', reason: 'return_budget', replay: unavailable.replay },
+      gaps: gaps('trace and delivery replay') };
+  }
+  return fallback;
 }
 
 // Persistence agents must see exactly the same bytes as ordinary reviews.

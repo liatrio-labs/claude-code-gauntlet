@@ -13,6 +13,18 @@ import { largeMeasurement } from './helpers/largeMeasurement.js';
 import { compressMeasurement } from '../src/measurementCompression.js';
 import { RETURN_CHAR_BUDGET } from '../src/wire.js';
 
+// Varied text must exceed both encodings so a neighbouring compression fallback cannot hide a lost stage cut.
+const NOISE = (() => {
+  const alphabet = Buffer.from('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789');
+  const bytes = Buffer.alloc(1100000);
+  let state = 42;
+  for (let i = 0; i < bytes.length; i++) {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    bytes[i] = alphabet[(state >>> 24) % alphabet.length];
+  }
+  return bytes.toString('ascii');
+})();
+
 for (const mode of ['legacy', 'derived', 'return']) test(`trace opt-in preserves every prompt, schema and user artifact: ${mode}`, async () => {
   const plain = measurementScenario(mode);
   const measured = measurementScenario(mode, { measurementTrace: true });
@@ -77,10 +89,10 @@ for (const field of ['description', 'evidence']) test(`large optional ${field} p
   assert.ok(appendMeasurement(envelope, small).measurement.text.includes('\u00e9'));
 });
 
-test('400 long claims retain discovery within the return budget and reuse versions across diagnostic stamps', () => {
+test('400 long claims retain discovery within the optional budget and reuse versions across diagnostic stamps', () => {
   const { trace, findings, envelope, out } = largeMeasurement();
   assert.equal(out.measurement.status, 'available');
-  assert.ok(JSON.stringify(out).length <= RETURN_CHAR_BUDGET);
+  assert.ok(JSON.stringify(out.measurement).length <= RETURN_CHAR_BUDGET);
   assert.equal(out.review, envelope.review);
   const saved = decodeMeasurement(out.measurement);
   assert.deepEqual(saved.dropped_stages, []);
@@ -105,19 +117,45 @@ test('compression preserves history and budget fallback preserves discovery and 
   recordStage(trace, 'verify', [{ ...f, description: 'z'.repeat(600000) }]);
   const original = JSON.stringify(trace);
   const out = appendMeasurement({ ok: true }, trace);
-  assert.ok(JSON.stringify(out).length <= RETURN_CHAR_BUDGET);
+  assert.ok(JSON.stringify(out.measurement).length <= RETURN_CHAR_BUDGET);
   const saved = decodeMeasurement(out.measurement);
   assert.deepEqual(saved, trace);
-  const tighter = decodeMeasurement(appendMeasurement({ review: 'x'.repeat(RETURN_CHAR_BUDGET - 3000) }, saved).measurement);
-  assert.deepEqual(tighter.dropped_stages, ['merge', 'verify']);
-  assert.equal(tighter.snapshots[0].coverage, 'complete');
-  assert.equal(tighter.snapshots[1].coverage, 'unavailable');
-  assert.equal(tighter.snapshots[2].coverage, 'unavailable');
-  assert.equal(tighter.versions.length, 2);
-  assert.ok(tighter.versions.some((v) => v.trace_id === invalid.trace_id));
+  const primary = { persistReturn: { channel: 'return', entries: [{ path: '/out/findings.json', text: 'x'.repeat(2 * RETURN_CHAR_BUDGET) }] },
+    checkpoints: { completed: ['challenge'] }, gaps: ['existing gap'] };
+  const large = appendMeasurement(primary, trace);
+  assert.equal(large.persistReturn, primary.persistReturn);
+  assert.deepEqual(large.checkpoints, primary.checkpoints);
+  assert.deepEqual(large.gaps, primary.gaps);
+  assert.deepEqual(large.measurement, out.measurement);
+  // Replay shares only the optional allowance with the compressed trace.
+  const replay = { args: { nonce: 'cut' }, state: {} };
+  const withReplay = appendDeliveryReplay(large, replay);
+  assert.deepEqual(withReplay.measurement, appendDeliveryReplay(out, replay).measurement);
+  assert.equal(withReplay.measurement.replay.status, 'available');
+  assert.ok(JSON.stringify(withReplay.measurement).length <= RETURN_CHAR_BUDGET);
+  assert.equal(withReplay.persistReturn, primary.persistReturn);
   assert.equal(JSON.stringify(trace), original);
-  const noRoom = { review: 'x'.repeat(RETURN_CHAR_BUDGET) };
-  assert.deepEqual(appendMeasurement(noRoom, trace), noRoom);
+});
+
+test('the final stage cut retains its disclosure and empty coverage is explicit', () => {
+  const trace = createMeasurementTrace('last-cut');
+  const finding = stampDiscovery(trace, { description: NOISE }, { agentType: 'a', dimensions: [] }, 0, 0);
+  recordStage(trace, 'discover', [finding]);
+  assert.ok(JSON.stringify({ status: 'available', text: JSON.stringify(trace) }).length > RETURN_CHAR_BUDGET);
+  assert.ok(JSON.stringify({ status: 'available', encoding: 'json-pool-lzw16-base64-v1',
+    text: compressMeasurement(JSON.stringify(trace)) }).length > RETURN_CHAR_BUDGET);
+  const before = JSON.stringify(trace);
+  const out = appendMeasurement({ ok: true, gaps: ['existing gap'] }, trace);
+  assert.equal(out.measurement.status, 'available');
+  assert.ok(JSON.stringify(out.measurement).length <= RETURN_CHAR_BUDGET);
+  const saved = decodeMeasurement(out.measurement);
+  assert.deepEqual(saved.dropped_stages, ['discover']);
+  assert.deepEqual(saved.versions, []);
+  assert.deepEqual(saved.snapshots[0].finding_version_ids, []);
+  assert.equal(saved.snapshots[0].coverage, 'unavailable');
+  assert.deepEqual(out.gaps, ['existing gap',
+    'measurement: trace stages discover not persisted because of the optional return budget']);
+  assert.equal(JSON.stringify(trace), before);
 });
 
 test('replaying old versions preserves snapshot IDs when ignored stamps collapse to one claim', () => {
@@ -189,7 +227,7 @@ test('main_only tier exclusions do not count as a delivery cap hit', async () =>
   const selected = trace.snapshots.find((s) => s.stage === 'select');
   assert.equal(selected.finding_version_ids.length, 1);
   assert.equal(selected.cap_hit, false);
-  assert.deepEqual(selected.decisions.map((d) => d.reason_code), ['delivery_tier']);
+  assert.deepEqual(selected.decisions.filter((d) => d.decision === 'not_selected').map((d) => d.reason_code), ['delivery_tier']);
 });
 
 test('mid-pipeline failure checkpoints are identical with tracing on and off', async () => {
@@ -249,29 +287,46 @@ test('measured persistence records native UTF-8 hashes, results and thrown error
   assert.deepEqual(out.measurement.replay, { status: 'unavailable', reason: 'return_budget' });
   assert.equal(out.measurement.text, '{}');
   const full = { ...envelope, text: 'x'.repeat(1100000) };
-  assert.equal(appendDeliveryReplay(full, large), full);
+  const refused = appendDeliveryReplay(full, large);
+  assert.equal(refused.text, full.text);
+  assert.deepEqual(refused.measurement, out.measurement);
+  assert.match(refused.gaps[0], /delivery replay not persisted.*return budget/);
 });
 
-for (const padding of [0, RETURN_CHAR_BUDGET - 3000]) test(`coverage ledger preserves finding history with return padding ${padding}`, () => {
+test('delivery replay refusal sheds trace only when optional metadata exceeds its own budget', () => {
+  const measurement = { status: 'available', text: '' };
+  measurement.text = 'x'.repeat(RETURN_CHAR_BUDGET - JSON.stringify(measurement).length);
+  const envelope = { ok: true, review: 'complete', measurement };
+  assert.equal(JSON.stringify(measurement).length, RETURN_CHAR_BUDGET);
+  const out = appendDeliveryReplay(envelope, { text: 'x'.repeat(1000) });
+  assert.equal(out.review, envelope.review);
+  assert.deepEqual(out.measurement, { status: 'unavailable', reason: 'return_budget',
+    replay: { status: 'unavailable', reason: 'return_budget' } });
+  assert.match(out.gaps[0], /trace and delivery replay not persisted.*return budget/);
+  assert.ok(JSON.stringify(out.measurement).length <= RETURN_CHAR_BUDGET);
+});
+
+for (const trim of [false, true]) test(`coverage ledger degrades before finding history: trim=${trim}`, () => {
   const trace = createMeasurementTrace('ledger-budget');
   const finding = makeFinding('kept');
   stampDiscovery(trace, finding, { agentType: 'code-gauntlet:bug-detector', dimensions: ['bug'] }, 0, 0);
   recordStage(trace, 'discover', [finding]);
-  trace.coverage_ledger = { version: 2, status: 'available', regions: Array.from({ length: 2000 }, (_, i) => ({ id: `region${i}`, file: 'x'.repeat(1000), line_start: 1, line_end: 2, cited_by: [] })),
+  trace.coverage_ledger = { version: 2, status: 'available', regions: Array.from({ length: 2000 }, (_, i) => ({ id: `region${i}`, file: trim ? NOISE.slice(i * 550, (i + 1) * 550) : 'x'.repeat(1000), line_start: 1, line_end: 2, cited_by: [] })),
     uncovered: [], remaining_uncovered: [], omitted: [], hunters: [], budget_bytes: 24000, assigned_bytes: 0, omitted_fact_packets: 0 };
-  const result = appendMeasurement({ ok: true, padding: 'p'.repeat(padding) }, trace);
+  const result = appendMeasurement({ ok: true }, trace);
   assert.equal(result.measurement.status, 'available');
   const saved = decodeMeasurement(result.measurement);
-  if (padding) {
+  if (trim) {
     assert.equal(saved.coverage_ledger.status, 'trimmed');
     assert.equal(saved.coverage_ledger.region_count, 2000);
   } else {
     assert.equal(result.measurement.encoding, 'json-pool-lzw16-base64-v1');
     assert.deepEqual(saved.coverage_ledger, trace.coverage_ledger);
   }
+  assert.deepEqual(saved.dropped_stages, []);
   assert.equal(saved.versions[0].finding.id, 'kept');
   assert.equal(saved.snapshots[0].coverage, 'complete');
-  assert.ok(JSON.stringify(result).length <= RETURN_CHAR_BUDGET);
+  assert.ok(JSON.stringify(result.measurement).length <= RETURN_CHAR_BUDGET);
 });
 
 test('outside-assignment hunter coverage survives typed grouping with per-member selection reasons', async () => {
@@ -315,19 +370,17 @@ test('outside-assignment hunter coverage survives typed grouping with per-member
 test('budget fallback compresses a partial history before dropping another stage', () => {
   const trace = createMeasurementTrace('partial');
   const f = stampDiscovery(trace, { description: 'discovery' }, { agentType: 'bug-detector', dimensions: ['bug'] }, 0, 0);
-  recordStage(trace, 'discover', [f]);
-  recordStage(trace, 'merge', [{ ...f, description: 'é'.repeat(300000) }]);
-  const partial = JSON.parse(JSON.stringify(trace));
-  recordStage(trace, 'verify', [{ ...f, description: 'z'.repeat(900000) }]);
-  const encodedSize = (value) => JSON.stringify({ measurement: { status: 'available', encoding: 'json-pool-lzw16-base64-v1', text: compressMeasurement(JSON.stringify(value)) } }).length;
-  const completeSize = encodedSize(trace);
-  const partialSize = encodedSize(partial);
-  const room = Math.floor((completeSize + partialSize) / 2);
-  assert.ok(completeSize > partialSize);
-  const out = appendMeasurement({ primary: 'x'.repeat(RETURN_CHAR_BUDGET - room) }, trace);
+  const invalid = stampDiscovery(trace, { id: 'invalid', description: 'rejected discovery' }, { agentType: 'a', dimensions: [] }, 0, 1);
+  recordStage(trace, 'discover', [f], { removed: [invalid], decisions: [traceDecision(invalid, 'invalid_shape', 'malformed', [f.trace_id])] });
+  recordStage(trace, 'merge', [{ ...f, description: 'é'.repeat(1200000) }]);
+  recordStage(trace, 'verify', [{ ...f, description: NOISE }]);
+  const out = appendMeasurement({ ok: true }, trace);
+  assert.equal(out.measurement.encoding, 'json-pool-lzw16-base64-v1');
   const saved = decodeMeasurement(out.measurement);
   assert.deepEqual(saved.dropped_stages, ['verify']);
   assert.equal(saved.snapshots[1].coverage, 'complete');
-  assert.equal(saved.versions.find((v) => v.finding.description.startsWith('é')).finding.description.length, 300000);
-  assert.ok(JSON.stringify(out).length <= RETURN_CHAR_BUDGET);
+  assert.ok(saved.versions.some((v) => v.trace_id === invalid.trace_id));
+  assert.equal(saved.versions.find((v) => v.finding.description.startsWith('é')).finding.description.length, 1200000);
+  assert.match(out.gaps[0], /trace stages verify not persisted.*return budget/);
+  assert.ok(JSON.stringify(out.measurement).length <= RETURN_CHAR_BUDGET);
 });
