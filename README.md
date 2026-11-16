@@ -86,9 +86,9 @@ The pipeline pins each review agent's model, so your session's model and effort 
 Setting `CLAUDE_CODE_SUBAGENT_MODEL` is the exception, because it overrides every agent.
 The session only prepares the review and delivers the result, so we recommend Sonnet at low effort for it.
 
-In the benchmark runs, a full review took a median of 9 minutes per PR, from 3 to 17.
+In benchmark runs from an Opus session, a full review took a median of 9 minutes per PR, from 3 to 17.
 Each review used a median of $5.32 at API prices, and 80% fell between $2.57 and $7.86.
-Those runs used an Opus session. A Sonnet session uses less, by an amount we have not measured.
+We have not measured the cost from a Sonnet session.
 
 ## How it reviews
 
@@ -189,22 +189,20 @@ See [security boundaries](SECURITY.md#trust-boundaries) and [PRIVACY.md](PRIVACY
 ## Benchmark results
 
 Scores come from the MIT-licensed [Martian code review benchmark](https://github.com/withmartian/code-review-benchmark): real PRs from open source projects, each with a list of known bugs.
-v4.0 reviewed the same 15 PRs three times, and a pinned judge, `claude-opus-4-5-20251101`, scored every comment.
+v4.0 reviewed the same 15 PRs three times from a Sonnet session at low effort, and a pinned judge, `claude-opus-4-5-20251101`, scored every comment.
 
 | Measure | v4.0 |
 |---|---|
-| Known bugs caught, all 15 PRs (66 bugs) | 74.7% |
-| Known bugs caught, 13 PRs with no overlap with our prompts (50 bugs) | 75.3% |
-| Known bugs caught, PRs outside our development subset (21 bugs) | 61.9% |
-| Comments that match a known bug, 13 PRs | 46.3% |
-| Sampled findings grounded in the code, blind audit | 60 of 60 |
-| Inline comments per PR | 8.1 |
+| Known bugs caught, all 15 PRs (66 bugs) | 78.8% |
+| Known bugs caught, 13 PRs with no overlap with our prompts (50 bugs) | 80.0% |
+| Known bugs caught, PRs outside our development subset (21 bugs) | 73.0% |
+| Comments that match a known bug, 13 PRs | 38.9% |
+| Inline comments per PR | 9.3 |
 
 The benchmark lists only some of each PR's real problems, so a comment that matches no known bug is not a false alarm.
-For the audit, two auditors from different model families each checked 60 sampled findings without knowing their source.
 
 Two limits apply.
-Every run used an Opus session, and we have not benchmarked a Sonnet session.
+Eleven of the PRs ran on a build just before the release, whose later fixes affect only reviews with over 40 findings.
 The judge and the plugin both use Anthropic models, and same-vendor bias has not been measured here.
 
 We run the benchmark by hand, not on every release.
