@@ -93,7 +93,8 @@ export function coerceInt(value, policy) {
   return Number.isInteger(n) ? n : null;
 }
 
-// Bound pathological return payloads so persistence can fall back to the artifact writer and a smaller resume state.
+// Soft ceiling for optional telemetry and failure replay state, not completed artifacts.
+// The host writes full JSON results to disk; shedding review bytes here would lose work.
 export const RETURN_CHAR_BUDGET = 1000000;
 
 export function dottedValue(object, path) {

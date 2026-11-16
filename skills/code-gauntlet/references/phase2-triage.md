@@ -280,7 +280,7 @@ Model dispatch, including user mappings and gateway naming, follows [model-polic
 - `changedFilesPath` — `{output_dir}/code-gauntlet-files-{head_sha_short}.json`, the on-disk companion to `changedFiles`. Optional provenance only — the workflow has no disk access and never opens it.
 - `baseBranch` — the base branch name (verify/blame).
 - `unsupportedReviewConfig` — copy `receipt.unsupported_review_config`; a boolean controlling only the local retired-settings notice.
-- `persist` - optional, `{ returnPrimaries: true }`. Stamp it to use the RETURN channel. The workflow derives the fallback assemble command from `pluginRoot`; omit both script-path fields. With `returnPrimaries: false`, the artifact-writer transcribes primaries and the executor derives post-review and checkpoint artifacts. Without `persist`, the legacy by-value writer remains available.
+- `persist` - optional, `{ returnPrimaries: true }`. Stamp it to use the RETURN channel. The caller materializes exact returned bytes regardless of size; omit both script-path fields. With `returnPrimaries: false`, the artifact-writer transcribes primaries and the executor derives post-review and checkpoint artifacts. Without `persist`, the legacy by-value writer remains available.
 
 **`verify` handoff (sha-scoped paths for the executor's pinned command):**
 

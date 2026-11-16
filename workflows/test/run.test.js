@@ -435,8 +435,7 @@ test('final disposition survives replay and persistence', async () => {
   const returned = await runAndCapture(validArgs({ persist: { returnPrimaries: true }, checkpoints: { challenge: raw } }));
   const entries = returned.out.persistReturn.entries;
   const plan = JSON.parse(entries.at(-1).text);
-  assert.equal(plan.planVersion, 3);
-  assert.equal(plan.checkpoint.mode, 'literal');
+  assert.equal(plan.planVersion, 4);
   assert.deepEqual(deriveFromPlan(plan, entries[0].text).checkpoints.phases.challenge.findings, raw.findings);
   for (const invalid of [
     { findings: [{}], postReview: [] },

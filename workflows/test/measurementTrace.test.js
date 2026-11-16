@@ -117,7 +117,10 @@ test('compression preserves history and budget fallback preserves discovery and 
   assert.ok(tighter.versions.some((v) => v.trace_id === invalid.trace_id));
   assert.equal(JSON.stringify(trace), original);
   const noRoom = { review: 'x'.repeat(RETURN_CHAR_BUDGET) };
-  assert.deepEqual(appendMeasurement(noRoom, trace), noRoom);
+  const refused = appendMeasurement(noRoom, trace);
+  assert.equal(refused.review, noRoom.review);
+  assert.deepEqual(refused.measurement, { status: 'unavailable', reason: 'return_budget' });
+  assert.match(refused.gaps[0], /trace not persisted.*return budget/);
 });
 
 test('replaying old versions preserves snapshot IDs when ignored stamps collapse to one claim', () => {
@@ -249,7 +252,21 @@ test('measured persistence records native UTF-8 hashes, results and thrown error
   assert.deepEqual(out.measurement.replay, { status: 'unavailable', reason: 'return_budget' });
   assert.equal(out.measurement.text, '{}');
   const full = { ...envelope, text: 'x'.repeat(1100000) };
-  assert.equal(appendDeliveryReplay(full, large), full);
+  const refused = appendDeliveryReplay(full, large);
+  assert.equal(refused.text, full.text);
+  assert.deepEqual(refused.measurement.replay, { status: 'unavailable', reason: 'return_budget' });
+  assert.match(refused.gaps[0], /delivery replay not persisted.*return budget/);
+});
+
+test('delivery replay refusal sheds optional trace to fit its disclosure', () => {
+  const envelope = { ok: true, review: 'complete', measurement: { status: 'available', text: 'x'.repeat(RETURN_CHAR_BUDGET - 150) } };
+  assert.ok(JSON.stringify(envelope).length <= RETURN_CHAR_BUDGET);
+  const out = appendDeliveryReplay(envelope, { text: 'x'.repeat(1000) });
+  assert.equal(out.review, envelope.review);
+  assert.deepEqual(out.measurement, { status: 'unavailable', reason: 'return_budget',
+    replay: { status: 'unavailable', reason: 'return_budget' } });
+  assert.match(out.gaps[0], /trace and delivery replay not persisted.*return budget/);
+  assert.ok(JSON.stringify(out).length <= RETURN_CHAR_BUDGET);
 });
 
 for (const padding of [0, RETURN_CHAR_BUDGET - 3000]) test(`coverage ledger preserves finding history with return padding ${padding}`, () => {

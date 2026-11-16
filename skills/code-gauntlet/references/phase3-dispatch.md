@@ -15,7 +15,8 @@ copy the bundle, split the stages, or reproduce them inline. Stage defaults and 
 The compact return is
 `{ ok, phaseReached, stats, artifactPaths: { findings, report, postReview, checkpoints }, checkpoints, resolvedPolicy, gaps, persistReturn }`.
 On RETURN, paths are intended destinations until Phase 8 materializes the primaries;
-`persistReturn` carries `channel`, `nonce`, `planPath`, and `entries`. The awaiter elides entries
+`persistReturn` carries `channel`, `nonce`, and `entries`, plus `planPath` for derivation
+or `assemble:false` when all artifacts are returned verbatim. The awaiter elides entries
 into `paths` and `resolvedPath`; never transcribe them. Writer paths persist before returning.
 
 ## Wait protocol

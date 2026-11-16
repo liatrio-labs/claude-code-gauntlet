@@ -77,9 +77,11 @@ for (const mode of ['return', 'derived', 'legacy', 'writer-failure', 'empty', 'c
   const artifacts = {};
   if (entries) {
     for (const entry of entries) artifacts[entry.path] = entry.text;
-    const derived = deriveFromPlan(JSON.parse(entries.at(-1).text), entries[0].text);
-    artifacts[paths.postReview] = JSON.stringify(derived.postReview, null, 2);
-    artifacts[paths.checkpoints] = JSON.stringify(derived.checkpoints, null, 2);
+    if (out.persistReturn?.assemble !== false) {
+      const derived = deriveFromPlan(JSON.parse(entries.at(-1).text), entries[0].text);
+      artifacts[paths.postReview] = JSON.stringify(derived.postReview, null, 2);
+      artifacts[paths.checkpoints] = JSON.stringify(derived.checkpoints, null, 2);
+    }
   } else if (payload) {
     for (const key of Object.keys(paths)) artifacts[paths[key]] = key === 'report'
       ? payload.report : JSON.stringify(payload[key], null, 2);

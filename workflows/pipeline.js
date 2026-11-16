@@ -2237,12 +2237,17 @@ function recordStage(trace, stage, output, details = {}) {
 }
 function appendMeasurement(envelope, trace) {
   if (!trace) return envelope;
+  const unavailable = { status: 'unavailable', reason: 'return_budget' };
+  if (JSON.stringify(envelope).length > RETURN_CHAR_BUDGET) return appendBudgetedMeasurement(envelope, unavailable, unavailable);
   const candidate = deepClone(trace);
   const available = (compress = false) => {
     const text = JSON.stringify(candidate);
-    const plain = { ...envelope, measurement: { status: 'available', text } };
+    const disclosed = candidate.dropped_stages.length ? {
+      ...envelope, gaps: [...(envelope.gaps || []), `measurement: trace stages ${candidate.dropped_stages.join(', ')} not persisted because of the optional return budget`],
+    } : envelope;
+    const plain = { ...disclosed, measurement: { status: 'available', text } };
     if (!compress || JSON.stringify(plain).length <= RETURN_CHAR_BUDGET) return plain;
-    return { ...envelope, measurement: { status: 'available', encoding: 'json-pool-lzw16-base64-v1', text: compressMeasurement(text) } };
+    return { ...disclosed, measurement: { status: 'available', encoding: 'json-pool-lzw16-base64-v1', text: compressMeasurement(text) } };
   };
   let result = available(true);
   if (JSON.stringify(result).length > RETURN_CHAR_BUDGET && candidate.coverage_ledger) {
@@ -2267,13 +2272,19 @@ function appendMeasurement(envelope, trace) {
     });
     result = available(true);
   }
-  return appendBudgetedMeasurement(envelope, result.measurement, { status: 'unavailable', reason: 'return_budget' });
+  return appendBudgetedMeasurement(envelope, result.measurement, unavailable);
 }
 function appendBudgetedMeasurement(envelope, available, unavailable) {
   const candidate = { ...envelope, measurement: available };
   if (JSON.stringify(candidate).length <= RETURN_CHAR_BUDGET) return candidate;
-  const fallback = { ...envelope, measurement: unavailable };
-  return JSON.stringify(fallback).length <= RETURN_CHAR_BUDGET ? fallback : envelope;
+  const gaps = (missing) => [...(envelope.gaps || []), `measurement: ${missing} not persisted because of the optional return budget`];
+  const fallback = { ...envelope, measurement: unavailable,
+    gaps: gaps(unavailable.replay ? 'delivery replay' : 'trace') };
+  if (unavailable.replay && envelope.measurement?.status === 'available' && JSON.stringify(fallback).length > RETURN_CHAR_BUDGET) {
+    return { ...envelope, measurement: { status: 'unavailable', reason: 'return_budget', replay: unavailable.replay },
+      gaps: gaps('trace and delivery replay') };
+  }
+  return fallback;
 }
 function stripTraceFields(value) {
   if (!value || typeof value !== 'object') return;
@@ -6707,6 +6718,31 @@ function persistPlan(inp, paths) {
   plan.planChecksum = fnv1a32(JSON.stringify(plan, null, 2));
   return plan;
 }
+function returnPersistPlan(inp, paths) {
+  const plan = persistPlan(inp, paths);
+  const byId = new Map((inp.findings || []).map((f) => [f.id, toV2Aliased(f)]));
+  const projections = [];
+  const visit = (value, at) => {
+    if (!value || typeof value !== 'object') return value;
+    const source = !Array.isArray(value) && byId.get(value.id);
+    if (source) {
+      const keys = Object.keys(value);
+      const overrides = Object.fromEntries(keys
+        .filter((key) => !Object.hasOwn(source, key) || JSON.stringify(source[key]) !== JSON.stringify(value[key]))
+        .map((key) => [key, value[key]]));
+      projections.push({ at, id: value.id, keys, overrides });
+      return null;
+    }
+    return Array.isArray(value) ? value.map((child, index) => visit(child, [...at, index]))
+      : Object.fromEntries(Object.entries(value).map(([key, child]) => [key, visit(child, [...at, key])]));
+  };
+  plan.planVersion = 4;
+  plan.checkpoint = { path: paths.checkpoints, source: paths.findings,
+    skeleton: visit(plan.checkpoint.skeleton, []), projections };
+  delete plan.planChecksum;
+  plan.planChecksum = fnv1a32(JSON.stringify(plan, null, 2));
+  return plan;
+}
 function persistDerivable(inp) {
   for (const [label, value] of [
     ['findings', inp.findings],
@@ -6806,17 +6842,23 @@ async function writeArtifacts(ctx, input) {
     const scriptPath = inp.persist && inp.pluginRoot
       ? trustedScriptPath(inp.pluginRoot, TRUSTED_SCRIPT_BASENAMES.assemble) : null;
     const wantsReturn = persist.returnPrimaries === true;
-    if (scriptPath || wantsReturn) {
+    if (wantsReturn) {
+      const derivable = persistDerivable(inp);
+      if (derivable.ok) return returnChannelPersist(inp, paths, outputDir, sha);
+      const held = writerPayload(inp);
+      const { findingsJson, reportMd } = persistPrimaries(inp);
+      return { artifactPaths: paths, gaps: [], partial: false,
+        persistReturn: { channel: 'return', nonce: inp.nonce || null, assemble: false,
+          entries: [
+            { path: paths.findings, text: findingsJson },
+            { path: paths.report, text: reportMd },
+            { path: paths.postReview, text: JSON.stringify(held.postReview, null, 2) },
+            { path: paths.checkpoints, text: JSON.stringify(held.checkpoints, null, 2) },
+          ] } };
+    }
+    if (scriptPath) {
       const derivable = persistDerivable(inp);
       if (derivable.ok) {
-        if (wantsReturn) {
-          const viaReturn = returnChannelPersist(inp, paths, outputDir, sha);
-          if (viaReturn.ok) return viaReturn.result;
-          const gap = `writeArtifacts: ${viaReturn.reason} — persisted through the artifact-writer instead, which transcribes the bytes`;
-          if (!scriptPath) return await writeArtifactsLegacy(ctx, inp, paths, outputDir, policy, partial, [gap]);
-          const fallback = await writeArtifactsDerived(ctx, inp, paths, outputDir, sha, policy, partial, scriptPath);
-          return { ...fallback, gaps: [gap].concat(fallback.gaps) };
-        }
         return await writeArtifactsDerived(ctx, inp, paths, outputDir, sha, policy, partial, scriptPath);
       }
       return await writeArtifactsLegacy(ctx, inp, paths, outputDir, policy, partial, [
@@ -6855,37 +6897,27 @@ async function writeArtifactsLegacy(c, inp, paths, outputDir, policy, partial, e
     return partial(`writer agent threw (${persistErrorMessage(e)})`, extraGaps);
   }
 }
-function persistEntries(inp, paths, outputDir, sha) {
+function persistEntries(inp, paths, outputDir, sha, viaReturn = false) {
   const planPath = persistPlanPath(outputDir, sha);
   const { findingsJson, reportMd } = persistPrimaries(inp);
-  const plan = persistPlan(inp, paths);
+  const plan = viaReturn ? returnPersistPlan(inp, paths) : persistPlan(inp, paths);
   return {
     plan,
     planPath,
     entries: [
       { path: paths.findings, text: findingsJson },
       { path: paths.report, text: reportMd },
-      { path: planPath, text: hardenEscapeRuns(JSON.stringify(plan, null, 2)) },
+      { path: planPath, text: hardenEscapeRuns(JSON.stringify(plan, null, viaReturn ? undefined : 2)) },
     ],
   };
 }
 function returnChannelPersist(inp, paths, outputDir, sha) {
-  const { planPath, entries } = persistEntries(inp, paths, outputDir, sha);
-  const chars = JSON.stringify(entries).length;
-  if (chars > RETURN_CHAR_BUDGET) {
-    return {
-      ok: false,
-      reason: `the persisted primaries serialize to ${chars} chars, over the ${RETURN_CHAR_BUDGET}-char return budget`,
-    };
-  }
+  const { planPath, entries } = persistEntries(inp, paths, outputDir, sha, true);
   return {
-    ok: true,
-    result: {
-      artifactPaths: paths,
-      gaps: [],
-      partial: false,
-      persistReturn: { channel: 'return', nonce: inp.nonce || null, planPath, entries },
-    },
+    artifactPaths: paths,
+    gaps: [],
+    partial: false,
+    persistReturn: { channel: 'return', nonce: inp.nonce || null, planPath, entries },
   };
 }
 async function writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, partial, assembleScriptPath) {

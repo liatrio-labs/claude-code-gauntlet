@@ -91,13 +91,20 @@ export function recordStage(trace, stage, output, details = {}) {
 }
 export function appendMeasurement(envelope, trace) {
   if (!trace) return envelope;
+  const unavailable = { status: 'unavailable', reason: 'return_budget' };
+  // There is no room to recover by compressing telemetry when primaries alone
+  // exceed the soft ceiling. Avoid copying and compressing their entire history.
+  if (JSON.stringify(envelope).length > RETURN_CHAR_BUDGET) return appendBudgetedMeasurement(envelope, unavailable, unavailable);
   const candidate = deepClone(trace);
   const available = (compress = false) => {
     const text = JSON.stringify(candidate);
-    const plain = { ...envelope, measurement: { status: 'available', text } };
+    const disclosed = candidate.dropped_stages.length ? {
+      ...envelope, gaps: [...(envelope.gaps || []), `measurement: trace stages ${candidate.dropped_stages.join(', ')} not persisted because of the optional return budget`],
+    } : envelope;
+    const plain = { ...disclosed, measurement: { status: 'available', text } };
     if (!compress || JSON.stringify(plain).length <= RETURN_CHAR_BUDGET) return plain;
     // Rich finding history shares the return budget with persisted primaries; compress before discarding stages.
-    return { ...envelope, measurement: { status: 'available', encoding: 'json-pool-lzw16-base64-v1', text: compressMeasurement(text) } };
+    return { ...disclosed, measurement: { status: 'available', encoding: 'json-pool-lzw16-base64-v1', text: compressMeasurement(text) } };
   };
   let result = available(true);
   if (JSON.stringify(result).length > RETURN_CHAR_BUDGET && candidate.coverage_ledger) {
@@ -123,13 +130,21 @@ export function appendMeasurement(envelope, trace) {
     });
     result = available(true);
   }
-  return appendBudgetedMeasurement(envelope, result.measurement, { status: 'unavailable', reason: 'return_budget' });
+  return appendBudgetedMeasurement(envelope, result.measurement, unavailable);
 }
 export function appendBudgetedMeasurement(envelope, available, unavailable) {
   const candidate = { ...envelope, measurement: available };
   if (JSON.stringify(candidate).length <= RETURN_CHAR_BUDGET) return candidate;
-  const fallback = { ...envelope, measurement: unavailable };
-  return JSON.stringify(fallback).length <= RETURN_CHAR_BUDGET ? fallback : envelope;
+  // Even when primaries alone exceed the soft ceiling, carry the small refusal
+  // and its disclosure so absence cannot be mistaken for an unmeasured run.
+  const gaps = (missing) => [...(envelope.gaps || []), `measurement: ${missing} not persisted because of the optional return budget`];
+  const fallback = { ...envelope, measurement: unavailable,
+    gaps: gaps(unavailable.replay ? 'delivery replay' : 'trace') };
+  if (unavailable.replay && envelope.measurement?.status === 'available' && JSON.stringify(fallback).length > RETURN_CHAR_BUDGET) {
+    return { ...envelope, measurement: { status: 'unavailable', reason: 'return_budget', replay: unavailable.replay },
+      gaps: gaps('trace and delivery replay') };
+  }
+  return fallback;
 }
 
 // Persistence agents must see exactly the same bytes as ordinary reviews.
