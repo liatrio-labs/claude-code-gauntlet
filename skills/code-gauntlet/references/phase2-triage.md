@@ -123,13 +123,13 @@ For PR/MR server diffs, validate the saved diff before relying on it. Branch/loc
 
 ## 2d. Gather Project Context
 
-After 2c saves the changed-file list, follow [phase2-preparation.md: Discover REVIEW.md and stamp its raw text](phase2-preparation.md#discover-reviewmd-and-stamp-its-raw-text).
+After 2c saves the changed-file list, follow [phase2-preparation.md: Collect project rules](phase2-preparation.md#collect-project-rules).
 
 ### REVIEW.md Detection
 
 Complete 2d before 2e.
 
-A successful empty discovery never blocks or asks a question. Collector or raw Read failures stop the handoff.
+A successful empty discovery never blocks or asks a question. Collector failures stop the handoff.
 
 ---
 
@@ -184,7 +184,7 @@ Never use `grep` or `find` from Bash for AI detection.
 
 The workflow computes the dispatched dimensions with `deriveAgentFlags(riskTable, changedLines, scopeAnswer)` in `workflows/src/discover.js`.
 A `light` answer on a light-eligible diff (every changed file low-risk and fewer than 50 changed lines) yields `{ deep: false }` and dispatches only bug-detector and security-reviewer.
-Every other valid run dispatches all seven discovery agents.
+Every other valid run dispatches all seven specialists, followed by a gap hunter when citation-only coverage leaves reportable regions within its read budget. Light scope disables the hunter.
 
 ---
 
@@ -225,8 +225,7 @@ The title and URL reach the script only through the pipe.
 <!-- /generated-from-registry-identity:pr_identity_fields -->
 
 **Omit optional fields you have no value for; never stamp an explicit `null`.**
-The waist treats `null` as absent for `reviewConfig`, `exclusionPatterns`, `delivery`, and `checkpoints`.
-Keep `reviewConfigPath: null` when the receipt has no root REVIEW.md, even if it lists subdirectory files; this field records root provenance.
+The waist treats `null` as absent for `delivery` and `checkpoints`.
 
 **Required fields (`validateArgs` fails loud without them):**
 
@@ -258,10 +257,6 @@ The workflow derives these waist fields from the copied `configEcho` receipt. Do
 - `delivery.tier` (headless and interactive runs): from `configEcho.delivery_tier`. Leave `tier` out of any stamped `delivery`.
 - `reviewScope.requested` (headless runs, when `reviewScope.detector` is an object): from `configEcho.reviewed_policy`; `skip` derives as `full`. Stamp `reviewScope` and leave `requested` out of it.
 - `scopeAnswer` (headless runs, when every changed file is low risk and fewer than 50 lines changed): from `configEcho.trivial_scope`. Leave it out.
-
-The workflow fills these receipt entries itself; never stamp them.
-
-- `configEcho.review_md` (interactive runs): `present` when the `reviewMd` array is nonempty, else `absent`; without `reviewMd`, `present` when `reviewConfigPath` is set, else `absent`.
 <!-- /generated-from-registry-identity:derived_waist_fields -->
 
 **`policy` (model policy the workflow runs under):**
@@ -279,14 +274,13 @@ Model dispatch, including user mappings and gateway naming, follows [model-polic
 **Other inputs (optional unless noted):**
 
 - `scopeAnswer` — `"light"` or `"full"`, stamped only when the 2e trivial-scope gate asked (see 2e).
-- `contextLines` / `contextChars` / `contextMaxLineChars` — the shared context file's measured size and maximum line length (including LF) from `write_shared_context.py`'s receipt. **Not provenance — consumed** by the Read plan. Optional (absent ⇒ count-free read-to-end wording); character measurements require `contextLines`; all must be positive integers.
+- `contextLines` / `contextChars` / `contextMaxLineChars` — the shared context file's measured size and maximum line length (including LF) from `write_shared_context.py`'s receipt. **Not provenance — consumed** by the Read plan. Optional (absent ⇒ count-free read-to-end wording); all present measurements must be positive integers. Missing `contextLines` produces one count-free-read gap even if other measurements were copied.
+- `contextReadPlanVersion` / `contextReadChunks` — version `1` and a short list of positive per-chunk line counts from the writer. Offsets follow from cumulative counts, whose sum must equal `contextLines`; per-chunk character counts are not copied. Missing or invalid data, including an empty list for a non-empty file, yields one disclosed fallback. Aggregate-only receipts remain compatible with a gap because they cannot be distinguished from a current receipt with both plan fields lost. Every measured chunk is retained up to the shared 2,000-chunk ceiling; compact variable plans are bounded at 26,400 characters plus the context path.
+- `discoveryPlanRef` — only the preparation writer's filename and SHA-256. The plan remains on disk. A pinned script computes citation-only coverage and chooses the hunter's regions and facts within 24,000 bytes and 750 lines, including assignment reads. Executor inputs use valid JSON parts of at most 1,000 characters; each checked response is at most 2,048 characters. Selection and finalization each use one Sonnet executor call per part, with at most four parts per operation. Finalization runs only after a hunter dispatch. Missing or invalid references leave primary review running with coverage unavailable. The trace contains a bounded summary and a SHA-256 reference to the full coverage ledger artifact. Inline plans are not accepted. Existing `removedTests` and read-plan fields retain their current handoff.
 - `changedFilesPath` — `{output_dir}/code-gauntlet-files-{head_sha_short}.json`, the on-disk companion to `changedFiles`. Optional provenance only — the workflow has no disk access and never opens it.
 - `baseBranch` — the base branch name (verify/blame).
-- `reviewMd` / `reviewMdSetChecksum` - `[{ path, text, checksum }, ...]` plus `receipt.review_md_checksum` in collector receipt order (2d), the raw text of every REVIEW.md listed by the receipt; never hand-parse it. An empty array is a legal, authoritative "discovered nothing."
-- `exclusionsText` — the raw text of whatever exclusions source was found (e.g. `.reviewignore`), parsed by `resolveReviewConfig` via `loadExclusions` (`workflows/src/reviewConfig.js`).
-- `reviewConfig` / `exclusionPatterns` — the legacy pre-parsed form; never stamp it alongside `reviewMd`/`exclusionsText` for the same axis.
-- `reviewConfigPath` - the root REVIEW.md path (or `null`), carried for provenance. When `reviewMd` is an array, this must be non-null iff an entry has path exactly "REVIEW.md"; legacy pre-parsed callers retain their existing path provenance.
-- `persist` - optional, `{ returnPrimaries: true }`. Stamp it to use the RETURN channel. The workflow derives the fallback assemble command from `pluginRoot`; omit both script-path fields. With `returnPrimaries: false`, the artifact-writer transcribes primaries and the executor derives post-review and checkpoint artifacts. Without `persist`, the legacy by-value writer remains available.
+- `unsupportedReviewConfig` — copy `receipt.unsupported_review_config`; a boolean controlling only the local retired-settings notice.
+- `persist` - optional, `{ returnPrimaries: true }`. Stamp it to use the RETURN channel. The caller materializes exact returned bytes regardless of size; omit both script-path fields. With `returnPrimaries: false`, the artifact-writer transcribes primaries and the executor derives post-review and checkpoint artifacts. Without `persist`, the legacy by-value writer remains available.
 
 **`verify` handoff (sha-scoped paths for the executor's pinned command):**
 
@@ -310,4 +304,4 @@ Announce triage results before proceeding: PR title, review mode, file counts by
 
 For 1000+ line PRs, add: 'This PR is [N] lines; consider splitting it into smaller PRs.'
 
-If the collector receipt (2d) has `gaps[]`, announce each as a one-line note. Also announce every `sources[]` and `review_md[]` entry with `modified_in_diff: true`; a change to rules governing this review is disclosed, not blocked.
+If the collector receipt (2d) has `gaps[]`, announce each as a one-line note. Also announce every `sources[]` entry with `modified_in_diff: true`; a change to rules governing this review is disclosed, not blocked.

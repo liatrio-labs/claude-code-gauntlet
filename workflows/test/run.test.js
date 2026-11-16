@@ -1,3 +1,5 @@
+import { withPreparedPlan } from './helpers/diskDiscovery.js';
+import { contextReadPlan, setupContext, sharedContextLine } from '../src/contextPlan.js';
 import { test } from 'node:test';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -5,7 +7,7 @@ import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { runWith, compactMethodology } from '../src/run.js';
-import { checkpointArgs, validArgs, prIdentity } from './helpers/argsFixtures.js';
+import { checkpointArgs, validArgs, interactiveArgs, prIdentity } from './helpers/argsFixtures.js';
 import { makeCtx, makeFinding } from './helpers/pipelineMock.js';
 import { PATHS, challengeOutput, replayProducedCheckpoint, runAndCapture, persistCtx, persistInput } from './helpers/persistFixtures.js';
 import { captureRun, mixedSurvivors, withSandboxGlobals, drainMicrotasks } from './helpers/runFixtures.js';
@@ -13,7 +15,7 @@ import { deriveFromPlan } from './helpers/deriveFromPlan.js';
 import { normalizeForChecksum, fnv1a32 } from '../src/wire.js';
 import { disposeFindings } from '../src/dispose.js';
 import { applyChallenges } from '../src/applyChallenges.js';
-import { renderReport, renderSummaryBody } from '../src/renderReport.js';
+import { renderReport, renderPublicSummary } from '../src/renderReport.js';
 import { writeArtifacts } from '../src/persist.js';
 import { deltaContentProof } from '../src/verifyWire.js';
 import { mergeStage } from '../src/mergeFindings.js';
@@ -32,7 +34,7 @@ test('ordinary findings retain admission across path roles', () => {
 });
 
 test('a rewritten report-only verdict cannot grant admission', () => {
-  const finding = evaluateAdmission(makeFinding('other', { dimension: 'simplification', quality_basis: 'other',
+  const finding = evaluateAdmission(makeFinding('other', { dimension: 'simplification', quality_basis: 'other', verdict: { claim: 'confirmed', consequence: 'no_practical_effect', justification: 'Preference' },
     admission_assessments: [{ predicate: 'present_defect', status: 'rejected', references: ['primary'] }] }));
   assert.equal(finding.admission.status, 'report_only');
   assert.ok(hasAdmission(finding));
@@ -70,7 +72,7 @@ test('admitted equivalent survives host path rewriting through delivery', async 
   const tampered = structuredClone(delivered);
   tampered.resolved_references = { production_element: { file: 'foreign' } };
   assert.equal(hasAdmission(tampered), false);
-  for (const [field, value] of [['status', 'held_back'], ['reasons', [{ predicate: 'validation', status: 'held_back' }]], ['tier', 'main']]) {
+  for (const [field, value] of [['status', 'held_back'], ['reasons', [{ predicate: 'validation', status: 'held_back' }]], ['tier', 'suggestion']]) {
     const rewritten = structuredClone(delivered);
     rewritten.admission[field] = value;
     assert.equal(hasAdmission(rewritten), false, field);
@@ -108,9 +110,9 @@ test('live and replay admission agree after filtering strips an oversized equiva
 
 test('reference diagnostics distinguish absent evidence from dropped evidence by field', () => {
   for (const [dimension, extra, field, predicates] of [
-    ['simplification', { quality_basis: 'duplication' }, 'duplicate_of', ['resolved_duplicate', 'confirmed_duplication']],
-    ['type_design', { quality_basis: 'stack_idiom' }, 'precedent', ['resolved_precedent', 'precedent_not_added', 'applicable']],
-    ['bug', { policy_subject: 'coverage', test_kind: 'critical_gap', criticality: 8 }, 'production_element', ['resolved_production_element', 'complete_behavioral_absence']],
+    ['simplification', { quality_basis: 'duplication' }, 'duplicate_of', ['resolved_duplicate']],
+    ['type_design', { quality_basis: 'stack_idiom' }, 'precedent', ['resolved_precedent', 'precedent_not_added']],
+    ['bug', { policy_subject: 'coverage', test_kind: 'critical_gap', criticality: 8 }, 'production_element', ['resolved_production_element']],
   ]) {
     const unrelated = { field: 'candidate_tests', reason: `invalid ${field} reference`, action: 'reference dropped' };
     const missing = evaluateAdmission(makeFinding('missing', { dimension, ...extra, reference_diagnostics: [unrelated] }));
@@ -124,9 +126,43 @@ test('reference diagnostics distinguish absent evidence from dropped evidence by
   }
 });
 
+for (const [name, argsFor, cap] of [
+  ['headless defaults', validArgs, undefined],
+  ['interactive defaults', interactiveArgs, undefined],
+  ['explicit caller cap', validArgs, 40],
+]) test(`challenge coverage for 200 findings: ${name}`, async () => {
+  const findings = Array.from({ length: 200 }, (_, i) => makeFinding(`C${String(i).padStart(3, '0')}`));
+  const args = argsFor({ persist: { returnPrimaries: true },
+    ...(cap === undefined ? {} : { limits: { challengeCap: cap } }) });
+  assert.equal(Object.hasOwn(args.limits, 'challengeCap'), cap !== undefined);
+  const ctx = makeCtx(args, { findings });
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, true);
+  assert.equal(out.stats.merged, findings.length);
+  const expected = cap ?? findings.length;
+  const calls = ctx.calls.filter((call) => call.agentType === 'code-gauntlet:challenger');
+  assert.equal(calls.length, expected);
+  const claims = new Set(calls.map((call) => call.prompt.match(/Claim: finding (C\d{3})/)[1]));
+  assert.equal(claims.size, expected);
+  if (cap === undefined) assert.deepEqual(claims, new Set(findings.map((f) => f.id)));
+  assert.equal(out.stats.challenge.dispatched, expected);
+  assert.equal(out.stats.challenge.completed, expected);
+  assert.equal(out.stats.challenge.skipped, findings.length - expected);
+  const entries = out.persistReturn.entries;
+  const persisted = JSON.parse(entries.find((entry) => entry.path === out.artifactPaths.findings).text);
+  assert.equal(persisted.filter((f) => f.challenge === 'survived').length, expected);
+  assert.equal(persisted.filter((f) => f.challenge === 'capped').length, findings.length - expected);
+  const capGaps = out.gaps.filter((gap) => gap.includes('challengeCap='));
+  assert.deepEqual(capGaps, cap === undefined ? [] : [
+    `challenge: ${findings.length - expected} finding(s) over challengeCap=${cap} left unchallenged (challenge=capped, pipeline-degraded)`,
+  ]);
+  const report = entries.find((entry) => entry.path === out.artifactPaths.report).text;
+  assert.equal(report.includes('## Unverified / pipeline-degraded findings'), cap !== undefined);
+});
+
 test('admission precedes challenge and placement on fresh and resumed runs', async () => {
   const findings = [
-    makeFinding('off-diff', { file: 'shared.txt', agent: 'bug-detector', diff_validation: { in_diff: false }, reachability: 'current',
+    makeFinding('off-diff', { severity: 'critical', file: 'shared.txt', agent: 'bug-detector', diff_validation: { in_diff: false }, reachability: 'current',
       admission_assessments: [{ predicate: 'current_defect', status: 'confirmed', references: ['primary'] }] }),
     makeFinding('future', { reachability: 'future_change_only', confidence: 85 }),
     makeFinding('extra', { dimension: 'test_coverage', test_kind: 'additional_case', criticality: 9, failure_scenario: 'Extra case',
@@ -161,13 +197,16 @@ test('admission precedes challenge and placement on fresh and resumed runs', asy
   assert.equal(byId['off-diff'].body_fix_task_eligible, true);
   assert.equal(byId.future.disposition, 'held_back');
   assert.ok(byId.future.disposition_reasons.includes('challenge_cap'));
-  for (const id of ['extra', 'other', 'rejected', 'partial-gap']) {
+  for (const id of ['extra', 'partial-gap']) {
     assert.equal(byId[id].disposition, 'report_only', id);
     assert.equal(byId[id].challenge, 'admission_terminal');
     assert.equal(byId[id].delivery_group, undefined);
     assert.equal(byId[id].consolidation_key, undefined);
   }
-  assert.equal(byId.unresolved.disposition, 'held_back');
+  for (const id of ['other', 'rejected', 'unresolved']) {
+    assert.equal(byId[id].disposition, 'held_back');
+    assert.ok(byId[id].disposition_reasons.includes('challenge_cap'));
+  }
   assert.equal(byId['unsafe-precedent'].disposition, 'held_back');
   const raw = first.payload.checkpoints.phases.challenge;
   assert.equal(raw.findings[0].disposition, undefined);
@@ -190,97 +229,20 @@ test('admission precedes challenge and placement on fresh and resumed runs', asy
   assert.equal(fresh.payload.findings[0].admission.status, 'admitted');
   assert.equal(fresh.payload.findings[0].disposition, 'deliver');
   const convention = filterStage({ findings: [makeFinding('convention-tier', {
-    dimension: 'convention', agent: 'conventions-and-intent', claude_md_rule: 'Keep declarations ordered',
+    dimension: 'convention', agent: 'conventions-and-intent', verdict: undefined, claude_md_rule: 'Keep declarations ordered',
     title: 'Declaration order', description: 'This declaration conflicts with the cited repository rule for symbol placement.',
   })] });
-  assert.equal(convention.filtered[0].report_tag, 'suggestion');
+  assert.equal(convention.filtered[0].verdict_route, 'not-established');
   const mainOnly = await runAndCapture(validArgs({ checkpoints: { filter: convention }, delivery: { tier: 'main_only' } }));
-  assert.equal(mainOnly.payload.findings[0].report_tag, 'suggestion');
-  assert.deepEqual(mainOnly.payload.postReview, []);
+  assert.equal(mainOnly.payload.findings[0].report_tag, 'main');
+  assert.equal(mainOnly.payload.postReview.length, 1);
 });
 
-test('kind routing preserves origin and core ranking', async () => {
-  const raw = [
-    ['production', 'test_coverage', { test_kind: 'production_defect', criticality: 9, failure_scenario: 'Failure' }],
-    ['quality', 'type_design', { quality_basis: 'current_correctness' }],
-    ['simplify', 'simplification', { quality_basis: 'current_correctness', behavior_preserved: 'Unchanged' }],
-    ['other', 'type_design', { quality_basis: 'other', title: 'Runtime null pointer type error' }],
-    ['extra', 'test_coverage', { test_kind: 'additional_case', criticality: 9, failure_scenario: 'Failure', title: 'Race condition always passes' }],
-    ['convention', 'convention', { claude_md_rule: 'A rule', title: 'Incorrect result' }],
-    ['comment', 'documentation', {}],
-  ].map(([id, dimension, extra], index) => makeFinding(id, { dimension, file: `${id}.txt`, line_start: index + 1,
-    agent: dimension === 'test_coverage' ? 'test-analyzer' : dimension === 'simplification' ? 'code-simplifier'
-      : dimension === 'type_design' ? 'type-design-analyzer' : 'conventions-and-intent', confidence: 80,
-    title: 'A grounded observation', origin_dimension: 'security', effective_test_kind: 'defective_test', ...extra }));
-  const merged = mergeStage({ findings: raw }, {});
-  const out = filterStage({ findings: merged.findings, reviewConfig: { confidence_threshold: 70 } });
-  const byId = Object.fromEntries(out.filtered.map((f) => [f.id, f]));
-  for (const id of ['production', 'quality', 'simplify']) {
-    assert.ok(byId[id], `${id} must survive the configured threshold`);
-    assert.equal(byId[id].confidence, 80);
-    assert.equal(byId[id].singleton_penalty, undefined);
-    assert.equal(byId[id].report_destination, 'main');
-    assert.equal(byId[id].effective_test_kind, undefined);
-  }
-  assert.equal(byId.production.dimension, 'bug');
-  assert.equal(byId.production.origin_dimension, 'test_coverage');
-  assert.equal(byId.production.agent, 'test-analyzer');
-  assert.equal(byId.production.test_kind, 'production_defect');
-  assert.equal(byId.quality.dimension, 'type_design');
-  assert.equal(byId.simplify.dimension, 'simplification');
-  assert.deepEqual(out.eliminated, []);
-  assert.equal(byId.convention.confidence, 65);
-  assert.equal(byId.comment.confidence, 65);
-  const routed = filterStage({ findings: merged.findings.map((f) => ({ ...f, confidence: 95 })), reviewConfig: { confidence_threshold: 70 } });
-  assert.equal(routed.filtered.find((f) => f.id === 'other').report_destination, 'suggestion');
-  assert.equal(routed.filtered.find((f) => f.id === 'extra').report_destination, 'suggestion');
-  assert.equal(routed.filtered.find((f) => f.id === 'convention').report_destination, 'main');
-  assert.equal(routed.filtered.find((f) => f.id === 'comment').report_destination, 'suggestion');
-  assert.equal(out.stats.test_analyzer_promoted, 1);
-  const persisted = await runAndCapture(validArgs({ checkpoints: { challenge: challengeOutput({ findings: merged.findings }) } }));
-  const promotion = persisted.payload.findings.find((f) => f.id === 'production');
-  assert.equal(promotion.origin_dimension, 'test_coverage');
-  assert.equal(promotion.test_kind, 'production_defect');
-  assert.equal(promotion.agent, 'test-analyzer');
-  assert.equal(promotion.disposition, 'held_back');
-  const replayed = { findings: [{ ...promotion, effective_test_kind: 'defective_test' }] };
-  normalizePhaseFindings('challenge', replayed, true, { repoRoot: '/repo' });
-  assert.equal(replayed.findings[0].origin_dimension, 'test_coverage');
-  assert.equal(replayed.findings[0].effective_test_kind, undefined);
-  const forged = { findings: [{ ...promotion, origin_dimension: 'security', effective_test_kind: 'additional_case' }] };
-  normalizePhaseFindings('challenge', forged, true, { repoRoot: '/repo' });
-  assert.equal(forged.findings[0].origin_dimension, undefined);
-  assert.equal(forged.findings[0].effective_test_kind, undefined);
-  const reference = { file: '/repo/source', line_start: 1, line_end: 1, anchor: '@structural quote' };
-  const nested = normalizeFindingPaths([makeFinding('refs', { file: 'source', searched_paths: ['/repo/tests', '../escape'],
-    duplicate_of: reference, candidate_tests: [{ ...reference, input: 'input', assertion: 'assertion' }],
-    precedent: { ...reference, file: '../escape' }, production_element: reference })], '/repo');
-  assert.deepEqual(nested.valid[0].searched_paths, ['tests']);
-  assert.equal(nested.valid[0].duplicate_of.file, 'source');
-  assert.equal(nested.valid[0].candidate_tests[0].anchor, '@structural quote');
-  assert.equal(nested.valid[0].production_element.file, 'source');
-  assert.equal(nested.valid[0].precedent, undefined);
-  assert.equal(nested.valid[0].reference_diagnostics.length, 2);
-  const contested = filterStage({ findings: [70, 75].map((confidence) => makeFinding(`drop-${confidence}`, {
-    dimension: 'type_design', quality_basis: 'other', file: `drop-${confidence}.txt`, confidence, original_confidence: 100,
-  })), reviewConfig: { confidence_threshold: 70 } });
-  assert.deepEqual(contested.filtered.map((f) => [f.id, f.contested]), [['drop-70', true], ['drop-75', undefined]]);
-  assert.deepEqual(contested.eliminated, []);
-  assert.equal(contested.stats.contested_count, 1);
-  for (const witness of [{ confidence: 60 }, { confidence: 95, description: 'banned phrase' }]) {
-    const eligible = filterStage({ findings: [makeFinding('eligible', { file: 'witness.txt', confidence: 75 }),
-      makeFinding('witness', { file: 'witness.txt', agent: 'security-reviewer', ...witness })],
-    reviewConfig: { confidence_threshold: 70, ignore: ['banned phrase'] } });
-    assert.deepEqual(eligible.filtered.map((f) => [f.id, f.confidence]), [['eligible', 75]]);
-    assert.equal(eligible.stats.consensus_boosted, 0);
-  }
-});
-
-test('lone convention at 65 survives the default threshold before ranking', () => {
+test('discovery confidence does not determine a convention route', () => {
   const out = filterStage({ findings: [makeFinding('default-convention', {
     dimension: 'convention', agent: 'conventions-and-intent', confidence: 65,
   })] });
-  assert.deepEqual(out.filtered.map((f) => [f.id, f.confidence]), [['default-convention', 50]]);
+  assert.deepEqual(out.filtered.map((f) => [f.id, f.confidence]), [['default-convention', 65]]);
   assert.deepEqual(out.eliminated, []);
 });
 
@@ -309,7 +271,7 @@ test('missing admission stamps cannot deliver any test kind', async (t) => {
     makeFinding('type-intent', { agent: 'type-design-analyzer', dimension: 'intent' }),
     makeFinding('simplifier-convention', { agent: 'code-simplifier', dimension: 'convention' }),
     makeFinding('forged-security', { agent: 'test-analyzer', dimension: 'security', origin_dimension: 'security' }),
-  ] };
+  ].map((f) => { delete f.verdict; delete f.verdict_route; return evaluateAdmission(f); }) };
   normalizePhaseFindings('challenge', checkpoint, true, { repoRoot: '/repo' });
   const legacy = disposeFindings(checkpoint);
   for (const record of checkpoint.findings.slice(-4)) await t.test(record.id, () => {
@@ -368,21 +330,21 @@ test('whole issue groups reach every artifact', async (t) => {
   const first = await runAndCapture(args);
   assert.equal(first.out.ok, true, JSON.stringify(first.out));
   const post = first.payload.postReview.findings;
-  assert.deepEqual(post.map((f) => f.id), ['ANCHOR', 'OFF']);
+  assert.deepEqual(post.map((f) => f.id), ['CORE-LOW', 'SUGGESTION', 'CORE']);
   const grouped = await runAndCapture(validArgs({ ...args, checkpoints: { challenge: challengeOutput({ findings: raw.findings.slice(0, 3) }) } }));
   const groupPost = grouped.payload.postReview.findings;
-  assert.deepEqual(groupPost.map((f) => f.id), ['CORE', 'SUGGESTION', 'CORE-LOW']);
-  assert.deepEqual(groupPost[0].delivery_group, { issue_key: 'group:group.txt:10', lead_id: 'CORE', finding_ids: ['CORE', 'SUGGESTION', 'CORE-LOW'] });
-  assert.equal(groupPost[0].sites.length, 4);
+  assert.deepEqual(groupPost.map((f) => f.id), ['CORE-LOW', 'SUGGESTION', 'CORE']);
+  assert.deepEqual(groupPost[0].delivery_group, { issue_key: 'group:group.txt:10', lead_id: 'CORE-LOW', finding_ids: ['CORE-LOW', 'SUGGESTION', 'CORE'] });
+  assert.equal(groupPost.find((f) => f.id === 'CORE').sites.length, 4);
   const all = first.payload.findings;
-  assert.deepEqual(all.filter((f) => f.delivery_group?.lead_id === 'ANCHOR').map((f) => f.id), ['OFF', 'ANCHOR']);
+  assert.deepEqual(all.filter((f) => f.delivery_group?.lead_id === 'OFF').map((f) => f.id), ['OFF', 'ANCHOR']);
   for (const id of ['SAME-A', 'SAME-B', 'STALE', 'UNRELATED']) {
     const f = all.find((f) => f.id === id);
     assert.deepEqual(f.delivery_group.finding_ids, [id]);
     assert.equal(f.consolidation_key, undefined);
   }
   assert.equal((first.payload.report.match(/\*\*Additional site:\*\*/g) || []).length, 4);
-  assert.equal((first.payload.report.match(/#### finding CORE\n/g) || []).length, 2);
+  assert.equal((first.payload.report.match(/#### finding CORE\n/g) || []).length, 1);
   const resumed = await replayProducedCheckpoint(args, first.payload.checkpoints);
   assert.deepEqual(resumed.payload.postReview, first.payload.postReview);
   const returned = await runAndCapture(validArgs({ ...args, persist: { returnPrimaries: true }, checkpoints: { challenge: challengeOutput({ findings: raw.findings.slice(0, 3) }) } }));
@@ -391,8 +353,8 @@ test('whole issue groups reach every artifact', async (t) => {
   const main = await runAndCapture(validArgs({ limits: { deliveryCap: 100 }, delivery: { prIdentity: prIdentity(), tier: 'main_only' }, checkpoints: { challenge: raw } }));
   const mainIds = main.payload.postReview.findings.map((f) => f.id);
   assert.ok(mainIds.includes('CORE') && mainIds.includes('CORE-LOW') && mainIds.includes('OFF'));
-  assert.equal(mainIds.includes('SUGGESTION'), false);
-  assert.equal(mainIds.includes('ANCHOR'), false);
+  assert.equal(mainIds.includes('SUGGESTION'), true);
+  assert.equal(mainIds.includes('ANCHOR'), true);
   assert.equal(mainIds.includes('BODY-SUGGESTION'), false);
   const uncapped = await runAndCapture(validArgs({ delivery: { prIdentity: prIdentity() }, limits: { deliveryCap: 100 }, checkpoints: { challenge: raw } }));
   assert.equal(uncapped.out.ok, true, JSON.stringify(uncapped.out));
@@ -402,7 +364,7 @@ test('whole issue groups reach every artifact', async (t) => {
   const orphan = applyChallenges([
     member('REMOVED', { file: 'orphan.txt', consolidation_key: 'old', consolidation_primary: true }),
     member('ORPHAN', { file: 'orphan.txt', agent: 'security-reviewer', consolidation_key: 'old' }),
-  ], [{ id: 'REMOVED', score: 0 }, { id: 'ORPHAN', score: 90 }]);
+  ], [{ id: 'REMOVED', claim: 'refuted', justification: 'Guard', refutation_kind: 'guard_exists', refutation: {file:'guard',line_start:1,line_end:1,anchor:'return safe;'}, refutation_check: { verified: true } }, { id: 'ORPHAN', claim: 'confirmed', consequence: 'present_failure', justification: 'Caller' }]);
   const orphanRun = await runAndCapture(validArgs({ checkpoints: { challenge: challengeOutput(orphan) } }));
   assert.deepEqual(orphanRun.payload.postReview.map((f) => f.delivery_group.finding_ids), [['ORPHAN']]);
   assert.equal(orphanRun.payload.postReview[0].consolidation_key, undefined);
@@ -421,7 +383,7 @@ test('whole issue groups reach every artifact', async (t) => {
       response.receipt.deltas_checksum = deltaContentProof(response.result.deltas.map((d) => d.id), response.result.deltas);
     }
     if (dispatch.label.startsWith('validate-batch-')) for (const validation of response.validations) {
-      validation.site_confirmations = [site(1), site(2)].map((s, i) => ({ ...s, confirmed: i === 0 }));
+      validation.site_confirmations = [site(1), site(2)].map(({ file, line_start, line_end }, i) => ({ file, line_start, line_end, confirmed: i === 0 }));
     }
     return response;
   };
@@ -444,9 +406,11 @@ test('final disposition survives replay and persistence', async () => {
   const byId = new Map(fresh.payload.findings.map((f) => [f.id, f]));
   assert.deepEqual(byId.get('BOTH').disposition_reasons, ['validation_skipped', 'verify_unproven', 'held_back']);
   assert.deepEqual(byId.get('VERIFY').disposition_reasons, ['verify_unproven', 'held_back']);
-  assert.deepEqual(byId.get('VALIDATE').disposition_reasons, ['validation_skipped', 'held_back']);
+  assert.deepEqual(byId.get('VALIDATE').disposition_reasons, []);
+  assert.equal(byId.get('VALIDATE').validation, 'skipped');
+  assert.equal(byId.get('VALIDATE').challenge_verdict.claim, 'confirmed');
   assert.equal(byId.get('CLEAN').disposition, 'deliver');
-  assert.deepEqual(fresh.payload.postReview.map((f) => f.id), ['CLEAN']);
+  assert.deepEqual(fresh.payload.postReview.map((f) => f.id), ['CLEAN', 'VALIDATE']);
   assert.ok(fresh.payload.checkpoints.phases.challenge.findings.every((f) => !Object.hasOwn(f, 'disposition') && !Object.hasOwn(f, 'disposition_reasons')));
   const limited = await runAndCapture(validArgs({ measurementTrace: true, limits: { challengeCap: 1 } }), {
     nullAgentLabels: ['challenge-0'],
@@ -467,9 +431,9 @@ test('final disposition survives replay and persistence', async () => {
   const badProof = await runWith(badCtx, badArgs);
   assert.equal(badProof.stats.verified, false);
   assert.equal(badProof.stats.unverified, 2);
-  const scored = applyChallenges([makeFinding('NUMERIC'), makeFinding('SECURITY', { dimension: 'security', risk_level: 4 })],
-    [{ id: 'NUMERIC', score: 0 }, { id: 'SECURITY', score: 0 }]);
-  assert.equal(scored.findings[0].severity, 'medium');
+  const scored = applyChallenges([makeFinding('NUMERIC'), makeFinding('SECURITY', { dimension: 'security', risk_level: 4, verdict: { claim: 'confirmed', consequence: 'latent', justification: 'Future', latent_condition: 'New caller' } })],
+    [{ id: 'NUMERIC', claim: 'refuted', justification: 'Guard', refutation_kind: 'guard_exists', refutation: {file:'guard',line_start:1,line_end:1,anchor:'return safe;'}, refutation_check: { verified: true } }, { id: 'SECURITY', claim: 'confirmed', consequence: 'latent', justification: 'Future', latent_condition: 'New caller' }]);
+  assert.equal(scored.findings[0].severity, 'low');
   const raw = challengeOutput({ findings: [...scored.findings,
     makeFinding('BODY', { report_tag: 'suggestion', diff_validation: { in_diff: false, reason: 'off diff' } }),
     makeFinding('UNKNOWN', { origin: 'surfaced', diff_validation: undefined }),
@@ -496,17 +460,16 @@ test('final disposition survives replay and persistence', async () => {
     const findings = resumed.payload.findings;
     assert.deepEqual(Object.fromEntries(findings.map((f) => [f.id, f.disposition])), expected);
     assert.equal(findings.find((f) => f.id === 'BODY').report_tag, 'suggestion');
-    assert.equal(findings.find((f) => f.id === 'SECURITY').challenge_score, 0);
+    assert.equal(findings.find((f) => f.id === 'SECURITY').verdict_route, 'posted-latent');
     assert.equal(findings.find((f) => f.id === 'SECURITY').risk_level, 4);
-    assert.equal(findings.find((f) => f.id === 'NUMERIC').challenge_score, 0);
+    assert.equal(findings.find((f) => f.id === 'NUMERIC').verdict_route, 'eliminated');
     assert.deepEqual(resumed.payload.postReview.map((f) => f.id), ['UNKNOWN']);
     if (!writerFails) assert.deepEqual(findings, result.payload.findings);
   }
   const returned = await runAndCapture(validArgs({ persist: { returnPrimaries: true }, checkpoints: { challenge: raw } }));
   const entries = returned.out.persistReturn.entries;
   const plan = JSON.parse(entries.at(-1).text);
-  assert.equal(plan.planVersion, 3);
-  assert.equal(plan.checkpoint.mode, 'literal');
+  assert.equal(plan.planVersion, 4);
   assert.deepEqual(deriveFromPlan(plan, entries[0].text).checkpoints.phases.challenge.findings, raw.findings);
   for (const invalid of [
     { findings: [{}], postReview: [] },
@@ -529,7 +492,7 @@ test('final disposition survives replay and persistence', async () => {
   const mainSection = report.split('## Findings')[1].split('## Unverified')[0];
   for (const i of [2, 4, 5, 6]) assert.equal(mainSection.includes(`claim-${i}`), false);
   for (const i of [2, 3, 5, 6]) assert.ok(report.includes(`RIGHT${i}.js:10`));
-  const body = renderSummaryBody(reportInput);
+  const body = renderPublicSummary(reportInput).body;
   for (const i of [2, 3, 4, 5, 6]) assert.equal(body.includes(`finding RIGHT${i}`), false);
   assert.equal(body.includes('claim-1'), false);
   assert.equal(body.includes('claim-0'), false);
@@ -550,12 +513,12 @@ test('challenge checkpoint owns upstream eliminations across resume', async () =
     eliminated: [makeFinding('VERIFY_OLD', { eliminated_by: 'verify', elimination_reason: 'disproved' })],
   } } }), { findings: [makeFinding('KEEP'), makeFinding('OLD', { confidence: 10 })] });
   const checkpoint = first.payload.checkpoints.phases.challenge;
-  assert.deepEqual(checkpoint.eliminated.map((f) => f.id), ['VERIFY_OLD', 'OLD']);
+  assert.deepEqual(checkpoint.eliminated.map((f) => f.id), ['VERIFY_OLD']);
   const resumed = await runAndCapture(validArgs({ checkpoints: { challenge: checkpoint } }), { findings: [
     makeFinding('FRESH', { confidence: 10 }),
   ] });
-  assert.deepEqual(resumed.payload.findings.map((f) => f.id), ['KEEP', 'VERIFY_OLD', 'OLD']);
-  assert.deepEqual(resumed.payload.checkpoints.phases.challenge.eliminated.map((f) => f.id), ['VERIFY_OLD', 'OLD']);
+  assert.deepEqual(resumed.payload.findings.map((f) => f.id), ['KEEP', 'OLD', 'VERIFY_OLD']);
+  assert.deepEqual(resumed.payload.checkpoints.phases.challenge.eliminated.map((f) => f.id), ['VERIFY_OLD']);
 });
 
 test('legacy verify facts need admission and skipped challenges cannot place', async () => {
@@ -587,11 +550,11 @@ test('happy contract: compact envelope and complete dispatch inventory', async (
     duplicates_resolved: 0, dropped_no_id: 0, truncation_warnings: 0, validation_warnings: 0 });
   assert.deepEqual(out.gaps.filter((gap) => /UNVERIFIED|host-path-text:|null_arg/.test(gap)), []);
   assert.deepEqual(ctx.calls.map((call) => call.label), [
-    'summarize', ...DISCOVERY, 'verify-slice-0', 'validate-batch-0', 'challenge-0', 'challenge-1', 'artifact-writer',
+    'summarize', ...DISCOVERY, 'verify-slice-0', 'validate-batch-0', 'challenge-0', 'challenge-1', 'group-findings', 'artifact-writer',
   ]);
   assert.deepEqual(ctx.calls.map((call) => call.agentType), [
     'code-gauntlet:change-summarizer', ...DISCOVERY, 'code-gauntlet:executor', 'code-gauntlet:validator',
-    'code-gauntlet:challenger', 'code-gauntlet:challenger', 'code-gauntlet:artifact-writer',
+    'code-gauntlet:challenger', 'code-gauntlet:challenger', 'code-gauntlet:grouper', 'code-gauntlet:artifact-writer',
   ]);
   assert.deepEqual(ctx.violations, []);
   for (const call of ctx.calls) {
@@ -709,9 +672,9 @@ for (const row of SCOPE_ROWS) test(`scope wiring: ${row.name}`, async () => {
 
 const COARSEN_ROWS = [
   { name: 'entry changed-file pressure', changedFiles: Array.from({ length: 20000 }, (_, index) => `src/f${index}.js`),
-    limits: { summarizeBucketSize: 1 }, bucketCount: 625, batchCount: 1 },
+    limits: { summarizeBucketSize: 1 }, bucketCount: 625, batchCount: 1, challengeCount: 2 },
   { name: 'post-merge finding pressure', findings: Array.from({ length: 1000 }, (_, index) => makeFinding(`F${index}`)),
-    limits: { validateBatch: 1, verifySliceSize: 2000 }, bucketCount: 0, batchCount: 125 },
+    limits: { validateBatch: 1, verifySliceSize: 2000 }, bucketCount: 0, batchCount: 63, challengeCount: 250 },
 ];
 for (const row of COARSEN_ROWS) test(`coarsening wiring: ${row.name}`, async () => {
   const args = validArgs({ ...(row.changedFiles ? { changedFiles: row.changedFiles, changedLines: 100000 } : {}),
@@ -720,6 +683,11 @@ for (const row of COARSEN_ROWS) test(`coarsening wiring: ${row.name}`, async () 
   assert.equal(out.ok, true);
   assert.equal(ctx.calls.filter((call) => call.label.startsWith('summarize-bucket-')).length, row.bucketCount);
   assert.equal(ctx.calls.filter((call) => call.label.startsWith('validate-batch-')).length, row.batchCount);
+  assert.equal(out.stats.challenge.dispatched, row.challengeCount);
+  assert.equal(out.stats.challenge.skipped, (row.findings?.length ?? 2) - row.challengeCount);
+  if (row.findings) assert.ok(out.gaps.includes(
+    'challenge: 750 finding(s) over challengeCap=250 left unchallenged (challenge=capped, pipeline-degraded)',
+  ));
 });
 
 test('fresh paths: discovery normalizes files and both reference arrays', async () => {
@@ -1219,7 +1187,7 @@ for (const row of FAILURE_ROWS) test(`path-safe failure: ${row.name}`, async () 
     if (row.postDiscoverThrow && dispatches === 2) throw new Error(row.error);
     return parallel(thunks);
   };
-  const out = await runWith(ctx, args);
+  const out = await withPreparedPlan(ctx, args, runWith);
   assert.equal(out.ok, row.ok);
   assert.equal(out.phaseReached, row.phase);
   assert.deepEqual(out.artifactPaths, row.paths);
@@ -1258,23 +1226,8 @@ for (const row of REFUSAL_ROWS) test(`refusal wiring: ${row.name}`, async () => 
   }
 });
 
-const NULL_CONFIG_GAP = 'null_arg: args.reviewConfig arrived as a literal null and was treated as ABSENT \u2014 '
-  + 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with no ignore list, '
-  + 'NOT your REVIEW.md configuration, so the delivered findings can differ. Omit reviewConfig entirely '
-  + '(or stamp a well-formed value); do not stamp null.';
 const NULL_ROWS = [
-  { name: 'reviewConfig disclosed without mutating waist', input: { reviewConfig: null }, gaps: [NULL_CONFIG_GAP], ok: true },
-  { name: 'each dropped key disclosed', input: { exclusionPatterns: null, delivery: null }, ok: true, gaps: [
-    'null_arg: args.exclusionPatterns arrived as a literal null and was treated as ABSENT \u2014 '
-      + 'no exclusion patterns are applied, so the delivered findings can differ. Omit exclusionPatterns entirely '
-      + '(or stamp a well-formed value); do not stamp null.',
-    'null_arg: args.delivery arrived as a literal null and was treated as ABSENT \u2014 '
-      + 'delivery falls back to tier "all" with no PR identity. Omit delivery entirely '
-      + '(or stamp a well-formed value); do not stamp null.',
-  ] },
   { name: 'null checkpoint was always accepted', input: { checkpoints: null }, ok: true, gaps: [] },
-  { name: 'null checkpoint does not mute config disclosure', input: { checkpoints: null, reviewConfig: null },
-    ok: true, gaps: [NULL_CONFIG_GAP] },
   { name: 'only nonderived nested key discloses', input: { delivery: { tier: null, prIdentity: null } }, ok: true, gaps: [
     'null_arg: args.delivery.prIdentity arrived as a literal null and was treated as ABSENT \u2014 '
       + 'the post-review artifact is persisted as a bare findings array instead of the post_review-ready wrapper. '
@@ -1288,11 +1241,9 @@ const NULL_ROWS = [
       + 'the artifact-writer takes the legacy full by-value persist path. Omit persist entirely '
       + '(or stamp a well-formed value); do not stamp null.',
   ] },
-  { name: 'disclosure survives invalid args exit', input: { reviewConfig: null, argsVersion: 2 },
-    ok: false, gaps: [NULL_CONFIG_GAP], invalid: 'unsupported argsVersion 2 (expected 1)' },
   { name: 'interactive printed null receipt', input: { mode: 'interactive', limits: { deliveryCap: null }, configEcho: {
     model_tier: { value: 'optimized', source: 'fixed' }, pr_comment_cap: { value: null, source: 'default' },
-    delivery_tier: { value: 'all', source: 'default' }, review_md: { value: 'absent', source: 'discovery' },
+    delivery_tier: { value: 'all', source: 'default' },
   } }, ok: true, gaps: [
     'null_receipt: args.configEcho.pr_comment_cap.value arrived as a literal null and was spelled as the printed token "null"; '
       + 'the receipt and the configuration are unchanged; stamp the string "null".',
@@ -1330,10 +1281,10 @@ const POLICY_ROWS = [
   { name: 'default claude pin and conditional schema', policy: {},
     expected: { subagentModel: null, provider: 'firstParty', gateway: false, mappedAliases: [], conditionalSchema: true },
     models: ['claude-opus-5-5', 'claude-sonnet-5-5'], conditional: true },
-  { name: 'gateway keeps claude pin and flat schema', policy: { tier: 'optimized', subagentModel: null, gateway: true },
+  { name: 'gateway keeps claude pin and disables dimension rules', policy: { tier: 'optimized', subagentModel: null, gateway: true },
     expected: { subagentModel: null, provider: 'firstParty', gateway: true, mappedAliases: [], conditionalSchema: false },
     models: ['claude-opus-5-5', 'claude-sonnet-5-5'], conditional: false },
-  { name: 'bedrock alias and flat schema', policy: { tier: 'optimized', subagentModel: null, provider: 'bedrock', gateway: false },
+  { name: 'bedrock alias and disabled dimension rules', policy: { tier: 'optimized', subagentModel: null, provider: 'bedrock', gateway: false },
     expected: { subagentModel: null, provider: 'bedrock', gateway: false, mappedAliases: [], conditionalSchema: false },
     models: ['opus', 'sonnet'], conditional: false },
 ];
@@ -1344,29 +1295,37 @@ for (const row of POLICY_ROWS) test(`policy wiring: ${row.name}`, async () => {
   assert.deepEqual([...new Set(ctx.calls.map((call) => call.model))].sort(), row.models);
   const items = ctx.calls.find((call) => call.agentType === 'code-gauntlet:conventions-and-intent').schema.properties.findings.items;
   if (row.conditional) assert.equal(Array.isArray(items.allOf), true);
-  else assert.equal(items.allOf, undefined);
+  else assert.equal(Object.hasOwn(items, 'allOf'), false);
 });
 
-const UNMEASURED_GAP = 'context_unmeasured: args.contextLines was not stamped, so the shared-context read plan could not be computed '
+const UNMEASURED_GAP = 'context_unmeasured: no usable args.contextLines was stamped, so the shared-context read plan could not be computed '
   + '\u2014 every agent got the count-free "read until a Read returns no further content" wording instead of the exact '
   + 'Read calls covering the file. A Read can return part of a file '
-  + 'with no truncation notice, and an agent that stops there reviews only what it saw. Stamp contextLines '
-  + '(and contextChars and contextMaxLineChars) from the Phase 2 step that writes the context file.';
-const UNPLANNABLE_GAP = 'context_unplannable: args.contextLines was stamped (1500001) but exceeds the read-plan chunk ceiling, '
-  + 'so the shared-context read plan could not be built \u2014 every agent got the count-free '
-  + '"read until a Read returns no further content" wording instead of the exact Read calls covering the file. '
-  + 'Shrink the shared context '
-  + '(or raise READ_PLAN_MAX_CHUNKS with a matching prompt-size budget) so a plan can be computed.';
+  + 'with no truncation notice, and an agent that stops there reviews only what it saw. Stamp contextLines, '
+  + 'contextChars, contextMaxLineChars, contextReadPlanVersion and contextReadChunks from the Phase 2 step that writes the context file.';
+const AGGREGATE_GAP = 'context_plan_fallback: contextReadPlanVersion and contextReadChunks were not stamped; using the aggregate-based shared-context read plan.';
+const UNPLANNABLE_GAP = 'context_unplannable: contextReadPlanVersion and contextReadChunks were not stamped; the aggregate-based shared-context read plan exceeds the 2000-chunk allocation ceiling; using count-free read-to-end.';
+const VARIABLE_CHUNKS = Array.from({ length: 12 }, (_, i) => 100 + i);
 const CONTEXT_ROWS = [
-  { name: 'maximum line width reaches every reader', input: { contextLines: 2028, contextChars: 94784, contextMaxLineChars: 1000 }, gaps: [],
+  { name: 'variable writer boundaries reach every reader in the sandbox',
+    input: { contextLines: 1266, contextChars: 360000, contextReadPlanVersion: 1, contextReadChunks: VARIABLE_CHUNKS },
+    sandbox: true, gaps: [], markers: ['12 planned Read calls (offset:limit)',
+      '1:100, 101:101, 202:102, 304:103, 407:104, 511:105, 616:106, 722:107, 829:108, 937:109, 1046:110, 1156:111',
+      'If partial, continue after the last received line until line 1266.'] },
+  { name: 'oversized singleton retains continuation',
+    input: { contextLines: 751, contextChars: 50750, contextMaxLineChars: 50000,
+      contextReadPlanVersion: 1, contextReadChunks: [1, 750] },
+    gaps: [], markers: ['2 planned Read calls: Read(offset=1, limit=1), Read(offset=2, limit=750)',
+      'If partial, continue after the last received line until line 751.'] },
+  { name: 'maximum line width reaches every reader', input: { contextLines: 2028, contextChars: 94784, contextMaxLineChars: 1000 }, gaps: [AGGREGATE_GAP],
     markers: ['68 planned Read calls of limit=30', 'stepping by 30 through line 2028'] },
-  { name: 'measured readers include final tail and validator', input: { contextLines: 2028, contextChars: 94784 }, gaps: [],
+  { name: 'measured readers include final tail and validator', input: { contextLines: 2028, contextChars: 94784 }, gaps: [AGGREGATE_GAP],
     markers: ['4 planned Read calls', 'Read(offset=1924, limit=105)'] },
   { name: 'unmeasured readers get one actionable fallback', input: {}, gaps: [UNMEASURED_GAP],
     markers: ['until a call returns no further content'], fallback: true },
   { name: 'unplannable readers get distinct fallback', input: { contextLines: 1500001 }, gaps: [UNPLANNABLE_GAP],
     markers: ['until a call returns no further content'], fallback: true },
-  { name: 'measured sandbox globals', input: { contextLines: 2028, contextChars: 94784 }, sandbox: true, gaps: [],
+  { name: 'measured sandbox globals', input: { contextLines: 2028, contextChars: 94784 }, sandbox: true, gaps: [AGGREGATE_GAP],
     markers: ['4 planned Read calls', 'Read(offset=1924, limit=105)'] },
 ];
 for (const row of CONTEXT_ROWS) test(`context wiring: ${row.name}`, async () => {
@@ -1376,7 +1335,7 @@ for (const row of CONTEXT_ROWS) test(`context wiring: ${row.name}`, async () => 
   assert.equal(out.ok, true);
   assert.equal(out.phaseReached, 'report');
   assert.equal(out.stats.highConfidence, 2);
-  assert.deepEqual(out.gaps.filter((gap) => /context_unmeasured|context_unplannable/.test(gap)), row.gaps);
+  assert.deepEqual(out.gaps.filter((gap) => /context_unmeasured|context_unplannable|context_plan_fallback/.test(gap)), row.gaps);
   const readers = ctx.calls.filter((call) => !call.label.startsWith('verify-') && call.prompt.includes('/repo/.code-gauntlet/code-gauntlet-context-abc1234.md'));
   assert.deepEqual(readers.map((call) => call.label), ['summarize', ...DISCOVERY, 'validate-batch-0']);
   for (const call of readers) {
@@ -1410,8 +1369,9 @@ for (const row of DELIVERY_ROWS) test(`delivery wiring: ${row.name}`, async () =
 const IDENTITY = { owner: 'o', repo: 'r', pr_number: 362, sha_full: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   platform: 'github', web_origin: 'https://github.com' };
 const BODY_ROWS = [
-  { name: 'headless markdown indexes all', mode: 'headless', receipt: 'markdown', identity: true,
-    count: 9, cap: 6, delivered: 6, bullets: 9, suffix: null },
+  { name: 'headless markdown prospective PR index respects cap', mode: 'headless', receipt: 'markdown', identity: true,
+    count: 9, cap: 6, delivered: 6, bullets: 6,
+    suffix: '3 more issues not listed here (this review posts at most 6 issues).' },
   { name: 'interactive local uncapped', mode: 'interactive', count: 9, cap: null, delivered: 9, bullets: 9, suffix: null },
   { name: 'interactive local settings do not cap summary', mode: 'interactive', tier: true,
     count: 9, cap: 1, delivered: 1, bullets: 9, suffix: null },
@@ -1419,13 +1379,13 @@ const BODY_ROWS = [
     count: 9, cap: null, delivered: 9, bullets: 9, suffix: null },
   { name: 'headless comments plural cap', mode: 'headless', receipt: 'markdown,pr_comments', identity: true,
     count: 9, cap: 6, delivered: 6, bullets: 6,
-    suffix: '3 more findings not listed here (over the delivery cap of 6 findings).' },
+    suffix: '3 more issues not listed here (this review posts at most 6 issues).' },
   { name: 'ID-less selection uses selected object', mode: 'headless', receipt: 'markdown,pr_comments', identity: true,
     idless: true, count: 3, cap: 1, delivered: 1, bullets: 1, title: 'critical choice',
-    suffix: '2 more findings not listed here (over the delivery cap of 1 finding).' },
+    suffix: '2 more issues not listed here (this review posts at most 1 issue).' },
   { name: 'headless comments singular omitted finding', mode: 'headless', receipt: 'markdown,pr_comments', identity: true,
     count: 2, cap: 1, delivered: 1, bullets: 1,
-    suffix: '1 more finding not listed here (over the delivery cap of 1 finding).' },
+    suffix: '1 more issue not listed here (this review posts at most 1 issue).' },
 ];
 for (const row of BODY_ROWS) test(`summary delivery modes: ${row.name}`, async () => {
   const findings = row.idless ? [
@@ -1436,7 +1396,7 @@ for (const row of BODY_ROWS) test(`summary delivery modes: ${row.name}`, async (
   if (row.idless) for (const finding of findings) { delete finding.id; evaluateAdmission(finding); }
   const configEcho = row.mode === 'interactive' ? {
     model_tier: { value: 'optimized', source: 'fixed' }, pr_comment_cap: { value: String(row.cap), source: 'default' },
-    delivery_tier: { value: 'all', source: 'default' }, review_md: { value: 'absent', source: 'discovery' },
+    delivery_tier: { value: 'all', source: 'default' },
   } : { ...validArgs().configEcho, delivery: { value: row.receipt, source: 'default' },
     pr_comment_cap: { value: String(row.cap), source: 'default' } };
   const args = validArgs({ mode: row.mode, configEcho, limits: { deliveryCap: row.cap },
@@ -1446,75 +1406,19 @@ for (const row of BODY_ROWS) test(`summary delivery modes: ${row.name}`, async (
   assert.equal(out.ok, true);
   const delivered = row.identity ? payload.postReview.findings : payload.postReview;
   assert.equal(delivered.length, row.delivered);
-  const body = payload.report.split('## Summary\n\n')[1].split('\n\n## Change Context')[0];
+  const localBody = payload.report.split('## Summary\n\n')[1].split('\n\n## Change Context')[0];
+  assert.equal(localBody.split('\n').filter((line) => line.startsWith('- ')).length, row.count);
+  const body = row.identity ? payload.postReview.review_body : localBody;
   assert.equal(body.split('\n').filter((line) => line.startsWith('- ')).length, row.bullets);
-  if (row.identity) assert.equal(payload.postReview.review_body, body);
+  if (row.identity) {
+    assert.doesNotMatch(body, /after the gauntlet/);
+    assert.deepEqual(payload.postReview.review_summary.index.map((entry) => entry.bullet),
+      body.split('\n').filter((line) => line.startsWith('- ')));
+    assert.equal(payload.postReview.review_summary.counts, body.split('\n')[0]);
+  }
   if (row.suffix) assert.ok(body.endsWith(row.suffix));
   else assert.equal(body.includes('not listed here'), false);
   if (row.title) { assert.equal(delivered[0].title, row.title); assert.ok(body.includes(': critical choice')); }
-});
-
-const ROOT_REVIEW = '```yaml code-gauntlet\nconfidence_threshold: 90\n```';
-const CONFIG_ROWS = [
-  { name: 'raw root threshold with proof gaps on fresh and replay', proofGaps: true, fresh: true, input: { reviewMdSetChecksum: 'different-list', reviewMd: [{ path: 'REVIEW.md', text: ROOT_REVIEW, checksum: 'different-text' }], reviewConfigPath: '/repo/REVIEW.md' },
-    findings: [makeFinding('KEEP', { confidence: 95 }), makeFinding('DROP', { confidence: 65 })],
-    source: 'reviewMd', entries: 1, total: 2, passed: 1, subtrees: [] },
-  { name: 'legacy preParsed root threshold', input: { reviewConfig: { confidence_threshold: 90, ignore: [] } },
-    findings: [makeFinding('KEEP', { confidence: 95 }), makeFinding('DROP', { confidence: 65 })],
-    source: 'preParsed', entries: 0, total: 2, passed: 1, subtrees: [] },
-  { name: 'fresh raw child scope reaches challenge and delivery', fresh: true, input: {
-    changedFiles: ['api/x.py', 'legacy/y.py'], reviewMd: [{ path: 'REVIEW.md', text: '```yaml code-gauntlet\n```' },
-      { path: 'api/REVIEW.md', text: ROOT_REVIEW }], reviewConfigPath: '/repo/REVIEW.md',
-  }, findings: [makeFinding('api-x', { file: 'api/x.py', confidence: 80 }), makeFinding('legacy-y', { file: 'legacy/y.py',
-    confidence: 80 })], source: 'reviewMd', entries: 2, total: 2, passed: 1,
-    subtrees: [{ dir: 'api', matched: 1 }], ids: ['legacy-y'] },
-  { name: 'preParsed child scope', input: { reviewConfig: { ignore: [],
-    scopes: [{ dir: 'api', confidence_threshold: 90, ignore: [] }] } }, findings: [
-    makeFinding('API', { file: 'api/x.py', confidence: 80 }), makeFinding('LEGACY', { file: 'legacy/y.py', confidence: 80 }),
-  ], source: 'preParsed', entries: 0, total: 2, passed: 1, subtrees: [{ dir: 'api', matched: 1 }], ids: ['LEGACY'] },
-  { name: 'unmatched case and prefix scopes omit root', input: { reviewMd: [
-    { path: 'REVIEW.md', text: '```yaml code-gauntlet\n```' }, { path: 'docs/REVIEW.md', text: ROOT_REVIEW },
-    { path: 'API/REVIEW.md', text: ROOT_REVIEW }, { path: 'api/REVIEW.md', text: ROOT_REVIEW },
-  ], reviewConfigPath: '/repo/REVIEW.md' }, findings: [makeFinding('APIARY', { file: 'apiary/x.py', confidence: 80 })],
-    source: 'reviewMd', entries: 4, total: 1, passed: 1,
-    subtrees: [{ dir: 'docs', matched: 0 }, { dir: 'API', matched: 0 }, { dir: 'api', matched: 0 }] },
-  { name: 'absent review configuration', input: {}, findings: [makeFinding('KEEP')],
-    source: 'none', entries: 0, total: 1, passed: 1, subtrees: [] },
-  { name: 'exclusions provenance independent of config', input: { exclusionsText: '- foo.js\n' }, findings: [makeFinding('KEEP')],
-    source: 'none', exclusions: 'exclusionsText', entries: 0, total: 1, passed: 1, subtrees: [] },
-];
-for (const row of CONFIG_ROWS) test(`review configuration wiring: ${row.name}`, async () => {
-  const args = validArgs({ ...row.input, ...(row.fresh ? {} : { checkpoints: { validate: { findings: row.findings,
-    stats: { batches_dispatched: 0, batches_completed: 0, validated: row.total, skipped: 0, adjusted: 0 } } } }) });
-  const { out, payload } = await runAndCapture(args, { findings: row.findings });
-  assert.equal(out.ok, true);
-  assert.equal(out.stats.reviewConfigSource, row.source);
-  assert.equal(out.stats.reviewMdEntryCount, row.entries);
-  assert.equal(out.stats.filter.total, row.total);
-  assert.equal(out.stats.filter.passed_threshold, row.passed);
-  assert.deepEqual(out.stats.reviewMdSubtrees, row.subtrees);
-  const expectedProofGaps = row.proofGaps ? [
-    'review_md: REVIEW.md text differs from the collected file (checksum mismatch); its settings were applied as stamped',
-    'review_md: stamped entries differ from the collected list (omitted, extra or reordered REVIEW.md); settings were applied as stamped',
-  ] : [];
-  assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('review_md:')), expectedProofGaps);
-  if (row.proofGaps) {
-    const filterCheckpoint = { filtered: payload.findings, eliminated: [], stats: out.stats.filter,
-      gaps: ['filter checkpoint marker'] };
-    const resumed = await runAndCapture({ ...args, ...checkpointArgs({
-      ...payload.checkpoints.phases, filter: filterCheckpoint,
-    }) }, { findings: row.findings });
-    assert.equal(resumed.out.ok, true);
-    assert.deepEqual(resumed.out.gaps.filter((gap) => gap.startsWith('review_md:')), expectedProofGaps);
-    assert.deepEqual(resumed.out.stats.filter, out.stats.filter);
-    assert.ok(resumed.out.gaps.includes('filter checkpoint marker'));
-    assert.ok(resumed.payload.report.includes(`| Gaps | ${resumed.out.gaps.length} |`));
-  }
-  if (row.exclusions) assert.equal(out.stats.exclusionsSource, row.exclusions);
-  if (row.ids) {
-    assert.deepEqual(payload.findings.filter((finding) => finding.disposition !== 'eliminate').map((finding) => finding.id), row.ids);
-    assert.deepEqual(payload.postReview.map((finding) => finding.id), row.ids);
-  }
 });
 
 const REPORT_ROWS = [
@@ -1602,7 +1506,7 @@ test('producer-measured description context reaches every discovery agent', asyn
   const output = mkdtempSync(join(tmpdir(), 'description-route-'));
   try {
     const sha = 'abc1234' + '0'.repeat(33);
-    for (const [name, body] of [['project-rules-abc1234.md', 'rules'], ['diff-abc1234.patch', 'diff']]) {
+    for (const [name, body] of [['project-rules-abc1234.md', 'w'.repeat(400) + '\n' + 'short\n'.repeat(2300)], ['diff-abc1234.patch', 'diff']]) {
       writeFileSync(join(output, `code-gauntlet-${name}`), body);
     }
     const snapshot = join(output, 'description.json');
@@ -1613,6 +1517,12 @@ test('producer-measured description context reaches every discovery agent', asyn
       '--repo-root', output, '--snapshot-file', snapshot], { input: 'triage', encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
     const measured = JSON.parse(result.stdout);
+    const dropped = { ...measured };
+    delete dropped.contextReadChunks;
+    delete dropped.contextReadPlanVersion;
+    const degraded = await runAndCapture(validArgs({ outputDir: output, ...dropped }));
+    assert.equal(degraded.out.ok, true);
+    assert.deepEqual(degraded.out.gaps.filter((gap) => gap.startsWith('context_')), [AGGREGATE_GAP]);
     const { ctx, out } = await runAndCapture(validArgs({ outputDir: output, ...measured }));
     assert.equal(out.ok, true);
     const discovery = ctx.calls.filter((call) => DISCOVERY.includes(call.agentType));
@@ -1620,6 +1530,15 @@ test('producer-measured description context reaches every discovery agent', asyn
     for (const call of discovery) {
       assert.ok(call.prompt.includes(join(output, 'code-gauntlet-context-abc1234.md')));
       assert.ok(call.prompt.includes(`It is ${measured.contextLines} lines`));
+      assert.equal(measured.contextReadChunks.length, 4);
+      assert.ok(call.prompt.includes('4 planned Read calls'));
+      assert.equal(measured.contextReadPlanVersion, 1);
+      let offset = 1;
+      for (const limit of measured.contextReadChunks) {
+        assert.ok(call.prompt.includes(`Read(offset=${offset}, limit=${limit})`));
+        offset += limit;
+      }
+      assert.ok(call.prompt.includes(`continue after the last received line until line ${measured.contextLines}`));
       assert.ok(!call.prompt.includes('RAW_DESCRIPTION_SENTINEL'));
     }
     for (const call of ctx.calls.filter((call) => call.agentType === 'code-gauntlet:challenger')) {
@@ -1630,6 +1549,131 @@ test('producer-measured description context reaches every discovery agent', asyn
   }
 });
 
+
+const BAD_CONTEXT_CHUNKS = [
+  { name: 'null', chunks: null, reason: 'contextReadChunks is not a line-count array' },
+  { name: 'object', chunks: {}, reason: 'contextReadChunks is not a line-count array' },
+  { name: 'missing list from current writer', reason: 'contextReadChunks was not stamped' },
+  { name: 'empty list', chunks: [], reason: 'empty contextReadChunks for a non-empty context' },
+  { name: 'allocation ceiling', chunks: Array(2001).fill(1), sizes: { contextLines: 2001, contextChars: 2001 },
+    reason: 'contextReadChunks exceeds the allocation ceiling' },
+  { name: 'missing tail', chunks: [2], reason: 'contextReadChunks does not cover contextLines' },
+  { name: 'line cap', chunks: [751], sizes: { contextLines: 751, contextChars: 751 },
+    reason: 'contextReadChunks exceeds the per-read line limit' },
+  { name: 'fraction', chunks: [1.5, 1.5], reason: 'contextReadChunks contains a non-integer line count' },
+  { name: 'zero', chunks: [0, 3], reason: 'contextReadChunks contains a non-positive line count' },
+  { name: 'negative', chunks: [-1, 4], reason: 'contextReadChunks contains a non-positive line count' },
+  { name: 'invalid entry', chunks: [null, 3], reason: 'contextReadChunks contains a non-integer line count' },
+];
+for (const row of BAD_CONTEXT_CHUNKS) test(`writer plan degrades to aggregates: ${row.name}`, async () => {
+  const sizes = row.sizes ?? { contextLines: 3, contextChars: 3000 };
+  const { out, ctx } = await runAndCapture(validArgs({ ...sizes, contextReadPlanVersion: 1, contextReadChunks: row.chunks }));
+  assert.equal(out.ok, true);
+  assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('context_plan_fallback:')),
+    [`context_plan_fallback: ${row.reason}; using the aggregate-based shared-context read plan.`]);
+  const expected = sharedContextLine({ contextPath: '/repo/.code-gauntlet/code-gauntlet-context-abc1234.md', ...sizes });
+  const readers = ctx.calls.filter((call) => call.prompt.includes('Read the shared context'));
+  assert.ok(readers.length > 0);
+  for (const call of readers) assert.ok(call.prompt.includes(expected));
+});
+
+for (const version of [undefined, 2]) test(`writer plan version degrades: ${version}`, async () => {
+  const { out } = await runAndCapture(validArgs({ contextLines: 3, contextChars: 3000, contextReadChunks: [3], contextReadPlanVersion: version }));
+  assert.equal(out.ok, true);
+  const reason = version === undefined ? 'contextReadPlanVersion was not stamped' : 'unsupported contextReadPlanVersion';
+  assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('context_')), [`context_plan_fallback: ${reason}; using the aggregate-based shared-context read plan.`]);
+  const input = { contextPath: 'p', contextLines: 3, contextChars: 3000, contextReadChunks: [1, 2], contextReadPlanVersion: version };
+  assert.deepEqual(contextReadPlan(3, 3000, undefined, [1, 2], version), [{ offset: 1, limit: 3 }]);
+  assert.equal(sharedContextLine(input), setupContext(input).contextLine);
+});
+
+const LARGE_PLANS = [
+  { name: '65 variable', counts: Array.from({ length: 65 }, (_, i) => 749 + i % 2), encoding: /\(offset:limit\)/ },
+  { name: '2000 variable', counts: Array.from({ length: 2000 }, (_, i) => 749 + i % 2), encoding: /\(offset:limit\)/ },
+  { name: '2000 uniform', counts: Array(2000).fill(750), encoding: /stepping by 750/ },
+];
+for (const { name, counts, encoding } of LARGE_PLANS) {
+  test(`context plan retains every chunk: ${name}`, async () => {
+    const contextLines = counts.reduce((sum, count) => sum + count, 0);
+    const { out, ctx } = await runAndCapture(validArgs({ contextLines, contextChars: contextLines,
+      contextReadPlanVersion: 1, contextReadChunks: counts }));
+    assert.equal(out.ok, true);
+    assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('context_')), []);
+    assert.deepEqual(contextReadPlan(contextLines, contextLines, undefined, counts, 1).map((chunk) => chunk.limit), counts);
+    const instruction = sharedContextLine({ contextPath: 'p', contextLines, contextChars: contextLines,
+      contextReadPlanVersion: 1, contextReadChunks: counts });
+    assert.match(instruction, encoding);
+    assert.ok(instruction.includes(`${counts.length} planned Read calls`));
+    assert.ok(instruction.length - 1 <= 26400);
+    for (const call of ctx.calls.filter((call) => call.prompt.includes('Read the shared context'))) {
+      assert.ok(call.prompt.includes(instruction.replace('at p first.', 'at /repo/.code-gauntlet/code-gauntlet-context-abc1234.md first.')));
+    }
+  });
+}
+
+test('larger final chunk uses the variable encoding', async () => {
+  const counts = [...Array(64).fill(1), 2];
+  const args = validArgs({ contextLines: 66, contextChars: 66, contextReadPlanVersion: 1, contextReadChunks: counts });
+  const { out, ctx } = await runAndCapture(args);
+  assert.equal(out.ok, true);
+  assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('context_')), []);
+  for (const call of ctx.calls.filter((call) => call.prompt.includes('Read the shared context'))) {
+    assert.match(call.prompt, /65 planned Read calls \(offset:limit\)/);
+    assert.ok(call.prompt.includes('65:2'));
+  }
+});
+
+for (const input of [
+  { contextChars: 3000, contextMaxLineChars: 1000, contextReadPlanVersion: 1, contextReadChunks: [1, 2] },
+  { contextChars: 3000 },
+  { contextMaxLineChars: 1000 },
+]) test(`missing line count has one true-cause gap: ${JSON.stringify(input)}`, async () => {
+  const { out, ctx } = await runAndCapture(validArgs(input));
+  assert.equal(out.ok, true);
+  assert.deepEqual(out.gaps.filter((gap) => gap.startsWith('context_')), [UNMEASURED_GAP]);
+  assert.deepEqual(contextReadPlan(undefined, input.contextChars, input.contextMaxLineChars, input.contextReadChunks, input.contextReadPlanVersion), []);
+  assert.deepEqual(setupContext({ contextPath: 'p', ...input }).contextSizeGap, [UNMEASURED_GAP]);
+  for (const call of ctx.calls.filter((call) => call.prompt.includes('Read the shared context'))) {
+    assert.match(call.prompt, /until a call returns no further content/);
+  }
+});
+
+test('run transports prepared region coverage into conditional discovery and its measurement', async () => {
+  const A = validArgs({ measurementTrace: true, contextLines: 10,
+    discoveryPlan: { version: 2, status: 'available', fact_packets: [],
+      regions: [{ id: 'only', file: 'a.js', line_start: 1, line_end: 2, reads: [{ offset: 5, limit: 2, bytes: 80 }] }] } });
+  const ctx = makeCtx(A, { findings: [] });
+  const result = await withPreparedPlan(ctx, A, runWith);
+  const hunter = ctx.calls.find((call) => call.label === 'code-gauntlet:gap-hunter');
+  assert.ok(hunter);
+  assert.ok(hunter.prompt.includes(`${A.outputDir}/code-gauntlet-context-${A.headShaShort}.md`));
+  assert.equal(result.measurement.status, 'available');
+  assert.deepEqual(JSON.parse(result.measurement.text).coverage_ledger.uncovered, ['only']);
+  const invalid = await runWith(makeCtx(A), { ...A, discoveryPlan: { ...A.discoveryPlan, fact_packets: [{ related_files: [], reads: [{offset:10,limit:2,bytes:80}]}] } });
+  assert.equal(invalid.ok, true);
+  assert.ok(invalid.gaps.some((gap) => gap.includes('coverage unavailable')));
+});
+
+test('a preparation receipt can carry only a fixed discovery plan reference', async () => {
+  const A = validArgs({ contextReceipt: { contextLines: 10, contextChars: 200, contextMaxLineChars: 20,
+    contextReadPlanVersion: 1, contextReadChunks: [10],
+    discoveryPlan: { version: 2, status: 'available', fact_packets: [],
+      regions: [{ id: 'receipt', file: 'a.js', line_start: 1, line_end: 2, reads: [{ offset: 5, limit: 2, bytes: 80 }] }] } } });
+  const ctx = makeCtx(A, { findings: [] });
+  const result = await withPreparedPlan(ctx, A, runWith);
+  assert.equal(result.ok, true);
+  assert.ok(ctx.calls.some((call) => call.agentType === 'code-gauntlet:gap-hunter'));
+});
+
+test('receipt conflicts survive both successful reviews and invalid-args exits as gaps', async () => {
+  for (const invalid of [false, true]) {
+    const A = validArgs({contextLines:100, contextReceipt:{contextLines:10,contextChars:200,contextMaxLineChars:20,
+      contextReadPlanVersion:1,contextReadChunks:[10]}, ...(invalid?{nonce:'invalid nonce'}:{})});
+    const out = await runWith(makeCtx(A), A);
+    assert.equal(out.ok, !invalid);
+    assert.ok(out.gaps.some((gap) => gap === 'contextReceipt.contextLines conflicts with top-level contextLines; preparation receipt value used'));
+  }
+});
 for (const url of ['https://github.com/grafana/grafana', 'https://github.com/o/r/pull/9?files=1#diff']) {
   test(`identity URL reaches report and post-review wrapper as an origin: ${url}`, async () => {
     const identity = { ...prIdentity(), web_origin: url };

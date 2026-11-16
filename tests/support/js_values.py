@@ -21,10 +21,7 @@ def js_values() -> dict:
         "requiredExtra: d.requiredExtra || [],"
         "requiredWhenDimension: d.requiredWhenDimension || [],"
         "})),}, FIELD_RENAMES: m.FIELD_RENAMES, "
-        "SEVERITY_ORDER: m.SEVERITY_ORDER, REVIEW_DEFAULTS: {"
-        "confidence_threshold_nonsecurity: f.FILTER_DEFAULTS.nonsecurityConfidenceThreshold, "
-        "security_min_confidence: f.FILTER_DEFAULTS.securityMinConfidence, "
-        "severity_threshold: f.FILTER_DEFAULTS.severityThreshold}})))"
+        "SEVERITY_ORDER: m.SEVERITY_ORDER})))"
     )
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],

@@ -148,46 +148,6 @@ def test_direct_sessions_interleave_live_and_dry_delivery(
     )
 
 
-@pytest.mark.parametrize(
-    ("agent", "dimension", "confidence", "expected_identity"),
-    [
-        pytest.param(
-            "[[a",
-            "|https://example.test/p.png]]",
-            "0.9",
-            "[\uff3ba (|https://example.test/p.png]], confidence 0.9)",
-            id="agent_dimension",
-        ),
-    ],
-)
-def test_corroborator_cross_field_wikilink(
-    agent: str, dimension: str, confidence: str, expected_identity: str
-) -> None:
-    primary: dict[str, object] = {
-        "file": "src/edited.py",
-        "line": 2,
-        "line_start": 2,
-        "line_end": 2,
-        "location_status": "confirmed",
-        "admission": admitted_stamp(),
-        "disposition": "deliver",
-        "anchor": "current_source_value()",
-        "severity": "high",
-        "title": "Primary",
-        "body": "Primary body",
-    }
-    corroborator: dict[str, object] = {
-        "agent": agent,
-        "dimension": dimension,
-        "confidence": confidence,
-        "title": "Corroboration",
-        "body": "Corroborating body",
-    }
-    body = compose.render_group_body(primary, [corroborator])
-    _assert_outbound_string_invariant(body)
-    assert expected_identity in body
-
-
 def _deliver(
     platform: Platform,
     findings: list[Finding],
@@ -373,13 +333,13 @@ def test_python_sink_containment(case: SinkCase) -> None:
     assert "\uff20zz363review_body" in summary
     if case.route == "off_diff":
         assert not inline_bodies
-        assert "could not be anchored inline" in summary
+        assert "### 1 issue described here" in summary.splitlines()
         assert "\uff20zz363title" in summary
     else:
         assert len(inline_bodies) == 1
         assert "\uff20zz363title" in inline_bodies[0]
         if case.route == "grouped":
-            assert "Corroborating finding" in inline_bodies[0]
+            assert "Corroborating finding" not in inline_bodies[0]
         if case.route == "rule-fallback":
             assert "\uff20zz363spec_text" in inline_bodies[0]
 
@@ -420,7 +380,7 @@ def _assert_prepared_body(
     assert review_marker.find_finding_markers(body) == list(expected_markers)
 
 
-def test_legacy_report_summary_is_guarded_on_the_real_cli_path(
+def test_legacy_report_free_prose_is_not_posted(
     forge_factory: FakeForgeFactory,
 ) -> None:
     with tempfile.TemporaryDirectory() as tmp:
@@ -472,8 +432,9 @@ def test_legacy_report_summary_is_guarded_on_the_real_cli_path(
     _assert_prepared_body(review_body)
     invariant_body = review_body.replace(review_marker.build_marker(SHA, 0), "")
     _assert_outbound_string_invariant(invariant_body)
-    assert "\uff20zz363sentinel" in review_body
-    assert "\\/close\n\\>>>" in review_body
+    assert "zz363sentinel" not in review_body
+    assert "Found 0 issues in this change." in review_body
+    assert "/close" not in review_body and ">>>" not in review_body
 
 
 def test_markup_rekeys_once() -> None:
@@ -611,23 +572,19 @@ def test_prose_active_fences_preserve_owned_patch(
     assert f"{patch_header}\n{patch_text}\n```" in rendered
     assert compose.BRAND_TRAILER in rendered
 
-    corroborator = {
-        "severity": "low",
-        "title": "corroborator [a]: //e/SENT](a b)",
-        "body": "term\n~ ~~~mermaid\n  x = SENT\n  ~~~\n\ntail",
-        "agent": "Corroborator",
-    }
-    grouped = compose.render_group_body(finding, [corroborator])
-    assert "corroborator [a]\uff1a //e/SENT](a b)" in grouped
-    assert "~ \\~\\~\\~mermaid" in grouped
-
-    skipped = compose.build_skipped_section(
+    skipped = compose.compose_review_body(
+        "",
         [
-            compose.SkippedEntry(
-                "src/a.py",
-                3,
-                {"severity": "high", "title": "Skipped", "body": finding["body"]},
-            )
-        ]
-    )
+            [
+                compose.SkippedEntry(
+                    "src/a.py",
+                    3,
+                    {"severity": "high", "title": "Skipped", "body": finding["body"]},
+                )
+            ]
+        ],
+        platform="github",
+        findings_count=1,
+        sha="a" * 40,
+    ).body
     assert ": \\~\\~\\~suggestion" in skipped

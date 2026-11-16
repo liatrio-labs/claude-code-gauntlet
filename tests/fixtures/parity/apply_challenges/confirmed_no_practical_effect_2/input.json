@@ -1,0 +1,19 @@
+{
+  "findings": [
+    {
+      "id": "f",
+      "file": "src",
+      "line_start": 10,
+      "severity": "high",
+      "confidence": 90
+    }
+  ],
+  "challenges": [
+    {
+      "id": "f",
+      "claim": "confirmed",
+      "consequence": "no_practical_effect",
+      "justification": "Caller inspected"
+    }
+  ]
+}

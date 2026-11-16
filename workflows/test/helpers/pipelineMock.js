@@ -4,6 +4,7 @@ import { parseWriterPayload } from '../../src/persist.js';
 import { plannedArtifactPaths } from '../../src/outputPaths.js';
 import { AGENTS } from '../../src/registry.js';
 import { deltaEnvelope, sliceInputRecorder, dispatchedFindings } from './verifyDelta.js';
+import { routeVerdict } from '../../src/verdict.js';
 import { evaluateAdmission } from '../../src/admission.js';
 
 const DISCOVERY_AGENT_TYPES = new Set(AGENTS);
@@ -30,7 +31,7 @@ function assertValidConditional(clause, path) {
   if (!Array.isArray(clause.then.required)) throw new Error(`schema ${path}.then: must declare "required" as an array`);
 }
 
-// opts.schema must be REAL JSON Schema: a "type", object schemas carry "properties",
+// Dispatch schemas use explicit types; object schemas carry properties,
 // array schemas carry "items" — recursively (catches nested shorthand like {id:'string'}).
 export function assertValidSchema(schema, path = '$') {
   if (!schema || typeof schema !== 'object') throw new Error(`schema ${path}: must be a JSON Schema object (got ${typeof schema})`);
@@ -66,8 +67,9 @@ export function assertObjectRootSchema(schema) {
 // these) plus the fields downstream filter/challenge read. Fresh per call so stage
 // mutation never leaks across dispatches or tests.
 export function makeFinding(id, over = {}) {
-  const finding = evaluateAdmission({
+  const finding = evaluateAdmission(routeVerdict({
     id,
+    verdict: { claim: 'confirmed', consequence: 'present_failure', justification: 'Fixture caller fails' },
     path_role: 'source', policy_subject: 'ordinary', validation: 'validated', challenge: 'survived',
     file: `${id}.js`,
     location_status: 'confirmed',
@@ -81,11 +83,12 @@ export function makeFinding(id, over = {}) {
     confidence: 90,
     dimension: 'bug',
     origin: 'new',
+
     evidence: '',
     cross_file_refs: [],
     code: `const ${id} = broken();`,
     ...over,
-  });
+  }));
   for (const key of ['report_tag', 'report_destination']) if (Object.hasOwn(over, key)) finding[key] = over[key];
   return finding;
 }
@@ -174,9 +177,10 @@ export function makeCtx(args, opts = {}) {
     }
     if (label.startsWith('validate-batch-')) {
       const ids = [...prompt.matchAll(/^- (\S+) \[/gm)].map((m) => m[1]);
-      return { validations: ids.map((finding_id) => ({ finding_id, policy_subject: 'ordinary', confidence: seedFindings().find((f) => f.id === finding_id)?.confidence ?? 90 })) };
+      return { validations: ids.map((finding_id) => ({ finding_id, claim: 'confirmed', consequence: 'present_failure', justification: 'Present failing input inspected' })) };
     }
-    if (label.startsWith('challenge-')) return { confidence_claim_is_correct: 80, justification: 'claim holds' };
+    if (label === 'group-findings') return { groups: [] };
+    if (label.startsWith('challenge-')) return { verdict: { claim: 'confirmed', consequence: 'present_failure', justification: 'claim holds' } };
     if (label === 'artifact-writer') {
       if (opts.onPersist) opts.onPersist(parseWriterPayload(prompt));
       // Faithful writer: echo the exact planned paths so writeArtifacts' write-proof gate

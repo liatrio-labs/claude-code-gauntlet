@@ -352,7 +352,9 @@ def test_candidate_uses_verify_diff_facts(tmp_path, evidence, changes, expected)
     assert actual["disposition"] == "held_back"
 
 
-def test_admission_replay_requires_enriched_evidence(tmp_path, evidence, monkeypatch):
+def test_admission_replay_preserves_typed_verdict_and_evidence(
+    tmp_path, evidence, monkeypatch
+):
     from bench.runner import delivery_replay
 
     manifest = _manifest(tmp_path, evidence, "candidate", trace=False)
@@ -377,7 +379,7 @@ def test_admission_replay_requires_enriched_evidence(tmp_path, evidence, monkeyp
         assert actual["disposition"] == expected
         for key in (
             "admission",
-            "admission_assessments",
+            "verdict",
             "resolved_references",
             "sites",
         ):
@@ -403,7 +405,10 @@ def test_admission_replay_requires_enriched_evidence(tmp_path, evidence, monkeyp
         ),
         ("findings[0].body = 'invented claim'", "finding delta"),
         ("findings.pop()", "member omission"),
-        ("findings[0].admission_assessments = []", "finding delta"),
+        (
+            "findings[0].verdict = {claim:'confirmed', consequence:'artifact_defect', justification:'changed answer'}",
+            "finding delta",
+        ),
         ("findings[0].sites = [{file:'invented'}]", "finding delta"),
         ("findings[0].body_fix_task_eligible = true", "finding delta"),
         ("findings[0].admission = {status:'admitted'}", "finding delta"),
@@ -575,7 +580,6 @@ def test_missing_join_occurrence_without_budget_drop_still_raises(tmp_path, evid
         "trace-version",
         "unsupported-dispatch",
         "dispatch-drift",
-        "return-fallback",
         "checkpoint-drift",
         "args-drift",
         "symlink",
@@ -599,9 +603,8 @@ def test_replay_cli_refuses_incomplete_or_ambiguous_evidence(
         "writer-failure"
         if case == "challenge"
         else "return"
-        if case in ("return-fallback", "methodology")
+        if case == "methodology"
         else "derived",
-        trace=case != "return-fallback",
     )
     wire = json.loads(manifest.read_bytes())
     workflow = tmp_path / "workflow.json"
@@ -648,10 +651,6 @@ def test_replay_cli_refuses_incomplete_or_ambiguous_evidence(
         record["persistence"][0]["label"] = "review-agent"
     elif case == "dispatch-drift":
         record["persistence"][0]["prompt_sha256"] = "0" * 64
-    elif case == "return-fallback":
-        record["state"]["phaseOutputs"]["challenge"]["findings"][0]["diagnostic"] = (
-            "x" * 300000
-        )
     elif case in ("checkpoint-drift", "challenge"):
         path = tmp_path / "checkpoint.json"
         checkpoint = json.loads(path.read_bytes())

@@ -538,6 +538,7 @@ _DISCOVERY_FAILURE_RE = re.compile(
     r"^[^\s]+: (?:agent returned null \(dispatch failed\)|"
     r"malformed result \(no findings array\))"
 )
+_OPTIONAL_DISCOVERY_RE = re.compile(r"^\S+: assigned gap investigation ")
 _REMOVED_TEST_AUDIT_PREFIX = "removed-test audit: "
 
 
@@ -596,6 +597,12 @@ def workflow_stage_outcomes(pr_dir):
         gaps = [gap for gap in out.get("gaps", []) if isinstance(gap, str)]
         dimensions = out.get("dimensions") or {}
         audit = dimensions.get("removedTestAudit") or {}
+        disclosures.update(
+            f"Recorded limitation: {gap}"
+            for gap in gaps
+            if _OPTIONAL_DISCOVERY_RE.match(gap)
+            or gap.startswith("discovery coverage unavailable:")
+        )
         audit_gaps = [gap for gap in gaps if gap.startswith(_REMOVED_TEST_AUDIT_PREFIX)]
         audit_limited = bool(audit_gaps) or (
             bool(audit.get("status")) and audit["status"] != "ran-clean"

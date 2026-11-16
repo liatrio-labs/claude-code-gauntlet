@@ -2141,8 +2141,8 @@
           "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/a.py#L3): before x [a]\uff1a //example.test/SENT](a b) after",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/a.py#L3): before x [a]\uff1a //example.test/SENT](a b) after"
+      "expected_py": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/a.py#L3): before x [a]\uff1a //example.test/SENT](a b) after",
+      "expected_js": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/a.py#L3): before x [a]\uff1a //example.test/SENT](a b) after"
     },
     {
       "id": "A-mid-src_a_py-plain",
@@ -2159,8 +2159,8 @@
           }
         ]
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: before x [a]\uff1a //example.test/SENT](a b) after",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: before x [a]\uff1a //example.test/SENT](a b) after"
+      "expected_py": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: before x [a]\uff1a //example.test/SENT](a b) after",
+      "expected_js": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: before x [a]\uff1a //example.test/SENT](a b) after"
     },
     {
       "id": "A-mid-src_bxbc_py-linked",
@@ -2184,8 +2184,8 @@
           "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): before x [a]\uff1a //example.test/SENT](a b) after",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): before x [a]\uff1a //example.test/SENT](a b) after"
+      "expected_py": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): before x [a]\uff1a //example.test/SENT](a b) after",
+      "expected_js": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): before x [a]\uff1a //example.test/SENT](a b) after"
     },
     {
       "id": "A-mid-src_bxbc_py-plain",
@@ -2202,8 +2202,8 @@
           }
         ]
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]\uff1a.py:3`: before x [a]\uff1a //example.test/SENT](a b) after",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]\uff1a.py:3`: before x [a]\uff1a //example.test/SENT](a b) after"
+      "expected_py": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]\uff1a.py:3`: before x [a]\uff1a //example.test/SENT](a b) after",
+      "expected_js": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]\uff1a.py:3`: before x [a]\uff1a //example.test/SENT](a b) after"
     },
     {
       "id": "A-title-summary-src_a_py-linked",
@@ -2227,8 +2227,8 @@
           "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/a.py#L3): [x]\uff1a u",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/a.py#L3): [x]\uff1a u"
+      "expected_py": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/a.py#L3): [x]\uff1a u",
+      "expected_js": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/a.py#L3): [x]\uff1a u"
     },
     {
       "id": "A-title-summary-src_a_py-plain",
@@ -2245,8 +2245,8 @@
           }
         ]
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: [x]\uff1a u",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: [x]\uff1a u"
+      "expected_py": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: [x]\uff1a u",
+      "expected_js": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: [x]\uff1a u"
     },
     {
       "id": "A-title-summary-src_bxbc_py-linked",
@@ -2270,8 +2270,8 @@
           "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): [x]\uff1a u",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): [x]\uff1a u"
+      "expected_py": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): [x]\uff1a u",
+      "expected_js": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): [x]\uff1a u"
     },
     {
       "id": "A-title-summary-src_bxbc_py-plain",
@@ -2288,8 +2288,8 @@
           }
         ]
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]\uff1a.py:3`: [x]\uff1a u",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]\uff1a.py:3`: [x]\uff1a u"
+      "expected_py": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]\uff1a.py:3`: [x]\uff1a u",
+      "expected_js": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]\uff1a.py:3`: [x]\uff1a u"
     },
     {
       "id": "A-code-control-src_a_py-linked",
@@ -2313,8 +2313,8 @@
           "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/a.py#L3): `x [a]\uff1a SENT](a b)`",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/a.py#L3): `x [a]\uff1a SENT](a b)`"
+      "expected_py": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/a.py#L3): `x [a]\uff1a SENT](a b)`",
+      "expected_js": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/a.py#L3): `x [a]\uff1a SENT](a b)`"
     },
     {
       "id": "A-code-control-src_a_py-plain",
@@ -2331,8 +2331,8 @@
           }
         ]
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: `x [a]\uff1a SENT](a b)`",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: `x [a]\uff1a SENT](a b)`"
+      "expected_py": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: `x [a]\uff1a SENT](a b)`",
+      "expected_js": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: `x [a]\uff1a SENT](a b)`"
     },
     {
       "id": "A-code-control-src_bxbc_py-linked",
@@ -2356,8 +2356,8 @@
           "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): `x [a]\uff1a SENT](a b)`",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): `x [a]\uff1a SENT](a b)`"
+      "expected_py": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): `x [a]\uff1a SENT](a b)`",
+      "expected_js": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): `x [a]\uff1a SENT](a b)`"
     },
     {
       "id": "A-code-control-src_bxbc_py-plain",
@@ -2374,8 +2374,8 @@
           }
         ]
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]\uff1a.py:3`: `x [a]\uff1a SENT](a b)`",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]\uff1a.py:3`: `x [a]\uff1a SENT](a b)`"
+      "expected_py": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]\uff1a.py:3`: `x [a]\uff1a SENT](a b)`",
+      "expected_js": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/[x]\uff1a.py:3`: `x [a]\uff1a SENT](a b)`"
     },
     {
       "id": "tilde_interior_linked",
@@ -2399,8 +2399,8 @@
           "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`a~~~b:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/a\\~\\~\\~b#L3): a \\~\\~\\~ b",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`a~~~b:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/a\\~\\~\\~b#L3): a \\~\\~\\~ b"
+      "expected_py": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] [`a~~~b:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/a\\~\\~\\~b#L3): a \\~\\~\\~ b",
+      "expected_js": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] [`a~~~b:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/a\\~\\~\\~b#L3): a \\~\\~\\~ b"
     },
     {
       "id": "tilde_interior_plain",
@@ -2417,8 +2417,8 @@
           }
         ]
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `a~~~b:3`: a \\~\\~\\~ b",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `a~~~b:3`: a \\~\\~\\~ b"
+      "expected_py": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] `a~~~b:3`: a \\~\\~\\~ b",
+      "expected_js": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] `a~~~b:3`: a \\~\\~\\~ b"
     },
     {
       "id": "tilde_segment_linked",
@@ -2442,8 +2442,8 @@
           "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`~~~/x.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/\\~\\~\\~/x.py#L3): a \\~\\~\\~ b",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`~~~/x.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/\\~\\~\\~/x.py#L3): a \\~\\~\\~ b"
+      "expected_py": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] [`~~~/x.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/\\~\\~\\~/x.py#L3): a \\~\\~\\~ b",
+      "expected_js": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] [`~~~/x.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/\\~\\~\\~/x.py#L3): a \\~\\~\\~ b"
     },
     {
       "id": "tilde_segment_plain",
@@ -2460,8 +2460,8 @@
           }
         ]
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `~~~/x.py:3`: a \\~\\~\\~ b",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `~~~/x.py:3`: a \\~\\~\\~ b"
+      "expected_py": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] `~~~/x.py:3`: a \\~\\~\\~ b",
+      "expected_js": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] `~~~/x.py:3`: a \\~\\~\\~ b"
     },
     {
       "id": "colon_tick_footnote_summary",
@@ -2485,8 +2485,8 @@
           "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): \uff3b^`]\uff1a The handler trusts `X-User\\` ...; see [docs](https://e.test/auth).",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): \uff3b^`]\uff1a The handler trusts `X-User\\` ...; see [docs](https://e.test/auth)."
+      "expected_py": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): \uff3b^`]\uff1a The handler trusts `X-User\\` ...; see [docs](https://e.test/auth).",
+      "expected_js": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): \uff3b^`]\uff1a The handler trusts `X-User\\` ...; see [docs](https://e.test/auth)."
     },
     {
       "id": "colon_tick_definition_summary",
@@ -2510,8 +2510,8 @@
           "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): [`]\uff1a /u 'text ` ](x'",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): [`]\uff1a /u 'text ` ](x'"
+      "expected_py": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): [`]\uff1a /u 'text ` ](x'",
+      "expected_js": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): [`]\uff1a /u 'text ` ](x'"
     },
     {
       "id": "colon_tick_destination_summary",
@@ -2535,8 +2535,8 @@
           "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): See [x](`) [label W5]\uff1a //e/dest](a b) ` W6",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): See [x](`) [label W5]\uff1a //e/dest](a b) ` W6"
+      "expected_py": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): See [x](`) [label W5]\uff1a //e/dest](a b) ` W6",
+      "expected_js": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/[x]\uff1a.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5Bx%5D%3A.py#L3): See [x](`) [label W5]\uff1a //e/dest](a b) ` W6"
     },
     {
       "id": "colon_forced_code_title_summary",
@@ -2553,8 +2553,8 @@
           }
         ]
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: `[a]\uff1a x`",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: `[a]\uff1a x`"
+      "expected_py": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: `[a]\uff1a x`",
+      "expected_js": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/a.py:3`: `[a]\uff1a x`"
     },
     {
       "id": "footnote_opener_title_and_path_summary",
@@ -2571,8 +2571,8 @@
           }
         ]
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/\uff3b^handler.py:3`: See \uff3b^The handler trusts X-User W1",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/\uff3b^handler.py:3`: See \uff3b^The handler trusts X-User W1"
+      "expected_py": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/\uff3b^handler.py:3`: See \uff3b^The handler trusts X-User W1",
+      "expected_js": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] `src/\uff3b^handler.py:3`: See \uff3b^The handler trusts X-User W1"
     },
     {
       "id": "footnote_opener_title_and_path_linked_summary",
@@ -2596,8 +2596,8 @@
           "sha_full": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       },
-      "expected_py": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/\uff3b^handler.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5B%5Ehandler.py#L3): See \uff3b^The handler trusts X-User W1",
-      "expected_js": "1 finding after the gauntlet \u2014 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/\uff3b^handler.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5B%5Ehandler.py#L3): See \uff3b^The handler trusts X-User W1"
+      "expected_py": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/\uff3b^handler.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5B%5Ehandler.py#L3): See \uff3b^The handler trusts X-User W1",
+      "expected_js": "Found 1 issue in this change: 1 high.\n\n- \ud83d\udfe0 [HIGH] [`src/\uff3b^handler.py:3`](http://localhost:8929/cdr-group/probe/-/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/%5B%5Ehandler.py#L3): See \uff3b^The handler trusts X-User W1"
     }
   ]
 }

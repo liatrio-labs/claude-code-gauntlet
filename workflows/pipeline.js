@@ -10,15 +10,6 @@ function fnv1a32(s) {
   }
   return `fnv1a32:0x${h.toString(16).padStart(8, '0')}`;
 }
-function normalizeReviewText(s) {
-  const lines = s.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n').map((line) => {
-    let end = line.length;
-    while (end > 0 && (line.charCodeAt(end - 1) === 0x20 || line.charCodeAt(end - 1) === 0x09)) end--;
-    return line.slice(0, end);
-  });
-  while (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
-  return lines.join('\n');
-}
 function normalizeForChecksum(s) {
   let out = typeof s === 'string' ? s : '';
   if (out.charCodeAt(0) === 0xfeff) out = out.slice(1);
@@ -101,9 +92,6 @@ const stripPythonWhitespace = (value) => value.replace(PYTHON_STRIP_RE, '');
 function asText(value) {
   return typeof value === 'string' ? value : '';
 }
-function asConfidence(value) {
-  return typeof value === 'number' && !Number.isNaN(value) ? value : 0;
-}
 const rejectFrozenCollectionMutation = () => { throw new TypeError('Cannot modify a frozen collection'); };
 function deepFreeze(value) {
   const visited = new Set();
@@ -134,8 +122,29 @@ function pythonArgv(python = 'python3') {
   if (!Object.hasOwn(PYTHON_COMMAND_ARGV, python)) throw new Error('invalid python command');
   return PYTHON_COMMAND_ARGV[python];
 }
+function untrustedJson(value, kind) {
+  const body = JSON.stringify(value).replace(/[<>&\u2028\u2029]/g,
+    (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  const id = fnv1a32(body).slice('fnv1a32:0x'.length);
+  return `<untrusted-code-content kind="${kind}" id="${id}">\n${body}\n</untrusted-code-content id="${id}">`;
+}
+function utf8Encode(text) {
+  const bytes = [];
+  for (const char of text) {
+    let code = char.codePointAt(0);
+    if (code >= 0xd800 && code <= 0xdfff) code = 0xfffd;
+    if (code < 0x80) bytes.push(code);
+    else if (code < 0x800) bytes.push(0xc0 | (code >> 6), 0x80 | (code & 63));
+    else if (code < 0x10000) bytes.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 63), 0x80 | (code & 63));
+    else bytes.push(0xf0 | (code >> 18), 0x80 | ((code >> 12) & 63), 0x80 | ((code >> 6) & 63), 0x80 | (code & 63));
+  }
+  return bytes;
+}
 // --- registry.js ---
 const DEEP = 'deep';
+const READ_PLAN_MAX_CHUNKS = 2000;
+const DISCOVERY_TRANSPORT_LIMITS = deepFreeze({requestChars:1000,receiptChars:2048,maxParts:4});
+const CONTEXT_RECEIPT_FIELDS = deepFreeze(['contextLines', 'contextChars', 'contextMaxLineChars', 'contextReadPlanVersion', 'contextReadChunks', 'removedTests', 'discoveryPlanRef']);
 const AGENT_TYPE_TEST_ANALYZER = 'code-gauntlet:test-analyzer';
 const SHA_FULL_RE = /^[0-9a-f]{40}$/;
 const WEB_ORIGIN_RE = new RegExp(
@@ -184,6 +193,14 @@ const PR_IDENTITY_FIELDS = deepFreeze([
   { name: 'title', required: false, check: (value) => typeof value === 'string' && value.trim().length > 0,
     describe: 'a non-empty string when present' },
 ]);
+const PUBLIC_SUMMARY = deepFreeze({
+  counts: 'Found {count} {issues} in this change{breakdown}.',
+  improvement: ' {count} is a suggested improvement rather than a defect.',
+  improvements: ' {count} are suggested improvements rather than defects.',
+  index: '- {mark} [{severity}] {location}{suggestion}: {title}',
+  suggestion: ' (improvement suggestion)',
+  remainder: '{count} more {issues} not listed here ({reasons}).',
+});
 const CODE_OWNED_HEADINGS = deepFreeze([
   '## Summary',
   '## Change Context',
@@ -209,8 +226,7 @@ const DISPOSITION_RIGHTS = deepFreeze({
   eliminate: { inline: false, body: false, report: 'eliminated', fixTask: false, patch: false, fence: false, sourceLink: false },
 });
 const DISPOSITIONS = deepFreeze(Object.keys(DISPOSITION_RIGHTS));
-const RIGHT_ELIGIBILITY = deepFreeze({ body: { fixTask: ['current_defect', 'current_reachability', 'confirmed_location'] } });
-const STAGE_COSTS = deepFreeze({ verify: { attempts: 2, singletonRetries: 3 }, validate: { retryBatchDivisor: 5 }, writer: { attempts: 2 } });
+const STAGE_COSTS = deepFreeze({ verify: { attempts: 2, singletonRetries: 3 }, validate: { retryBatchDivisor: 5 }, grouping: { attempts: 1 }, writer: { attempts: 2 }, discoveryPlan: { attempts: 2 * DISCOVERY_TRANSPORT_LIMITS.maxParts } });
 const SOURCE_REFERENCE = {
   type: 'object', $comment: 'source-reference', properties: {
     file: { type: 'string', $comment: 'repo-path' },
@@ -279,7 +295,7 @@ const QUALITY_ADMISSION = {
     duplication: { description: 'Duplicated behavior identified by duplicate_of.', required: ['duplicate_of'], predicates: ['resolved_duplicate', 'confirmed_duplication'], phase: 'semantic', tier: 'suggestion' },
     simpler_equivalent: { description: 'Simpler replacement preserving observable behavior.', required: ['behavior_preserved'], anyOf: ['suggestion', 'suggested_fix_code'], predicates: ['concrete_equivalent', 'behavior_preserved'], phase: 'semantic', tier: 'suggestion' },
     stack_idiom: { description: 'Behavior-preserving replacement grounded in existing repository precedent.', required: ['precedent'], predicates: ['resolved_precedent', 'precedent_not_added', 'applicable'], phase: 'semantic', tier: 'suggestion' },
-    other: { description: 'No demonstrated defect, duplication, simpler equivalent or applicable precedent.', required: [], predicates: [], phase: 'deterministic', defaultDisposition: 'report_only', tier: 'suggestion' },
+    other: { description: 'No demonstrated defect, duplication, simpler equivalent or applicable precedent.', required: [], predicates: [], phase: 'semantic', tier: 'suggestion' },
   },
 };
 const DIMENSIONS = deepFreeze([
@@ -342,6 +358,30 @@ const DIMENSIONS = deepFreeze([
   } : {}) },
   requiredWhenDimension: [...row.requiredWhenDimension, ...(row.admission ? [row.admission.field] : [])],
 })));
+const DISCOVERY_DISPATCHES = deepFreeze(['parallel', 'uncovered']);
+const DISCOVERY_REVIEWER_KEYS = ['agentType', 'dimension', 'dispatch', 'conditionalFlag', 'label', 'objective', 'tools', 'effort', 'color', 'modelOverride'];
+function discoveryReviewer(row) {
+  if (!row || Object.keys(row).length !== DISCOVERY_REVIEWER_KEYS.length
+    || DISCOVERY_REVIEWER_KEYS.some((key) => !Object.hasOwn(row, key))
+    || !/^code-gauntlet:[a-z][a-z0-9-]*$/.test(row.agentType)
+    || !DIMENSIONS.some((d) => d.dimension === row.dimension)
+    || !DISCOVERY_DISPATCHES.includes(row.dispatch)
+    || ![null, DEEP].includes(row.conditionalFlag)
+    || !['label', 'objective'].every((key) => typeof row[key] === 'string' && row[key].trim())
+    || !Array.isArray(row.tools) || !row.tools.length || row.tools.some((t) => !['Read', 'Grep', 'Glob', 'LSP'].includes(t))
+    || !['low', 'medium', 'high'].includes(row.effort)
+    || !['red', 'blue', 'green', 'yellow', 'purple', 'cyan', 'magenta'].includes(row.color)
+    || !(row.modelOverride === null || (typeof row.modelOverride === 'string' && row.modelOverride.trim()))) {
+    throw new Error('Invalid discovery reviewer registry row');
+  }
+  return row;
+}
+const DISCOVERY_REVIEWERS = deepFreeze([
+  { agentType: 'code-gauntlet:gap-hunter', dimension: 'bug', dispatch: 'uncovered', conditionalFlag: DEEP, label: 'Gap Hunter',
+    objective: 'Focus on the supplied uncovered regions and fact cards; report any defect you find, including findings anchored outside the assignment.',
+    tools: ['Read'], effort: 'high', color: 'cyan', modelOverride: 'sonnet' },
+].map(discoveryReviewer));
+const DISCOVERY_AGENT_TYPES = deepFreeze([...new Set([...DIMENSIONS, ...DISCOVERY_REVIEWERS].map(row => row.agentType))]);
 const VERIFY_REFERENCE_FIELDS = deepFreeze(Object.keys(SOURCE_REFERENCE.properties));
 const VERIFY_REFERENCE_DESCRIPTORS = deepFreeze(Object.fromEntries(Object.entries(Object.assign({}, ...DIMENSIONS.map((row) => row.schemaExtra)))
   .filter(([, schema]) => schema.$comment === 'source-reference' || schema.items?.$comment === 'source-reference' || schema.$comment === 'search-paths')
@@ -369,7 +409,7 @@ const ADMISSION_PREDICATES = deepFreeze({
   confirmed_test_defect: { references: ['primary'], description: 'Actual incorrect assertion, ineffective mock, missing wait, isolation failure or other broken/noisy changed test.' },
   test_diff_site_for_inline: { placement: true },
   criticality_at_least_8: { fact: 'criticality' },
-  resolved_production_element: { references: ['production_element'], description: 'The resolved element is production behavior; directory names do not establish this.' },
+  resolved_production_element: { fact: 'production_element', references: ['production_element'], description: 'The resolved element is production behavior; directory names do not establish this.' },
   complete_searches: { fact: 'searches', references: ['searched_paths', 'candidate_tests'], description: 'Completed coverage investigation inspecting inputs, assertions, helpers and indirect integration coverage, including searches with no candidates.' },
   complete_behavioral_absence: { references: ['production_element', 'searched_paths', 'candidate_tests'], description: 'The entire named behavior has no effective coverage; an extra branch/case or indirect surviving coverage rejects absence.' },
   present_defect: { references: ['primary'], description: 'A present production correctness failure.' },
@@ -380,9 +420,6 @@ const ADMISSION_PREDICATES = deepFreeze({
   resolved_precedent: { fact: 'precedent' },
   precedent_not_added: { fact: 'precedent_not_added' },
   applicable: { references: ['primary', 'precedent'], description: 'The existing repository precedent applies here.' },
-  current_defect: { references: ['primary'], description: 'A current code defect, independently of coverage absence or quality preference.' },
-  current_reachability: { fact: 'reachability' },
-  confirmed_location: { fact: 'location' },
 });
 const ASSESSED_PREDICATES = deepFreeze(Object.keys(ADMISSION_PREDICATES).filter((key) => ADMISSION_PREDICATES[key].references));
 const ASSESSMENT = { type: 'object', properties: {
@@ -390,13 +427,89 @@ const ASSESSMENT = { type: 'object', properties: {
   status: { type: 'string', enum: ['confirmed', 'rejected', 'unresolved'] },
   references: { type: 'array', items: { type: 'string' } },
 }, required: ['predicate', 'status', 'references'], additionalProperties: false };
-const VALIDATION_RETURN_PROPERTIES = deepFreeze({ ...RECURRENCE_RETURN_PROPERTIES,
+const VERDICT_ROUTES = deepFreeze({
+  confirmed: {
+    present_failure: { route: 'posted', status: 'admitted', tier: 'main' },
+    latent: { route: 'posted-latent', status: 'admitted', tier: 'suggestion', severity: 'low' },
+    artifact_defect: { route: 'posted-artifact', status: 'admitted', tier: 'suggestion', severity: 'low' },
+    comment_defect: { route: 'report-only', status: 'report_only', tier: 'suggestion', severity: 'low', challenge: true },
+    no_practical_effect: { route: 'report-only', status: 'report_only', tier: 'suggestion', challenge: true },
+  },
+  overrides: [
+    { when: { dimension: 'security', phase: 'validation', claim: 'refuted' }, route: 'not-established', status: 'held_back', tier: 'main', challenge: true },
+    { when: { dimension: 'security', phase: 'challenge', claim: 'refuted', verified: true, validatorRefuted: true, validatorVerified: true, challengerRefuted: true, challengerVerified: true }, route: 'eliminated', status: 'report_only', tier: 'suggestion' },
+    { when: { dimension: 'security', phase: 'challenge', anyVerifiedRefutation: true }, route: 'report-only', status: 'report_only', tier: 'main' },
+  ],
+  refuted: { verified: { route: 'eliminated', status: 'report_only', tier: 'suggestion' },
+    unverified: { route: 'not-established', status: 'held_back', tier: 'main', challenge: true } },
+  not_established: { route: 'not-established', status: 'held_back', tier: 'main', challenge: true },
+});
+const VERDICT_RESOLUTIONS = deepFreeze({
+  confirmed: { confirmed: 'more_serious', refuted_verified: 'challenger', refuted_unverified: 'validator', not_established: 'validator' },
+  refuted_verified: { confirmed: 'validator', refuted_verified: 'challenger', refuted_unverified: 'validator', not_established: 'validator' },
+  refuted_unverified: { confirmed: 'challenger', refuted_verified: 'challenger', refuted_unverified: 'challenger', not_established: 'challenger' },
+  not_established: { confirmed: 'challenger', refuted_verified: 'challenger', refuted_unverified: 'challenger', not_established: 'challenger' },
+});
+const CONSEQUENCE_ORDER = deepFreeze(Object.keys(VERDICT_ROUTES.confirmed));
+const CONFIRMED_COMMENT_SCHEMA = deepFreeze({
+  type: 'object', properties: {
+    title: { type: 'string', minLength: 1, maxLength: 100, pattern: '^[^\\r\\n]*\\S[^\\r\\n]*$',
+      description: 'One line for the PR author: one confirmed issue, narrowed to what you verified; no trailing period needed, ceiling 100 characters.' },
+    body: { type: 'string', minLength: 1, maxLength: 400, pattern: '\\S',
+      description: 'One or two sentences for the PR author: one confirmed issue, what is wrong and what happens, narrowed to what you verified; ceiling 400 characters.' },
+    fix: { type: 'string', maxLength: 200,
+      description: 'One sentence for the PR author naming the correction you verified, ceiling 200 characters; empty if no correction can be confirmed.' },
+  }, required: ['title', 'body'], additionalProperties: false,
+});
+const READER_COMMENT_SCHEMA = { type: 'object',
+  properties: Object.fromEntries(Object.entries(CONFIRMED_COMMENT_SCHEMA.properties)
+    .map(([key, { type, description }]) => [key, { type, description }])),
+  required: Object.keys(CONFIRMED_COMMENT_SCHEMA.properties), additionalProperties: false };
+const VERDICT_PROPERTIES = deepFreeze({
+  claim: { type: 'string', enum: ['confirmed', 'refuted', 'not_established'] },
+  consequence: { type: 'string', enum: CONSEQUENCE_ORDER },
+  comment: {},
+  justification: { type: 'string', minLength: 1, pattern: '\\S' },
+  refutation_kind: { type: 'string', enum: ['premise_false', 'guard_exists', 'no_reachable_caller'] },
+  refutation: { ...SOURCE_REFERENCE, description: `Executable counter-evidence: at most ${ANCHOR_LIMITS.lines} inclusive source lines.`,
+    properties: { ...SOURCE_REFERENCE.properties, anchor: { type: 'string', minLength: 1, maxLength: ANCHOR_LIMITS.chars, pattern: `^(?:[^\\n]*\\n){0,${ANCHOR_LIMITS.lines - 1}}[^\\n]*$` },
+      line_end: { type: 'integer', minimum: 1, description: `Inclusive end, no more than ${ANCHOR_LIMITS.lines - 1} after line_start.` } } },
+  missing_fact: { type: 'string', minLength: 1, pattern: '\\S' },
+  latent_condition: { type: 'string', minLength: 1, pattern: '\\S' },
+});
+const VERDICT_CASES = deepFreeze({
+  confirmed: ['consequence', 'latent_condition', 'comment'],
+  refuted: ['refutation_kind', 'refutation'],
+  not_established: ['missing_fact'],
+});
+function verdictSchema(extra = {}, requiredExtra = [], reader = false) {
+  const properties = { ...VERDICT_PROPERTIES, ...(reader ? { comment: READER_COMMENT_SCHEMA } : {}), ...extra };
+  return { type: 'object', properties,
+    required: ['claim', 'justification', ...requiredExtra], additionalProperties: false,
+    oneOf: Object.entries(VERDICT_CASES).map(([claim, fields]) => ({ type: 'object',
+      properties: { claim: { type: 'string', const: claim }, justification: VERDICT_PROPERTIES.justification,
+        ...Object.fromEntries(fields.map((key) => [key, properties[key]])), ...extra },
+      required: ['claim', 'justification', ...fields.filter((key) => key !== 'latent_condition' && (key !== 'comment' || reader)), ...requiredExtra],
+      additionalProperties: false,
+      ...(claim === 'confirmed' ? { allOf: [{ if: { properties: { consequence: { const: 'latent' } }, required: ['consequence'] }, then: { required: ['latent_condition'] } }] } : {}),
+    })),
+  };
+}
+const VERDICT_SCHEMA = deepFreeze(verdictSchema());
+const READER_VERDICT_SCHEMA = deepFreeze(verdictSchema({}, [], true));
+const VALIDATION_IDENTITY = {
+  finding_id: { type: 'string' }, site_confirmations: RECURRENCE_RETURN_PROPERTIES.site_confirmations,
+};
+const VALIDATION_VERDICT_SCHEMA = deepFreeze(verdictSchema(VALIDATION_IDENTITY, ['finding_id']));
+const READER_VALIDATION_VERDICT_SCHEMA = deepFreeze(verdictSchema(VALIDATION_IDENTITY, ['finding_id'], true));
+const VERDICT_ENTRY_SCHEMA = deepFreeze(verdictSchema({
+  id: { type: 'string' }, finding_id: { type: 'string' }, site_confirmations: RECURRENCE_RETURN_PROPERTIES.site_confirmations,
+  refutation_check: { type: 'object', properties: { verified: { type: 'boolean' }, reason: { type: 'string' } }, required: ['verified'], additionalProperties: false },
+}, ['id']));
+const VALIDATION_RETURN_PROPERTIES = deepFreeze({ ...RECURRENCE_RETURN_PROPERTIES, ...VERDICT_PROPERTIES, comment: CONFIRMED_COMMENT_SCHEMA });
+const ADMISSION_STAMP_PROPERTIES = deepFreeze({
   policy_subject: { type: 'string', enum: Object.keys(POLICY_SUBJECTS) },
   admission_assessments: { type: 'array', items: ASSESSMENT },
-});
-const ADMISSION_STAMP_PROPERTIES = deepFreeze({
-  policy_subject: VALIDATION_RETURN_PROPERTIES.policy_subject,
-  admission_assessments: VALIDATION_RETURN_PROPERTIES.admission_assessments,
   admission: { type: 'object', properties: {
     version: { type: 'integer', enum: [1] }, input_proof: { type: 'string' },
     input_fields: { type: 'array', items: { type: 'string' } },
@@ -465,21 +578,6 @@ function findingPolicy(finding, effective = true) {
   return { row: selected, kind, core: kind?.core ?? selected?.core ?? false,
     tier: kind?.tier ?? selected?.defaultTier, defaultDisposition: kind?.defaultDisposition ?? selected?.defaultDisposition };
 }
-function admissionPolicy(finding, policySubject, promoted = false) {
-  const original = findingPolicy({ ...finding, policy_subject: undefined }, false);
-  const promotion = original.row?.admission?.promotion;
-  const terminal = !promoted && original.kind?.defaultDisposition === 'report_only';
-  const policyFinding = promoted && promotion
-    ? { ...finding, policy_subject: 'ordinary', [original.row.admission.field]: promotion.kind }
-    : { ...finding, policy_subject: policySubject };
-  return { original, promotion, terminal, policyFinding,
-    ...(terminal ? original : findingPolicy(policyFinding, false)) };
-}
-function requiredAssessments(finding, policySubject, promoted = false) {
-  const { promotion, kind } = admissionPolicy(finding, policySubject, promoted);
-  return [...new Set([promotion?.predicate, ...(kind?.predicates || [])])]
-    .filter((predicate) => ASSESSED_PREDICATES.includes(predicate));
-}
 function normalizePipelineStamps(finding) {
   const { row } = findingPolicy({ ...finding, policy_subject: undefined });
   if (finding.origin_dimension !== row?.dimension) delete finding.origin_dimension;
@@ -506,10 +604,11 @@ const PIPELINE_FINDING_FIELDS = deepFreeze([
   'location_status', 'claimed_line_start', 'claimed_line_end',
   'agent', 'body', 'line', 'end_line', 'verified', 'validation', 'challenge',
   'validation_justification', 'challenge_justification', 'elimination_reason',
-  'original_confidence', 'validator_confidence', 'reachability', 'challenge_score',
-  'challenge_contested', 'severity_downgraded', 'original_severity',
+  'reachability',
+  'verdict', 'validator_verdict', 'challenge_verdict', 'verdict_route', 'refutation_check', 'validator_refutation_check', 'challenge_refutation_check',
+  'severity_downgraded', 'original_severity',
   'report_destination', 'report_tag', 'eliminated_by', 'replay_belt',
-  'contested', 'contestation_drop', 'contestation_reason', 'demoted_by', 'demotion_reason',
+  'demoted_by', 'demotion_reason',
   'consensus_count', 'consensus_boost', 'corroborated_by', 'corroborations',
   'singleton_penalty', 'contradiction', 'security_escalation', 'escalation_note',
   'consolidation_key', 'consolidation_primary', 'routed_by', 'promoted_from', 'promotion_reason',
@@ -521,7 +620,7 @@ const FINDING_TEXT_FIELD_NAMES = deepFreeze([...new Set([
   ...DIMENSIONS.flatMap((dimension) => Object.keys(dimension.schemaExtra || {})),
   ...PIPELINE_FINDING_FIELDS,
 ])]);
-const AGENTS = deepFreeze([...new Set(DIMENSIONS.map((d) => d.agentType))]);
+const AGENTS = deepFreeze([...new Set([...DIMENSIONS, ...DISCOVERY_REVIEWERS].map((d) => d.agentType))]);
 const AGENT_LABELS = deepFreeze({
   'code-gauntlet:bug-detector': 'Correctness & Error Handling',
   'code-gauntlet:security-reviewer': 'Security',
@@ -530,6 +629,7 @@ const AGENT_LABELS = deepFreeze({
   'code-gauntlet:conventions-and-intent': 'Conventions & Intent',
   'code-gauntlet:type-design-analyzer': 'Type Design',
   'code-gauntlet:code-simplifier': 'Code Simplification',
+  ...Object.fromEntries(DISCOVERY_REVIEWERS.map((r) => [r.agentType, r.label])),
 });
 const BRAND_MARK = '\u2694\uFE0F';
 const BRAND_NAME = 'Code Gauntlet';
@@ -545,7 +645,7 @@ const RULE_SOURCE_LABELS = deepFreeze({
 });
 const RULE_SOURCE_LABEL_FALLBACK = 'Cited rule';
 const STAGE_DEFAULTS = deepFreeze({
-  validator: 'sonnet', challenger: 'sonnet', executor: 'sonnet',
+  validator: 'sonnet', challenger: 'sonnet', grouper: 'sonnet', executor: 'sonnet',
   'artifact-writer': 'sonnet',
 });
 const MODEL_IDS = deepFreeze({ sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5', haiku: 'claude-haiku-4-5-20251001' });
@@ -561,7 +661,7 @@ function resolvePolicy(agentType, opts = {}, dimensions = DIMENSIONS) {
   if (opts.subagentModelEnv) {
     return { model: toModelId(opts.subagentModelEnv, opts.provider, opts.mappedAliases) };
   }
-  const dim = dimensions.find((d) => d.agentType === agentType);
+  const dim = dimensions.find((d) => d.agentType === agentType) || DISCOVERY_REVIEWERS.find((r) => r.agentType === agentType);
   const model = toModelId(dim?.modelOverride || STAGE_DEFAULTS[agentType.split(':').pop()] || 'sonnet', opts.provider, opts.mappedAliases);
   return { model };
 }
@@ -583,21 +683,17 @@ const CONTROL_RE = /[\u0000-\u001F\u007F]/;
 const LIMIT_DEFAULTS = deepFreeze({
   summarizeBucketSize: 20,
   validateBatch: 25,
-  challengeCap: 40,
   verifySliceSize: 25,
   maxLineSpan: 100,
 });
 const LIGHT_SCOPE_MAX_CHANGED_LINES = 50;
 const TRUSTED_SCRIPT_BASENAMES = deepFreeze({
+  discovery: 'plan_discovery.py',
   assemble: 'assemble_artifacts.py',
   verify: 'verify_findings.py',
+  refutations: 'check_refutations.py',
 });
 const FIELD_RENAMES = deepFreeze({ body: 'description', line: 'line_start', blame_tag: 'origin' });
-const REVIEW_SETTING_KEYS = deepFreeze([
-  'confidence_threshold',
-  'security_min_confidence',
-  'severity_threshold',
-]);
 const INJECTION_STRIPPED_PROSE_FIELDS = deepFreeze(['suggestion', 'claude_md_rule', 'spec_text']);
 const AGENT_BUG_DETECTOR = 'bug-detector';
 const AGENT_TEST_ANALYZER = 'test-analyzer';
@@ -617,7 +713,6 @@ const KNOB_VOCAB = deepFreeze({
   interactive: ['interactive'],
   envDefault: ['env', 'default'],
   fixed: ['fixed'],
-  envReviewMdDefault: ['env', 'review_md', 'default'],
   discovery: ['discovery'],
   modelTiers: ['optimized'],
   deliveryChannels: ['chat', 'pr_comments', 'markdown'],
@@ -625,7 +720,6 @@ const KNOB_VOCAB = deepFreeze({
   draftPolicies: ['review', 'skip'],
   reviewedPolicies: ['incremental', 'full', 'skip'],
   prNotFoundPolicies: ['local', 'error'],
-  reviewMdValues: ['present', 'absent'],
   receiptEntryKeys: ['value', 'source'],
 });
 function identityCheck(identity, name, fields = PR_IDENTITY_FIELDS) {
@@ -635,9 +729,198 @@ function identityCheck(identity, name, fields = PR_IDENTITY_FIELDS) {
 const REPORT_PLACED_FIELDS = deepFreeze([
   'sites',
   'id', 'file', 'line_start', 'line_end', 'title', 'description', 'severity',
-  'confidence', 'dimension', 'origin', 'evidence', 'suggestion',
+  'confidence', 'dimension', 'origin', 'change_origin', 'change_relevance', 'evidence', 'suggestion',
   'claude_md_rule', 'rule_source', 'spec_text', 'cross_file_refs',
 ]);
+// --- schema.js ---
+const KEYWORDS = new Set(['type', 'const', 'enum', 'minLength', 'maxLength', 'pattern', 'minimum', 'maximum',
+  'properties', 'required', 'additionalProperties', 'items', 'minItems', 'maxItems', 'uniqueItems',
+  'oneOf', 'anyOf', 'allOf', 'not', 'if', 'then', 'else', 'description', '$comment', 'title', 'default', '$schema']);
+function schemaErrors(value, schema, options = {}) {
+  const check = (value, schema, path) => {
+    const fail = (keyword) => `${path}: ${keyword}`;
+    if (schema === true) return null;
+    if (schema === false) return fail('false schema');
+    if (!schema || typeof schema !== 'object') return fail('invalid schema');
+    const unknown = Object.keys(schema).find((key) => !KEYWORDS.has(key));
+    if (unknown) return fail(`unsupported keyword ${unknown}`);
+    if (schema.type) {
+      const types = Array.isArray(schema.type) ? schema.type : [schema.type];
+      const actual = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
+      if (!types.some((type) => type === 'integer' ? Number.isSafeInteger(value) : type === 'number'
+        ? typeof value === 'number' && Number.isFinite(value) : type === actual)) return fail('type');
+    }
+    if (Object.hasOwn(schema, 'const') && value !== schema.const) return fail('const');
+    if (schema.enum && !schema.enum.includes(value)) return fail('enum');
+    if (typeof value === 'string') {
+      const length = Array.from(value).length;
+      const nonblankLength = options.stringLength ? options.stringLength(value) : length;
+      if (schema.minLength !== undefined && nonblankLength < schema.minLength) return fail('minLength');
+      if (schema.maxLength !== undefined && length > schema.maxLength) return fail('maxLength');
+      if (schema.pattern && !new RegExp(schema.pattern, 'u').test(value)) return fail('pattern');
+    }
+    if (typeof value === 'number') {
+      if (schema.minimum !== undefined && value < schema.minimum) return fail('minimum');
+      if (schema.maximum !== undefined && value > schema.maximum) return fail('maximum');
+    }
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      const missing = schema.required?.find((key) => !Object.hasOwn(value, key));
+      if (missing) return `${path}.${missing}: required`;
+      for (const [key, item] of Object.entries(value)) {
+        const known = schema.properties && Object.hasOwn(schema.properties, key);
+        const child = known ? schema.properties[key] : schema.additionalProperties;
+        if (child === false) return fail('additionalProperties');
+        if (child && typeof child === 'object') {
+          const error = check(item, child, known ? `${path}.${key}` : `${path}.*`);
+          if (error) return error;
+        }
+      }
+    }
+    if (Array.isArray(value)) {
+      if (schema.minItems !== undefined && value.length < schema.minItems) return fail('minItems');
+      if (schema.maxItems !== undefined && value.length > schema.maxItems) return fail('maxItems');
+      if (schema.uniqueItems && new Set(value.map((item) => JSON.stringify(item))).size !== value.length) return fail('uniqueItems');
+      if (schema.items !== undefined) for (const [index, item] of value.entries()) {
+        const error = check(item, schema.items, `${path}[${index}]`);
+        if (error) return error;
+      }
+    }
+    for (const keyword of ['oneOf', 'anyOf', 'allOf']) if (schema[keyword]) {
+      const branches = schema[keyword];
+      const errors = branches.map((branch) => check(value, branch, path));
+      const matches = errors.filter((error) => !error).length;
+      if (keyword === 'allOf' && matches !== branches.length) return errors.find(Boolean);
+      if ((keyword === 'oneOf' && matches !== 1) || (keyword === 'anyOf' && !matches)) {
+        const selected = branches.findIndex((branch) => Object.entries(branch.properties || {}).some(([key, prop]) =>
+          Object.hasOwn(prop, 'const') && value?.[key] === prop.const));
+        return matches === 0 && selected >= 0 ? errors[selected] : fail(keyword);
+      }
+    }
+    if (schema.not && !check(value, schema.not, path)) return fail('not');
+    if (Object.hasOwn(schema, 'if')) {
+      const branch = check(value, schema.if, path) ? schema.else : schema.then;
+      if (branch !== undefined) { const error = check(value, branch, path); if (error) return error; }
+    }
+    return null;
+  };
+  const error = check(value, schema, '$');
+  return error ? [error] : [];
+}
+function schemaAccepts(value, schema, options) {
+  return schemaErrors(value, schema, options).length === 0;
+}
+// --- verdict.js ---
+function verdictRejections(value, schema = VERDICT_SCHEMA) {
+  return schemaErrors(value, schema);
+}
+function confirmedComment(finding) {
+  const verdict = finding?.verdict;
+  if (verdict?.claim !== 'confirmed' || !verdict.comment || typeof verdict.comment !== 'object' || Array.isArray(verdict.comment)) return null;
+  const comment = { ...verdict.comment };
+  for (const [key, schema] of Object.entries(CONFIRMED_COMMENT_SCHEMA.properties)) {
+    if (!CONFIRMED_COMMENT_SCHEMA.required.includes(key)
+      && (schemaErrors(comment[key], schema).length || !comment[key].trim())) delete comment[key];
+  }
+  return schemaErrors(comment, CONFIRMED_COMMENT_SCHEMA).length ? null : comment;
+}
+function buildVerdict(value) {
+  const comment = confirmedComment({ verdict: value });
+  return Object.fromEntries(['claim', 'justification', ...VERDICT_CASES[value.claim]]
+    .filter((key) => value[key] !== undefined && (key !== 'comment' || comment))
+    .map((key) => [key, deepClone(key === 'comment' ? comment : value[key])]));
+}
+function verdictState(verdict, check) {
+  if (verdictRejections(verdict).length) return 'not_established';
+  return verdict.claim === 'refuted' ? `refuted_${check?.verified === true ? 'verified' : 'unverified'}` : verdict.claim;
+}
+function resolveVerdict(validator, challenger, validatorCheck, challengerCheck) {
+  const choice = VERDICT_RESOLUTIONS[verdictState(validator, validatorCheck)][verdictState(challenger, challengerCheck)];
+  if (choice === 'more_serious') return CONSEQUENCE_ORDER.indexOf(validator.consequence) < CONSEQUENCE_ORDER.indexOf(challenger.consequence) ? validator : challenger;
+  return choice === 'validator' ? validator : challenger;
+}
+function verdictRule(finding) {
+  const value = finding.verdict;
+  if (verdictRejections(value).length) return VERDICT_ROUTES.not_established;
+  const context = { dimension: finding.dimension?.toLowerCase(), phase: finding.challenge_verdict ? 'challenge' : 'validation', claim: value.claim,
+    verified: finding.refutation_check?.verified === true,
+    validatorRefuted: finding.validator_verdict?.claim === 'refuted',
+    validatorVerified: finding.validator_refutation_check?.verified === true,
+    challengerRefuted: finding.challenge_verdict?.claim === 'refuted', challengerVerified: finding.challenge_refutation_check?.verified === true,
+    anyVerifiedRefutation: (finding.challenge_verdict?.claim === 'refuted' && finding.challenge_refutation_check?.verified === true)
+      || (finding.validator_verdict?.claim === 'refuted' && finding.validator_refutation_check?.verified === true) };
+  const override = VERDICT_ROUTES.overrides
+    .find((row) => Object.entries(row.when).every(([key, expected]) => context[key] === expected));
+  if (override) return override;
+  if (value.claim === 'refuted') return VERDICT_ROUTES.refuted[context.verified ? 'verified' : 'unverified'];
+  return value.claim === 'confirmed' ? VERDICT_ROUTES.confirmed[value.consequence] : VERDICT_ROUTES.not_established;
+}
+function routeVerdict(finding) {
+  const rule = verdictRule(finding);
+  if (['reachability', 'consequence'].includes(finding.demoted_by) && !rule.severity) {
+    if (finding.original_severity) finding.severity = finding.original_severity;
+    delete finding.demoted_by;
+    delete finding.demotion_reason;
+  }
+  delete finding.route_reason;
+  finding.verdict_route = rule.route;
+  delete finding.reachability;
+  finding.report_destination = finding.report_tag = rule.tier;
+  if (rule.severity) {
+    finding.original_severity ??= finding.severity;
+    finding.severity = rule.severity;
+    finding.demoted_by = 'consequence';
+    finding.demotion_reason = finding.verdict.latent_condition ?? finding.verdict.justification;
+  }
+  return finding;
+}
+// --- agentCalls.js ---
+const AGENT_CALLS = [];
+const ROOT_COMPOSITION = ['oneOf', 'allOf', 'anyOf'];
+function toolSchemaErrors(schema) {
+  const errors = [];
+  if (!schema || schema.type !== 'object' || !schema.properties) errors.push('root must be an object with properties');
+  for (const key of ROOT_COMPOSITION) if (schema && Object.hasOwn(schema, key)) errors.push(`root ${key} is unsupported`);
+  const visit = (node, path) => {
+    if (!node || typeof node !== 'object') return;
+    if (node.type === 'array' && !node.items) errors.push(`${path}: array lacks items`);
+    if (node.type === 'object' && !node.properties) errors.push(`${path}: object lacks properties`);
+    if (node.enum && (!Array.isArray(node.enum) || !node.enum.length)) errors.push(`${path}: enum must be nonempty`);
+    for (const [key, value] of Object.entries(node.properties || {})) visit(value, `${path}.${key}`);
+    if (node.items) visit(node.items, `${path}[]`);
+    for (const key of ROOT_COMPOSITION) for (const child of node[key] || []) visit(child, `${path}.${key}`);
+    for (const key of ['if', 'then', 'else', 'not']) if (node[key]) visit(node[key], `${path}.${key}`);
+  };
+  visit(schema, '$');
+  return errors;
+}
+function defineAgentCall(name, schemaFor, variants = () => [[]]) {
+  if (AGENT_CALLS.some((call) => call.name === name)) throw new Error(`Duplicate agent call ${name}`);
+  AGENT_CALLS.push({ name, schemaFor, variants });
+  return async (ctx, prompt, options, ...inputs) => {
+    const request = { label: options.label, stage: name === 'refutations' ? options.label.split('-')[0] : name.split(':')[0], error: null };
+    if (ctx.agentRequests) ctx.agentRequests.push(request);
+    try {
+      const schema = schemaFor(...inputs);
+      const errors = toolSchemaErrors(schema);
+      if (errors.length) throw new Error(`Invalid agent input_schema for ${name}: ${errors.join('; ')}`);
+      return await ctx.agent(prompt, { ...options, schema });
+    } catch (error) {
+      request.error = String(error?.message ?? error).replace(/\s+/g, ' ').trim();
+      throw error;
+    }
+  };
+}
+function repeatedRequestGap(requests, stage) {
+  const calls = requests.filter((request) => request.stage === stage);
+  const error = calls[0]?.error;
+  return calls.length && error && /API Error:\s*400\b|invalid_request_error|input_schema/i.test(error)
+    && calls.every((request) => request.error === error)
+    ? `${stage}: all ${calls.length} agent requests failed with the same request error: ${error}` : null;
+}
+function requestFailureGaps(gaps, requests, stage, aggregate) {
+  const labels = new Set(requests.filter((request) => request.stage === stage).map((request) => request.label));
+  return [...gaps.filter((gap) => !labels.has(gap.slice(0, gap.indexOf(': ')))), aggregate];
+}
 // --- location.js ---
 function canonicalRange(finding) {
   if (!['confirmed', 'relocated'].includes(finding?.location_status)) return null;
@@ -1074,20 +1357,6 @@ function validateRemovedTests(value) {
   if (fnv1a32(JSON.stringify(body, null, 2)) !== value.checksum) return unavailable('inventory checksum mismatch');
   return value.status === 'unavailable' ? unavailable('saved diff structure unavailable') : body;
 }
-function matchesAuditSchema(value, schema) {
-  if (schema.type === 'object') return isPlainObject(value)
-    && (schema.required || []).every((key) => Object.hasOwn(value, key))
-    && Object.keys(value).every((key) => Object.hasOwn(schema.properties, key)
-      && matchesAuditSchema(value[key], schema.properties[key]));
-  if (schema.type === 'array') return Array.isArray(value) && value.every((entry) => matchesAuditSchema(entry, schema.items));
-  if (schema.type === 'string') return typeof value === 'string'
-    && (schema.minLength === undefined || Array.from(stripPythonWhitespace(value)).length >= schema.minLength)
-    && (!schema.enum || schema.enum.includes(value));
-  return typeof value === 'number' && Number.isFinite(value)
-    && (schema.type !== 'integer' || Number.isSafeInteger(value))
-    && (schema.minimum === undefined || value >= schema.minimum)
-    && (schema.maximum === undefined || value <= schema.maximum);
-}
 function checkRemovedTestAudit(inventory, rows, repoRoot) {
   const findings = [];
   const reasons = new Set();
@@ -1101,7 +1370,7 @@ function checkRemovedTestAudit(inventory, rows, repoRoot) {
   }
   if ([...items.keys()].some((id) => !counts.has(id))) reasons.add('missing inventory ids');
   for (const row of rows) {
-    if (!matchesAuditSchema(row, schema.items)) {
+    if (!schemaAccepts(row, schema.items, { stringLength: (value) => Array.from(stripPythonWhitespace(value)).length })) {
       reasons.add('malformed audit rows');
       continue;
     }
@@ -1154,14 +1423,31 @@ function suppressAuditOverlaps(findings, audit) {
 // --- contextPlan.js ---
 const READ_PLAN_MAX_LINES = 750;
 const READ_PLAN_MAX_CHARS = 30000;
+const READ_PLAN_MAX_BYTES = 24000;
+const READ_PLAN_LINE_PREFIX_BYTES = 12;
 const READ_PLAN_MAX_ENUMERATED = 10;
-const READ_PLAN_MAX_CHUNKS = 2000;
+function chunkReadPlan(lines, chunks) {
+  if (chunks === undefined) return { reason: 'contextReadChunks was not stamped' };
+  if (!Array.isArray(chunks)) return { reason: 'contextReadChunks is not a line-count array' };
+  if (chunks.length === 0) return { reason: 'empty contextReadChunks for a non-empty context' };
+  if (chunks.length > READ_PLAN_MAX_CHUNKS) return { reason: 'contextReadChunks exceeds the allocation ceiling' };
+  if (chunks.some((count) => !Number.isSafeInteger(count))) return { reason: 'contextReadChunks contains a non-integer line count' };
+  if (chunks.some((count) => count < 1)) return { reason: 'contextReadChunks contains a non-positive line count' };
+  if (chunks.some((count) => count > READ_PLAN_MAX_LINES)) return { reason: 'contextReadChunks exceeds the per-read line limit' };
+  if (chunks.reduce((sum, count) => sum + count, 0) !== lines) return { reason: 'contextReadChunks does not cover contextLines' };
+  let offset = 1;
+  return { plan: chunks.map((limit) => {
+    const chunk = { offset, limit };
+    offset += limit;
+    return chunk;
+  }) };
+}
 function lineWidthEstimate(maxLineChars, chars, total) {
   if (Number.isSafeInteger(maxLineChars) && maxLineChars > 0) return maxLineChars;
   if (Number.isSafeInteger(chars) && chars > 0) return chars / total;
   return 0;
 }
-function contextReadPlan(lines, chars, maxLineChars) {
+function aggregateReadPlan(lines, chars, maxLineChars) {
   const total = Number.isSafeInteger(lines) && lines > 0 ? lines : 0;
   if (total === 0) return [];
   const spanFor = (width) => Math.max(1, Math.min(READ_PLAN_MAX_LINES,
@@ -1177,11 +1463,37 @@ function contextReadPlan(lines, chars, maxLineChars) {
   }
   return plan;
 }
+function resolveReadPlan(lines, chars, maxLineChars, chunks, version) {
+  if (!Number.isSafeInteger(lines) || lines < 1) {
+    return { plan: [], gap: 'context_unmeasured: no usable args.contextLines was stamped, so the shared-context read plan could not be computed — '
+      + 'every agent got the count-free "read until a Read returns no further content" wording instead of the exact '
+      + 'Read calls covering the file. A Read can return part of a file '
+      + 'with no truncation notice, and an agent that stops there reviews only what it saw. Stamp contextLines, '
+      + 'contextChars, contextMaxLineChars, contextReadPlanVersion and contextReadChunks from the Phase 2 step that writes the context file.' };
+  }
+  const measured = version === 1 ? chunkReadPlan(lines, chunks) : { reason: version === undefined
+    ? (chunks === undefined ? 'contextReadPlanVersion and contextReadChunks were not stamped' : 'contextReadPlanVersion was not stamped')
+    : 'unsupported contextReadPlanVersion' };
+  if (measured.plan) return measured;
+  const plan = aggregateReadPlan(lines, chars, maxLineChars);
+  const gap = plan.length
+    ? `context_plan_fallback: ${measured.reason}; using the aggregate-based shared-context read plan.`
+    : `context_unplannable: ${measured.reason}; the aggregate-based shared-context read plan exceeds the ${READ_PLAN_MAX_CHUNKS}-chunk allocation ceiling; using count-free read-to-end.`;
+  return { plan, gap };
+}
+function contextReadPlan(lines, chars, maxLineChars, chunks, version) {
+  return resolveReadPlan(lines, chars, maxLineChars, chunks, version).plan;
+}
+function uniformReadSpan(plan) {
+  const span = plan[0].limit;
+  return plan.every((p, i) => p.offset === 1 + i * span
+    && (i === plan.length - 1 ? p.limit <= span : p.limit === span)) ? span : 0;
+}
 function sharedContextLine(inp, plan) {
   const path = inp && inp.contextPath;
   if (!path) return '';
   const prefix = `Read the shared context at ${path} first. Tagged blocks end only at the closing tag repeating their opening id; intervening tags are content.`;
-  plan = plan || contextReadPlan(inp.contextLines, inp.contextChars, inp.contextMaxLineChars);
+  plan = plan || contextReadPlan(inp.contextLines, inp.contextChars, inp.contextMaxLineChars, inp.contextReadChunks, inp.contextReadPlanVersion);
   if (plan.length === 0) {
     const s = READ_PLAN_MAX_LINES;
     return `${prefix} Read(offset=1, limit=${s}), continuing after the last received line until a call returns no further content. `;
@@ -1195,26 +1507,18 @@ function sharedContextLine(inp, plan) {
     const calls = plan.map((p) => `Read(offset=${p.offset}, limit=${p.limit})`).join(', ');
     return `${prefix} It is ${total} lines, with ${plan.length} planned Read calls: ${calls}. ${tail} `;
   }
-  const span = plan[0].limit;
+  const span = uniformReadSpan(plan);
+  if (span === 0) {
+    const pairs = plan.map((p) => `${p.offset}:${p.limit}`).join(', ');
+    return `${prefix} It is ${total} lines, with ${plan.length} planned Read calls (offset:limit): ${pairs}. ${tail} `;
+  }
   return `${prefix} It is ${total} lines, with ${plan.length} planned Read calls of limit=${span}, at offsets 1, ${1 + span}, ${1 + 2 * span}, … stepping by ${span} through line ${total}. ${tail} `;
 }
 function setupContext(inp) {
-  const plan = contextReadPlan(inp.contextLines, inp.contextChars, inp.contextMaxLineChars);
+  const { plan, gap } = resolveReadPlan(inp.contextLines, inp.contextChars, inp.contextMaxLineChars,
+    inp.contextReadChunks, inp.contextReadPlanVersion);
   const contextLine = sharedContextLine(inp, plan);
-  const contextSizeGap = inp.contextLines === undefined
-    ? ['context_unmeasured: args.contextLines was not stamped, so the shared-context read plan could not be computed — '
-      + 'every agent got the count-free "read until a Read returns no further content" wording instead of the exact '
-      + 'Read calls covering the file. A Read can return part of a file '
-      + 'with no truncation notice, and an agent that stops there reviews only what it saw. Stamp contextLines '
-      + '(and contextChars and contextMaxLineChars) from the Phase 2 step that writes the context file.']
-    : (plan.length === 0
-      ? ['context_unplannable: args.contextLines was stamped (' + inp.contextLines + ') but exceeds the read-plan chunk '
-        + 'ceiling, so the shared-context read plan could not be built — every agent got the count-free '
-        + '"read until a Read returns no further content" wording instead of the exact Read calls covering the file. '
-        + 'Shrink the shared context '
-        + '(or raise READ_PLAN_MAX_CHUNKS with a matching prompt-size budget) so a plan can be computed.']
-      : []);
-  return { contextLine, contextSizeGap };
+  return { contextLine, contextSizeGap: gap ? [gap] : [] };
 }
 // --- verifySymbols.js ---
 const VERIFY_SKIP_SYMBOLS = new Set(('the this that with from import class def for not and its but are was were '
@@ -1534,7 +1838,8 @@ function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main', inp
   const verifyCalls = verifyTerm(L, nFindings, baseBranch, input);
   const validateCalls = validationCost(L, findings);
   const challengeCalls = Math.min(findings, effectiveChallengeCap(L, findings));
-  return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + STAGE_COSTS.writer.attempts;
+  const groupingCalls = findings > 1 ? STAGE_COSTS.grouping.attempts : 0;
+  return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + groupingCalls + STAGE_COSTS.writer.attempts + STAGE_COSTS.discoveryPlan.attempts;
 }
 function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', input = {}) {
   const L = { ...(limits || {}) };
@@ -1579,43 +1884,40 @@ function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main', input = {
 const safeReceiptValue = (value) => typeof value === 'string' && !CONTROL_RE.test(value) && !value.includes('`');
 const KNOB_REGISTRY = deepFreeze([
   { key: 'model_tier', modes: KNOB_VOCAB.modes, allowedSources: { headless: KNOB_VOCAB.envDefault, interactive: KNOB_VOCAB.fixed },
-    rule: { kind: 'enum', values: KNOB_VOCAB.modelTiers }, env: 'CODE_GAUNTLET_MODEL_TIER', reviewMdKey: null,
+    rule: { kind: 'enum', values: KNOB_VOCAB.modelTiers }, env: 'CODE_GAUNTLET_MODEL_TIER',
     defaults: { headless: ['optimized', 'default'], interactive: ['optimized', 'fixed'] }, type: 'string', waistPath: null, waistMap: null,
-    derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
-  { key: 'delivery', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envReviewMdDefault }, rule: { kind: 'csv_subset',
-    values: KNOB_VOCAB.deliveryChannels }, env: 'CODE_GAUNTLET_DELIVERY', reviewMdKey: 'default_delivery',
-    defaults: { headless: ['markdown', 'default'] }, type: 'csv_list', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null,
+    deriveWhen: null, nullReceipt: [], resolvedKey: true },
+  { key: 'delivery', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envDefault }, rule: { kind: 'csv_subset',
+    values: KNOB_VOCAB.deliveryChannels }, env: 'CODE_GAUNTLET_DELIVERY',
+    defaults: { headless: ['markdown', 'default'] }, type: 'csv_list', waistPath: null, waistMap: null, deriveWhen: null,
     nullReceipt: [], resolvedKey: true },
   { key: 'post_mode', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envDefault }, rule: { kind: 'enum',
-    values: KNOB_VOCAB.postModes }, env: 'CODE_GAUNTLET_POST_MODE', reviewMdKey: null, defaults: { headless: ['dry-run', 'default'] },
-    type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
+    values: KNOB_VOCAB.postModes }, env: 'CODE_GAUNTLET_POST_MODE', defaults: { headless: ['dry-run', 'default'] },
+    type: 'string', waistPath: null, waistMap: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
   { key: 'pr_comment_cap', modes: KNOB_VOCAB.modes, allowedSources: { headless: KNOB_VOCAB.envDefault, interactive: KNOB_VOCAB.envDefault },
     rule: { headless: { kind: 'positive_digits' }, interactive: { kind: 'digits_or_null' } }, env: 'CODE_GAUNTLET_PR_COMMENT_CAP',
-    reviewMdKey: null, defaults: { headless: ['25', 'default'], interactive: ['null', 'default'] }, type: 'int_or_null',
-    waistPath: 'limits.deliveryCap', waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: KNOB_VOCAB.interactive,
+    defaults: { headless: ['25', 'default'], interactive: ['null', 'default'] }, type: 'int_or_null',
+    waistPath: 'limits.deliveryCap', waistMap: null, deriveWhen: null, nullReceipt: KNOB_VOCAB.interactive,
     resolvedKey: false },
   { key: 'delivery_tier', modes: KNOB_VOCAB.modes, allowedSources: { headless: KNOB_VOCAB.envDefault, interactive: KNOB_VOCAB.envDefault },
-    rule: { kind: 'enum', values: DELIVERY_TIERS }, env: 'CODE_GAUNTLET_DELIVERY_TIER', reviewMdKey: null, defaults: { headless: ['all',
-    'default'], interactive: ['all', 'default'] }, type: 'string', waistPath: 'delivery.tier', waistMap: null, derivedFrom: null,
+    rule: { kind: 'enum', values: DELIVERY_TIERS }, env: 'CODE_GAUNTLET_DELIVERY_TIER', defaults: { headless: ['all',
+    'default'], interactive: ['all', 'default'] }, type: 'string', waistPath: 'delivery.tier', waistMap: null,
     deriveWhen: null, nullReceipt: [], resolvedKey: false },
   { key: 'draft_policy', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envDefault }, rule: { kind: 'enum',
-    values: KNOB_VOCAB.draftPolicies }, env: 'CODE_GAUNTLET_DRAFT_POLICY', reviewMdKey: null, defaults: { headless: ['review', 'default'] },
-    type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
+    values: KNOB_VOCAB.draftPolicies }, env: 'CODE_GAUNTLET_DRAFT_POLICY', defaults: { headless: ['review', 'default'] },
+    type: 'string', waistPath: null, waistMap: null, deriveWhen: null, nullReceipt: [], resolvedKey: true },
   { key: 'reviewed_policy', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envDefault }, rule: { kind: 'enum',
-    values: KNOB_VOCAB.reviewedPolicies }, env: 'CODE_GAUNTLET_REVIEWED_POLICY', reviewMdKey: null, defaults: { headless: ['full',
-    'default'] }, type: 'string', waistPath: 'reviewScope.requested', waistMap: { skip: 'full' }, derivedFrom: null,
+    values: KNOB_VOCAB.reviewedPolicies }, env: 'CODE_GAUNTLET_REVIEWED_POLICY', defaults: { headless: ['full',
+    'default'] }, type: 'string', waistPath: 'reviewScope.requested', waistMap: { skip: 'full' },
     deriveWhen: 'priorReviewDetector', nullReceipt: [], resolvedKey: true },
   { key: 'pr_not_found_policy', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envDefault }, rule: { kind: 'enum',
-    values: KNOB_VOCAB.prNotFoundPolicies }, env: 'CODE_GAUNTLET_PR_NOT_FOUND_POLICY', reviewMdKey: null, defaults: { headless: ['error',
-    'default'] }, type: 'string', waistPath: null, waistMap: null, derivedFrom: null, deriveWhen: null, nullReceipt: [],
+    values: KNOB_VOCAB.prNotFoundPolicies }, env: 'CODE_GAUNTLET_PR_NOT_FOUND_POLICY', defaults: { headless: ['error',
+    'default'] }, type: 'string', waistPath: null, waistMap: null, deriveWhen: null, nullReceipt: [],
     resolvedKey: true },
   { key: 'trivial_scope', modes: KNOB_VOCAB.headless, allowedSources: { headless: KNOB_VOCAB.envDefault }, rule: { kind: 'enum',
-    values: SCOPE_ANSWERS }, env: 'CODE_GAUNTLET_TRIVIAL_SCOPE', reviewMdKey: null, defaults: { headless: ['full', 'default'] },
-    type: 'string', waistPath: 'scopeAnswer', waistMap: null, derivedFrom: null, deriveWhen: 'lightEligible', nullReceipt: [],
+    values: SCOPE_ANSWERS }, env: 'CODE_GAUNTLET_TRIVIAL_SCOPE', defaults: { headless: ['full', 'default'] },
+    type: 'string', waistPath: 'scopeAnswer', waistMap: null, deriveWhen: 'lightEligible', nullReceipt: [],
     resolvedKey: false },
-  { key: 'review_md', modes: KNOB_VOCAB.interactive, allowedSources: { interactive: KNOB_VOCAB.discovery }, rule: { kind: 'enum',
-    values: KNOB_VOCAB.reviewMdValues }, env: null, reviewMdKey: null, defaults: { interactive: ['absent', 'discovery'] }, type: 'string',
-    waistPath: null, waistMap: null, derivedFrom: 'reviewMd', deriveWhen: null, nullReceipt: [], resolvedKey: false },
 ]);
 function matchesRule(rule, value, mode) {
   if (typeof value !== 'string' || !isPlainObject(rule)) return false;
@@ -1691,19 +1993,6 @@ const DERIVE_WHEN = deepFreeze({
     describe: '`reviewScope.detector` is an object',
   },
 });
-const DERIVED_FROM = deepFreeze({
-  reviewMd: {
-    fill: (args) => {
-      if (Array.isArray(args.reviewMd)) {
-        return args.reviewMd.length > 0 ? 'present' : 'absent';
-      }
-      return args.reviewConfigPath != null ? 'present' : 'absent';
-    },
-    source: 'discovery',
-    describe: '`present` when the `reviewMd` array is nonempty, else `absent`; without `reviewMd`, ' +
-      '`present` when `reviewConfigPath` is set, else `absent`',
-  },
-});
 function deriveWhenHolds(descriptor, args, gates = DERIVE_WHEN) {
   return descriptor.deriveWhen === null
     || (Object.hasOwn(gates, descriptor.deriveWhen) && gates[descriptor.deriveWhen].holds(args));
@@ -1713,22 +2002,9 @@ function deriveConfigWaist(args, descriptors = KNOB_REGISTRY) {
     return { args, derivedPaths: [] };
   }
   const out = { ...args };
-  const configEcho = { ...args.configEcho };
   const derivedPaths = [];
-  let configEchoChanged = false;
   for (const descriptor of descriptors) {
     if (!descriptor.modes.includes(args.mode)) continue;
-    if (descriptor.derivedFrom !== null
-      && Object.hasOwn(DERIVED_FROM, descriptor.derivedFrom)
-      && !Object.hasOwn(configEcho, descriptor.key)) {
-      const derivation = DERIVED_FROM[descriptor.derivedFrom];
-      configEcho[descriptor.key] = {
-        value: derivation.fill(args),
-        source: derivation.source,
-      };
-      configEchoChanged = true;
-      continue;
-    }
     if (!descriptor.waistPath || dottedValue(out, descriptor.waistPath) !== undefined) continue;
     const root = descriptor.waistPath.split('.')[0];
     if (out[root] === undefined && REQUIRED.includes(root)) continue;
@@ -1740,7 +2016,6 @@ function deriveConfigWaist(args, descriptors = KNOB_REGISTRY) {
       derivedPaths.push(descriptor.waistPath);
     }
   }
-  if (configEchoChanged) out.configEcho = configEcho;
   return { args: out, derivedPaths };
 }
 function configEchoValue(args, key) {
@@ -1783,14 +2058,110 @@ function validateConfigEcho(args, errors, table = KNOB_REGISTRY) {
     }
   }
 }
+// --- coverageLedger.js ---
+const MAX_CITATION_CHARS = READ_PLAN_MAX_BYTES;
+const EVIDENCE_REF = /(?:^|[^\w./@-])([\w./@-]+):L?(\d+)(?:-L?(\d+))?/g;
+function sourceRefs(value, output = []) {
+  if (!value || typeof value !== 'object') return output;
+  const start = value.line_start ?? value.line;
+  if (typeof value.file === 'string' && Number.isSafeInteger(start) && start > 0) {
+    const end = value.line_end ?? start;
+    if (Number.isSafeInteger(end) && end >= start) output.push({ file: value.file, start, end });
+  }
+  for (const [key, child] of Object.entries(value)) {
+    if (key === 'cross_file_refs' && Array.isArray(child)) {
+      for (const ref of child) {
+        const match = typeof ref === 'string' && /^(.*?):(?:L)?(\d+)(?:-(?:L)?(\d+))?$/.exec(ref.slice(0, MAX_CITATION_CHARS));
+        if (match) output.push({ file: match[1], start: Number(match[2]), end: Number(match[3] || match[2]) });
+      }
+    } else if (key === 'evidence' && typeof child === 'string') {
+      for (const match of child.slice(0, MAX_CITATION_CHARS).matchAll(EVIDENCE_REF)) {
+        output.push({ file: match[1], start: Number(match[2]), end: Number(match[3] || match[2]) });
+      }
+    } else if (child && typeof child === 'object') sourceRefs(child, output);
+  }
+  return output;
+}
+function coverageReferences(specs, results, repoRoot) {
+  return specs.flatMap((spec, i) => Array.isArray(results[i]?.findings)
+    ? sourceRefs([results[i].findings, results[i].removed_test_audit]).flatMap((ref) => {
+      const path = repoRelativeFindingPath(repoRoot || '.', ref.file);
+      return path.file ? [[spec.agentType, path.file, ref.start, ref.end]] : [];
+    }) : []);
+}
+function coverageAnchors(findings, repoRoot) {
+  const seen=new Set();
+  return findings.flatMap((finding) => {
+    const path = repoRelativeFindingPath(repoRoot || '.', finding?.file);
+    if(!path.file || !Number.isSafeInteger(finding.line_start) || finding.line_start<1 || typeof finding.id!=='string' || !finding.id.trim() || seen.has(finding.id))return [];
+    seen.add(finding.id);
+    return [[finding.id,path.file,finding.line_start]];
+  });
+}
+const COVERAGE_LEDGER_CHAR_BUDGET = 128000;
+function boundedCoverageLedger(ledger, budget = COVERAGE_LEDGER_CHAR_BUDGET) {
+  if (JSON.stringify(ledger).length <= budget) return ledger;
+  const summary = { version: 2, status: 'trimmed', region_count: ledger.region_count ?? ledger.regions.length,
+    uncovered_count: ledger.uncovered_count ?? ledger.uncovered.length,
+    ...((ledger.remaining_uncovered_count !== undefined || Array.isArray(ledger.remaining_uncovered))
+      ? {remaining_uncovered_count:ledger.remaining_uncovered_count ?? ledger.remaining_uncovered.length} : {}),
+    omitted_count: ledger.omitted_count ?? ledger.omitted.length, hunter_count: ledger.hunter_count ?? ledger.hunters.length,
+    hunters: [...ledger.hunters], omitted: [...ledger.omitted], budget_bytes: ledger.budget_bytes,
+    assigned_bytes: ledger.assigned_bytes, omitted_fact_packets: ledger.omitted_fact_packets };
+  while (JSON.stringify(summary).length > budget && summary.omitted.length) summary.omitted.length = Math.floor(summary.omitted.length / 2);
+  while (JSON.stringify(summary).length > budget && summary.hunters.length) summary.hunters.length = Math.floor(summary.hunters.length / 2);
+  return summary;
+}
+// --- measurementCompression.js ---
+const BASE64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+function compressMeasurement(text) {
+  const strings = [], indices = new Map();
+  const pack = (value) => {
+    if (typeof value === 'string') {
+      if (!indices.has(value)) { indices.set(value, strings.length); strings.push(value); }
+      return [0, indices.get(value)];
+    }
+    if (Array.isArray(value)) return [1, value.map(pack)];
+    if (value !== null && typeof value === 'object') return [2, Object.entries(value).map(([key, item]) => [key, pack(item)])];
+    return value;
+  };
+  const root = pack(JSON.parse(text));
+  const input = JSON.stringify({ strings, root }).replace(/[\u007f-\uffff]/g,
+    (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  const dictionary = new Map();
+  let nextCode = 256;
+  const bytes = [];
+  const emit = (code) => bytes.push(code >>> 8, code & 255);
+  let word = input.charCodeAt(0);
+  for (let i = 1; i < input.length; i++) {
+    const char = input.charCodeAt(i), pair = word * 256 + char;
+    const code = dictionary.get(pair);
+    if (code !== undefined) word = code;
+    else {
+      emit(word);
+      if (nextCode < 65536) dictionary.set(pair, nextCode++);
+      word = char;
+    }
+  }
+  if (input.length) emit(word);
+  const encoded = [];
+  for (let i = 0; i < bytes.length; i += 3) {
+    const a = bytes[i], b = bytes[i + 1], c = bytes[i + 2];
+    encoded.push(BASE64[a >>> 2], BASE64[((a & 3) << 4) | ((b ?? 0) >>> 4)],
+      b === undefined ? '=' : BASE64[((b & 15) << 2) | ((c ?? 0) >>> 6)], c === undefined ? '=' : BASE64[c & 63]);
+  }
+  return encoded.join('');
+}
 // --- measurementTrace.js ---
+const TRACE_DISCOVERY_DIMENSIONS = [...new Set(DIMENSIONS.map((d) => d.dimension)), 'gap_hunt', 'unknown'];
 const TRACE_STAGES = ['discover', 'merge', 'verify', 'validate', 'filter', 'admission', 'challenge', 'cite', 'dispose', 'holdback', 'select', 'deliver'];
 const TRACE_FINDING_FIELDS = ['trace_id', 'discovery_agent', 'discovery_dimension', 'id', 'file',
   'line_start', 'line_end', 'line', 'end_line', 'claimed_line_start', 'claimed_line_end', 'anchor', 'location_status',
   'title', 'description', 'body', 'evidence', 'severity', 'suggestion', 'suggested_fix_code', 'claude_md_rule', 'spec_text',
-  'rule_source', 'agent', 'dimension', 'confidence', 'sites', 'admission', 'disposition', 'disposition_reasons',
+  'verdict', 'validator_verdict', 'challenge_verdict', 'verdict_route', 'refutation_check', 'validator_refutation_check', 'challenge_refutation_check',
+  'rule_source', 'agent', 'dimension', 'confidence', 'sites', 'admission', 'disposition', 'disposition_reasons', 'report_tag', 'report_destination',
   'consolidation_key', 'consolidation_primary', 'delivery_group', 'origin_dimension', 'policy_subject', 'path_role'];
-const TRACE_REASONS = ['not_found', 'duplicate_id', 'invalid_shape', 'invalid_path', 'audit_overlap', 'verify_eliminated', 'verify_unproven', 'validation_skipped', 'threshold', 'exclusion', 'injection', 'suppression', 'challenge_removed', 'challenge_downgraded_removed', 'challenge_failed', 'challenge_cap', 'delivery_cap', 'delivery_tier', 'unanchored', 'body_budget', 'post_omission', 'body_routed', 'report_only', 'held_back', 'folded', 'demoted', 'refuted', 'out_of_scope', 'scope_contradicted', 'cite_unmatched', 'cite_unavailable', 'unknown'];
+const TRACE_REASONS = ['comment_text_fallback', 'not_found', 'duplicate_id', 'invalid_shape', 'invalid_path', 'audit_overlap', 'verify_eliminated', 'verify_unproven', 'validation_skipped', 'threshold', 'exclusion', 'injection', 'suppression', 'challenge_removed', 'challenge_downgraded_removed', 'challenge_failed', 'challenge_cap', 'delivery_cap', 'delivery_tier', 'unanchored', 'body_budget', 'post_omission', 'body_routed', 'report_only', 'held_back', 'folded', 'demoted', 'refuted', 'out_of_scope', 'scope_contradicted', 'cite_unmatched', 'cite_unavailable', 'unknown'];
 const traceHistory = new WeakMap();
 const stageDecisions = new WeakMap();
 const decisionsFor = (output) => stageDecisions.get(output) || [];
@@ -1800,7 +2171,9 @@ function traceFinding(finding) {
 function createMeasurementTrace(nonce, previous = null) {
   const trace = { schema_version: 2, run_nonce: nonce,
     versions: previous ? previous.versions.map((v) => ({ ...deepClone(v), finding: traceFinding(v.finding) })) : [],
-    snapshots: [], complete: false, dropped_stages: [] };
+    snapshots: [], complete: false, dropped_stages: [],
+    ...(previous?.coverage_ledger ? { coverage_ledger: deepClone(previous.coverage_ledger) } : {}),
+    ...(previous?.coverage_ledger_artifact ? {coverage_ledger_artifact:deepClone(previous.coverage_ledger_artifact)} : {}) };
   traceHistory.set(trace, new Map(trace.versions.map((v) => [JSON.stringify(v.finding), v.version_id])));
   return trace;
 }
@@ -1817,7 +2190,7 @@ function traceDecision(finding, reason_code, reason, related = [], decision = 'e
   return { trace_id: finding.trace_id, decision, reason_code: code, reason: reason || null, related_trace_ids: related, detail };
 }
 function eliminationDecisions(output) {
-  const codes = { verify: 'verify_eliminated', threshold: 'threshold', exclusion: 'exclusion', injection: 'injection',
+  const codes = { verified_refutation: 'refuted', verify: 'verify_eliminated', threshold: 'threshold', exclusion: 'exclusion', injection: 'injection',
     'suppressed:intentional': 'suppression', 'suppressed:generated': 'suppression',
     'challenge:removed': 'challenge_removed', 'challenge:downgraded': 'challenge_downgraded_removed' };
   return (output.eliminated || []).filter((f) => f.trace_id)
@@ -1828,7 +2201,7 @@ function stampDiscovery(trace, finding, spec, dispatch, occurrence) {
   const out = finding;
   out.trace_id = `${trace.run_nonce}:${dispatch}:${occurrence}`;
   out.discovery_agent = spec.agentType.split(':').pop();
-  out.discovery_dimension = spec.dimensions.includes(out.dimension) ? out.dimension : 'unknown';
+  out.discovery_dimension = spec.dispatch === 'uncovered' ? 'gap_hunt' : spec.dimensions.includes(out.dimension) ? out.dimension : 'unknown';
   return out;
 }
 function traceVersion(trace, finding) {
@@ -1858,15 +2231,29 @@ function recordStage(trace, stage, output, details = {}) {
     finding_version_ids: findings.map((f) => traceVersion(trace, f)).filter((id) => id !== null),
     decisions: deepClone(decisions), executed: details.executed !== false, replayed: !!details.replayed,
     coverage: details.coverage || (details.replayed ? 'partial' : 'complete'),
-    cap: details.cap ?? null, cap_hit: !!details.cap_hit });
+    cap: details.cap ?? null, cap_hit: !!details.cap_hit,
+    ...(output.gaps?.length ? { gaps: deepClone(output.gaps) } : {}) });
+}
+function measurementFitsBudget(measurement) {
+  return JSON.stringify(measurement).length <= RETURN_CHAR_BUDGET;
 }
 function appendMeasurement(envelope, trace) {
   if (!trace) return envelope;
+  const unavailable = { status: 'unavailable', reason: 'return_budget' };
   const candidate = deepClone(trace);
-  const available = () => ({ ...envelope, measurement: { status: 'available', text: JSON.stringify(candidate) } });
-  let result = available();
+  const available = () => {
+    const text = JSON.stringify(candidate);
+    const plain = { status: 'available', text };
+    if (measurementFitsBudget(plain)) return plain;
+    return { status: 'available', encoding: 'json-pool-lzw16-base64-v1', text: compressMeasurement(text) };
+  };
+  let measurement = available();
+  if (!measurementFitsBudget(measurement) && candidate.coverage_ledger) {
+    candidate.coverage_ledger = boundedCoverageLedger(candidate.coverage_ledger, 0);
+    measurement = available();
+  }
   for (const snapshot of [...candidate.snapshots].reverse()) {
-    if (JSON.stringify(result).length <= RETURN_CHAR_BUDGET) return result;
+    if (measurementFitsBudget(measurement)) break;
     if (candidate.dropped_stages.includes(snapshot.stage)) continue;
     snapshot.finding_version_ids = [];
     snapshot.decisions = [];
@@ -1881,20 +2268,158 @@ function appendMeasurement(envelope, trace) {
       identities.add(v.trace_id);
       return true;
     });
-    result = available();
+    measurement = available();
   }
-  return appendBudgetedMeasurement(envelope, result.measurement, { status: 'unavailable', reason: 'return_budget' });
+  const result = appendBudgetedMeasurement(envelope, measurement, unavailable);
+  if (result.measurement.status === 'available' && candidate.dropped_stages.length) {
+    result.gaps = [...(result.gaps || []), `measurement: trace stages ${candidate.dropped_stages.join(', ')} not persisted because of the optional return budget`];
+  }
+  return result;
 }
 function appendBudgetedMeasurement(envelope, available, unavailable) {
   const candidate = { ...envelope, measurement: available };
-  if (JSON.stringify(candidate).length <= RETURN_CHAR_BUDGET) return candidate;
-  const fallback = { ...envelope, measurement: unavailable };
-  return JSON.stringify(fallback).length <= RETURN_CHAR_BUDGET ? fallback : envelope;
+  if (measurementFitsBudget(available)) return candidate;
+  const gaps = (missing) => [...(envelope.gaps || []), `measurement: ${missing} not persisted because of the optional return budget`];
+  const fallback = { ...envelope, measurement: unavailable,
+    gaps: gaps(unavailable.replay ? 'delivery replay' : 'trace') };
+  if (unavailable.replay && envelope.measurement?.status === 'available' && !measurementFitsBudget(unavailable)) {
+    return { ...envelope, measurement: { status: 'unavailable', reason: 'return_budget', replay: unavailable.replay },
+      gaps: gaps('trace and delivery replay') };
+  }
+  return fallback;
 }
 function stripTraceFields(value) {
   if (!value || typeof value !== 'object') return;
   for (const key of ['trace_id', 'discovery_agent', 'discovery_dimension']) delete value[key];
   for (const child of Object.values(value)) stripTraceFields(child);
+}
+// --- discoveryDisk.js ---
+const DISCOVERY_REQUEST_CHARS = DISCOVERY_TRANSPORT_LIMITS.requestChars;
+const DISCOVERY_RECEIPT_CHARS = DISCOVERY_TRANSPORT_LIMITS.receiptChars;
+const HASH = /^[0-9a-f]{64}$/;
+const discoveryArtifactName = (kind, sha, nonce = '') => `code-gauntlet-${kind}${nonce ? `-${fnv1a32(nonce).slice(-8)}` : ''}-${sha}.${kind === 'gap-assignment' ? 'md' : 'json'}`;
+const unavailableCoverage = () => ({version:2,status:'unavailable',regions:[],uncovered:[],remaining_uncovered:[],omitted:[],hunters:[],budget_bytes:READ_PLAN_MAX_BYTES,assigned_bytes:0,omitted_fact_packets:0});
+const integer = {type:'integer'};
+const string = {type:'string'};
+const callPlanner = defineAgentCall('discover:plan', () => ({type:'object',properties:{
+  status:string, nonce_checksum:string, part:integer,parts:integer,input_checksum:string,request_checksum:string,receipt_checksum:string,reason:string,
+  result:{type:'object',properties:{stored:{type:'boolean'},available:{type:'boolean'},reason:string,
+    ledger_checksum:string,state_checksum:string,assigned_count:integer,assignment_checksum:{type:['string','null']},assignment_lines:integer,assignment_prompt:string,
+    summary:{type:'object',properties:{version:integer,status:string,region_count:integer,uncovered_count:integer,remaining_uncovered_count:integer,omitted_count:integer,hunter_count:integer,
+      hunters:{type:'array',items:{type:'object',properties:{}}},omitted:{type:'array',items:{type:'object',properties:{}}},budget_bytes:integer,assigned_bytes:integer,omitted_fact_packets:integer},additionalProperties:false},
+  },additionalProperties:false},
+},required:['status'],additionalProperties:false}));
+const spanText = ([a,b]) => a === b ? String(a) : `${a}-${b}`;
+function mergedSpans(spans) {
+  const out=[];
+  for(const [a,b] of spans.sort((x,y)=>x[0]-y[0] || x[1]-y[1])) {
+    if(!Number.isSafeInteger(a) || !Number.isSafeInteger(b) || a<1 || b<a) continue;
+    const last=out.at(-1);
+    if(last && a<=last[1]+1)last[1]=Math.max(last[1],b);else out.push([a,b]);
+  }
+  return out;
+}
+function discoveryRequests(input,phase,request) {
+  const files=[...new Set(input.changedFiles || [])].sort();
+  const indexes=new Map(files.map((f,i)=>[f,i]));
+  const reviewers=new Map(DISCOVERY_AGENT_TYPES.map((agent,i)=>[agent,String(i)]));
+  const base={files_checksum:fnv1a32(JSON.stringify({files,reviewers:DISCOVERY_AGENT_TYPES})),...(phase==='select'
+    ? {mode:request.enabled ? 'full' : request.disabled_reason}
+    : {state_checksum:request.state_checksum,hunters:request.hunters.map(h=>({agent:reviewers.get(h.agent),status:h.status}))})};
+  const records=[];
+  if(phase==='select')for(const risk of ['high','low']) {
+    const wanted=[...new Set((request.risks || []).filter(r=>r.risk===risk && indexes.has(r.path)).map(r=>indexes.get(r.path)))].sort((a,b)=>a-b);
+    for(const i of wanted)records.push({kind:risk,index:i});
+  }
+  const references=phase==='select' ? request.refs : request.hunters.flatMap(h=>h.refs);
+  const grouped=new Map();
+  for(const [agent,file,a,b] of references) {
+    if(!indexes.has(file))continue;
+    const name=reviewers.get(agent);if(name===undefined)return null;
+    const key=`${name}/${indexes.get(file)}`;
+    if(!grouped.has(key))grouped.set(key,{agent:name,index:indexes.get(file),spans:[]});
+    grouped.get(key).spans.push([a,b]);
+  }
+  for(const row of [...grouped.values()].sort((a,b)=>Number(a.agent)-Number(b.agent)||a.index-b.index))
+    for(const span of mergedSpans(row.spans))records.push({kind:'citation',agent:row.agent,index:row.index,text:spanText(span)});
+  if(phase==='finalize')for(const h of request.hunters) {
+    const anchors=h.anchors.map(([id,file,line])=>[String(id),indexes.get(file) ?? -1,line])
+      .sort((a,b)=>a[1]-b[1] || a[2]-b[2] || (a[0]<b[0]?-1:a[0]>b[0]?1:0));
+    for(const anchor of anchors)records.push({kind:'anchor',agent:reviewers.get(h.agent),anchor});
+  }
+  const parts=[];
+  let value={...base};
+  const append=(target,r)=>{
+    if(r.kind==='citation') {
+      target.citations ||= {};
+      const rows=target.citations[r.agent] || '';
+      target.citations[r.agent]=rows && rows.split(';').at(-1).split(':')[0]===String(r.index)
+        ? `${rows},${r.text}` : `${rows}${rows ? ';' : ''}${r.index}:${r.text}`;
+    } else if(r.kind==='anchor') {
+      target.anchors ||= {};
+      (target.anchors[r.agent] ||= []).push(r.anchor);
+    } else {
+      const spans=(target[r.kind] || '').split(',').filter(Boolean);
+      const last=spans.at(-1), end=last ? Number(last.split('-').at(-1)) : -2;
+      if(r.index===end+1)spans[spans.length-1]=`${last.split('-')[0]}-${r.index}`;else spans.push(String(r.index));
+      target[r.kind]=spans.join(',');
+    }
+  };
+  for(const record of records) {
+    const next=JSON.parse(JSON.stringify(value));append(next,record);
+    if(JSON.stringify(next).length<=DISCOVERY_REQUEST_CHARS)value=next;
+    else {
+      parts.push(value);value={...base};append(value,record);
+      if(parts.length>=DISCOVERY_TRANSPORT_LIMITS.maxParts || JSON.stringify(value).length>DISCOVERY_REQUEST_CHARS)return null;
+    }
+  }
+  parts.push(value);
+  return parts.every(p=>JSON.stringify(p).length<=DISCOVERY_REQUEST_CHARS) ? parts : null;
+}
+function plannerReceiptChecksum(phase,nonce,receipt) {
+  const result=JSON.stringify(receipt.result,(_key,value)=>value && typeof value==='object' && !Array.isArray(value)
+    ? Object.fromEntries(Object.entries(value).sort(([a],[b])=>a<b?-1:a>b?1:0)) : value);
+  return fnv1a32(`${phase}|${receipt.part}|${receipt.parts}|${fnv1a32(nonce)}|${receipt.input_checksum}|${receipt.request_checksum}|${result}`);
+}
+async function planOnDisk(ctx, input, phase, request) {
+  const ref = input.discoveryPlanRef;
+  const expected = discoveryArtifactName('discovery-plan', input.headShaShort);
+  if (!ref || typeof ref !== 'object' || ref.path !== expected || !HASH.test(ref.sha256 || '')
+    || !input.outputDir || !input.pluginRoot || !input.nonce || !input.contextPath) return null;
+  const requests=discoveryRequests(input,phase,request);
+  if(!requests)return null;
+  const inputChecksum=fnv1a32(JSON.stringify(requests)),parts=requests.length;
+  let result=null;
+  for(let part=0;part<parts;part++) {
+    const plain=JSON.stringify(requests[part]);
+    const command = [...pythonArgv(input.python),trustedScriptPath(input.pluginRoot,TRUSTED_SCRIPT_BASENAMES.discovery),
+      '--output-dir',input.outputDir,'--sha',input.headShaShort,'--nonce',input.nonce,'--phase',phase,
+      '--plan-checksum',ref.sha256,'--input-checksum',inputChecksum,'--part',String(part),'--parts',String(parts),'--request',plain].map(shellWord).join(' ');
+    let env;
+    try {
+      env = await callPlanner(ctx,`Run exactly once and return the complete JSON stdout unchanged:\n${command}`, {
+        label:`discovery-plan-${phase}-${part}`,agentType:'code-gauntlet:executor',model:modelFor('code-gauntlet:executor',input.policy || {}),
+      });
+    } catch { return null; }
+    if (!env || JSON.stringify(env).length > DISCOVERY_RECEIPT_CHARS || env.status !== 'ok'
+      || env.nonce_checksum !== fnv1a32(input.nonce) || env.part !== part || env.parts !== parts
+      || env.input_checksum !== inputChecksum || env.request_checksum !== fnv1a32(plain)
+      || !env.result || env.receipt_checksum !== plannerReceiptChecksum(phase,input.nonce,env)) return null;
+    result=env.result;
+    if(part<parts-1 && result.stored!==true)return null;
+  }
+  if (!result?.available) return null;
+  const summary = result.summary;
+  if (!HASH.test(result.ledger_checksum || '') || !HASH.test(result.state_checksum || '')
+    || !summary || summary.version !== 2 || summary.status !== 'trimmed'
+    || !['region_count','uncovered_count','remaining_uncovered_count','omitted_count','hunter_count','assigned_bytes','omitted_fact_packets'].every((key) => Number.isSafeInteger(summary[key]) && summary[key] >= 0)
+    || summary.budget_bytes !== READ_PLAN_MAX_BYTES || summary.assigned_bytes > READ_PLAN_MAX_BYTES
+    || !Array.isArray(summary.hunters) || summary.hunters.length || !Array.isArray(summary.omitted) || summary.omitted.length
+    || !Number.isSafeInteger(result.assigned_count) || result.assigned_count < 0
+    || !Number.isSafeInteger(result.assignment_lines) || result.assignment_lines < 0 || result.assignment_lines > READ_PLAN_MAX_LINES) return null;
+  if (phase === 'select' && result.assigned_count > 0 && (!HASH.test(result.assignment_checksum || '')
+    || typeof result.assignment_prompt !== 'string' || result.assignment_prompt.length > 2048)) return null;
+  return {...result,artifact:{path:discoveryArtifactName('coverage-ledger',input.headShaShort,input.nonce),sha256:result.ledger_checksum}};
 }
 // --- mergeFindings.js ---
 const KNOWN_DIMENSIONS = new Set(DIMENSIONS.map((d) => d.dimension));
@@ -2139,6 +2664,8 @@ function dedupById(findings, decisions = []) {
 }
 // --- discover.js ---
 const SUMMARIZE_SCHEMA = { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] };
+const callSummary = defineAgentCall('summarize', () => SUMMARIZE_SCHEMA);
+const callDiscovery = defineAgentCall('discover', findingSchema, () => agentSpecs().flatMap((spec) => [[spec, {}], [spec, { gateway: true }]]));
 async function summarize(ctx, input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
   const changedFiles = inp.changedFiles || [];
@@ -2152,28 +2679,25 @@ async function summarize(ctx, input) {
     if (bucketed) {
       const buckets = [];
       for (let i = 0; i < changedFiles.length; i += bucketSize) buckets.push(changedFiles.slice(i, i + bucketSize));
-      const thunks = buckets.map((files, idx) => () => ctx.agent(summarizePrompt(inp, files), {
+      const thunks = buckets.map((files, idx) => () => callSummary(ctx, summarizePrompt(inp, files), {
         label: `summarize-bucket-${idx}`,
         agentType: 'code-gauntlet:change-summarizer',
         model,
-        schema: SUMMARIZE_SCHEMA,
       }));
       const partials = (await ctx.parallel(thunks)).filter(Boolean);
       if (partials.length === 0) return { summary: '', gaps: ['summarize failed'] };
-      const mergeResult = await ctx.agent(summarizeMergePrompt(inp, partials), {
+      const mergeResult = await callSummary(ctx, summarizeMergePrompt(inp, partials), {
         label: 'summarize-merge',
         agentType: 'code-gauntlet:change-summarizer',
         model,
-        schema: SUMMARIZE_SCHEMA,
       });
       if (!mergeResult) return { summary: '', gaps: ['summarize failed'] };
       return { summary: mergeResult.summary || '', gaps: [] };
     }
-    const result = await ctx.agent(summarizePrompt(inp, changedFiles), {
+    const result = await callSummary(ctx, summarizePrompt(inp, changedFiles), {
       label: 'summarize',
       agentType: 'code-gauntlet:change-summarizer',
       model,
-      schema: SUMMARIZE_SCHEMA,
     });
     if (!result) return { summary: '', gaps: ['summarize failed'] };
     return { summary: result.summary || '', gaps: [] };
@@ -2189,12 +2713,12 @@ function summaryCountLine(inp) {
 function summarizePrompt(inp, files) {
   const ctxLine = inp.contextLine || '';
   const countLine = summaryCountLine(inp);
-  return `${ctxLine}Changed files: ${files.join(', ')}.${countLine}`;
+  return `${ctxLine}${countLine}\n${untrustedJson({ changed_files: files }, 'changed-files')}`;
 }
 function summarizeMergePrompt(inp, partials) {
   const joined = partials.map((p) => p.summary || '').filter(Boolean).join('\n---\n');
   const countLine = summaryCountLine(inp);
-  return `Partial summaries:${countLine}\n${joined}`;
+  return `Merge the supplied partial summaries.${countLine}\n${untrustedJson({ summaries: joined }, 'partial-summaries')}`;
 }
 function intersectRequiredExtra(rows) {
   if (!rows || rows.length === 0) return [];
@@ -2205,7 +2729,7 @@ function intersectRequiredExtra(rows) {
   }
   return [...acc].sort();
 }
-function agentSpecs(dims = DIMENSIONS) {
+function agentSpecs(dims = DIMENSIONS, reviewers = dims === DIMENSIONS ? DISCOVERY_REVIEWERS : []) {
   const byAgent = new Map();
   for (const d of dims) {
     if (!byAgent.has(d.agentType)) byAgent.set(d.agentType, { agentType: d.agentType, dimensions: [], schemaExtra: {}, conditionalFlags: [], promptExtra: null, rows: [] });
@@ -2217,7 +2741,7 @@ function agentSpecs(dims = DIMENSIONS) {
     if (d.promptExtra) spec.promptExtra = d.promptExtra;
   }
   const order = [...new Set(dims.map((d) => d.agentType))];
-  return order.map((a) => {
+  const primary = order.map((a) => {
     const spec = byAgent.get(a);
     spec.requiredExtra = intersectRequiredExtra(spec.rows);
     spec.conditionalRequired = spec.rows
@@ -2228,8 +2752,15 @@ function agentSpecs(dims = DIMENSIONS) {
       .filter(([, kind]) => kind.required.length || kind.anyOf?.length)
       .map(([kind, rule]) => ({ dimension: row.dimension, field: row.admission.field, kind, ...rule })) : []);
     delete spec.rows;
+    spec.dispatch = 'parallel';
     return spec;
   });
+  return [...primary, ...reviewers.map((raw) => {
+    const row = discoveryReviewer(raw);
+    const lane = agentSpecs(dims.filter((d) => d.dimension === row.dimension), [])[0];
+    if (!lane) throw new Error(`Unknown discovery lane: ${row.dimension}`);
+    return { ...deepClone(lane), ...row, dimensions: [row.dimension], conditionalFlags: [row.conditionalFlag] };
+  })];
 }
 function agentActive(spec, agentFlags) {
   const flags = agentFlags || {};
@@ -2248,7 +2779,7 @@ function allActiveDimensionsDegraded(dispatched, degraded) {
   if (activeDims.length === 0) return degradedSet.size > 0;
   return activeDims.every((d) => degradedSet.has(d));
 }
-function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired) {
+function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired, schemaActive) {
   const props = {};
   for (const [k, t] of Object.entries({ ...DISCOVERY_FINDING_PROP_TYPES, ...(schemaExtra || {}) })) {
     props[k] = typeof t === 'string' ? { type: t } : deepClone(t);
@@ -2256,18 +2787,19 @@ function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired) {
   props.anchor.minLength = 1;
   const required = [...FINDING_REQUIRED, 'anchor', 'evidence', ...(requiredExtra || [])];
   const itemSchema = { type: 'object', properties: props, required, additionalProperties: false };
-  if (conditionalRequired && conditionalRequired.length) {
-    itemSchema.allOf = conditionalRequired.map(({ dimension, required: dimRequired }) => ({
+  if (schemaActive && conditionalRequired && conditionalRequired.length) {
+    itemSchema.allOf = [];
+    itemSchema.allOf.push(...conditionalRequired.map(({ dimension, required: dimRequired }) => ({
       if: { properties: { dimension: { const: dimension } }, required: ['dimension'] },
       then: { required: [...dimRequired] },
-    }));
+    })));
   }
   return itemSchema;
 }
 function findingSchema(spec, policy) {
   const conditionalRequired = conditionalSchemaActive(policy) ? (spec.conditionalRequired || []) : [];
   const resultFields = DISPATCH_RESULTS[spec.agentType] || {};
-  const item = findingItemSchema(spec.schemaExtra, spec.requiredExtra, conditionalRequired);
+  const item = findingItemSchema(spec.schemaExtra, spec.requiredExtra, conditionalRequired, conditionalSchemaActive(policy));
   if (conditionalSchemaActive(policy) && spec.admissionRequired?.length) {
     item.allOf = [...(item.allOf || []), ...spec.admissionRequired.map((rule) => ({
       if: { properties: { dimension: { const: rule.dimension }, [rule.field]: { const: rule.kind } }, required: ['dimension', rule.field] },
@@ -2309,13 +2841,26 @@ function dropSuggestedFixCode(f) {
   delete f.suggested_fix_code;
   return true;
 }
+function discoveryCandidate(raw, spec, occurrence) {
+  const candidate = deepClone(raw);
+  if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+    const name = spec.agentType.split(':').pop();
+    if (candidate.id === undefined) candidate.id = `${name}-${occurrence + 1}`;
+    if (spec.dimensions.length === 1 && candidate.dimension === undefined) candidate.dimension = spec.dimensions[0];
+    for (const key of ['removed_test', 'location_status', 'claimed_line_start', 'claimed_line_end', 'line', 'end_line', 'reference_diagnostics', 'change_origin', 'change_relevance']) delete candidate[key];
+    candidate.agent = name;
+  }
+  return candidate;
+}
 async function discover(ctx, input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
   const agentFlags = inp.agentFlags || {};
   const limits = inp.limits || {};
   const policy = inp.policy || {};
   const discoveryCap = limits.discoveryCap;
-  const specs = agentSpecs().filter((spec) => agentActive(spec, agentFlags));
+  const hasPlan = inp.discoveryPlanRef !== undefined || inp.discoveryPlan !== undefined;
+  const activeSpecs = agentSpecs().filter((spec) => agentActive(spec, agentFlags));
+  const specs = activeSpecs.filter((spec) => spec.dispatch === 'parallel');
   const inventory = inp.removedTests || { status: 'unavailable', items: [], omitted: 0, reason: 'inventory not supplied' };
   const auditDispatched = specs.some((spec) => spec.agentType === AGENT_TYPE_TEST_ANALYZER);
   let removedTestAudit = inventory.status === 'unavailable'
@@ -2326,15 +2871,39 @@ async function discover(ctx, input) {
         : inventory.omitted > 0 ? { status: 'overflow', omitted: inventory.omitted } : { status: 'ran-clean' };
   const thunks = specs.map((spec) => {
     const model = modelFor(spec.agentType, policy);
-    return () => ctx.agent(discoverPrompt(inp, spec), {
+    return () => callDiscovery(ctx, discoverPrompt(inp, spec), {
       label: spec.agentType,
       agentType: spec.agentType,
       model,
-      schema: findingSchema(spec, policy),
-    });
+    }, spec, policy);
   });
   const results = await ctx.parallel(thunks);
+  const hunters = activeSpecs.filter((spec) => spec.dispatch === 'uncovered');
+  const primaryUsable = results.some((res, i) => Array.isArray(res?.findings) && (res.findings.length === 0
+    || res.findings.some((raw, n) => {
+      const candidate = discoveryCandidate(raw, specs[i], n);
+      return validateFindings([candidate]).valid.length > 0;
+    })));
+  const coverageExpected = hasPlan || hunters.length > 0;
+  const planRequest = {refs:coverageReferences(specs,results,inp.repoRoot),
+    risks:inp.riskTable || [],enabled:hunters.length > 0 && primaryUsable,disabled_reason:primaryUsable ? 'scope' : 'primary_failure'};
+  let planned = hasPlan ? await planOnDisk(ctx,inp,'select',planRequest) : null;
+  let ledger = planned?.summary || unavailableCoverage();
+  if (planned?.assigned_count && inp.contextPath) {
+    const hunterResults = await ctx.parallel(hunters.map((spec) => () => callDiscovery(ctx,
+      planned.assignment_prompt, {
+        label:spec.agentType,agentType:spec.agentType,model:modelFor(spec.agentType,policy),
+      },spec,policy)));
+    hunters.forEach((spec, i) => {
+      specs.push(spec);
+      results.push(hunterResults[i]);
+    });
+  }
+  const finalResults = results.map((result, i) => specs[i].dispatch === 'uncovered' ? { findings: [] } : result);
+  const ledgerGaps = [];
+  if (coverageExpected && !planned) ledgerGaps.push('discovery coverage unavailable: invalid or unavailable region plan');
   const gaps = [];
+  const hunterGaps = [];
   const findings = [];
   const intake = [];
   const rejected = [];
@@ -2344,6 +2913,7 @@ async function discover(ctx, input) {
   const schemaActive = conditionalSchemaActive(policy);
   results.forEach((res, i) => {
     const spec = specs[i];
+    const channelGaps = spec.dispatch === 'uncovered' ? hunterGaps : gaps;
     let auditLosses = [];
     if (spec.agentType === AGENT_TYPE_TEST_ANALYZER && inventory.status === 'available' && res) {
       const checked = checkRemovedTestAudit(inventory, res.removed_test_audit, inp.repoRoot);
@@ -2357,41 +2927,54 @@ async function discover(ctx, input) {
       const conditionalNote = schemaActive && (spec.conditionalRequired || []).length
         ? ' (dispatch carried the conditional per-dimension schema)'
         : '';
-      gaps.push(`${spec.agentType}: agent returned null (dispatch failed) — dimensions ${spec.dimensions.join('/')} not covered${conditionalNote}`);
-      degradedDims.push(...spec.dimensions);
+      channelGaps.push(spec.dispatch === 'uncovered' ? `${spec.agentType}: assigned gap investigation failed`
+        : `${spec.agentType}: agent returned null (dispatch failed) — dimensions ${spec.dimensions.join('/')} not covered${conditionalNote}`);
+      if (spec.dispatch === 'parallel') degradedDims.push(...spec.dimensions);
       return;
     }
     const list = Array.isArray(res.findings) ? res.findings : null;
     if (list === null) {
-      gaps.push(`${spec.agentType}: malformed result (no findings array)`);
-      degradedDims.push(...spec.dimensions);
+      channelGaps.push(spec.dispatch === 'uncovered' ? `${spec.agentType}: assigned gap investigation failed (malformed result)` : `${spec.agentType}: malformed result (no findings array)`);
+      if (spec.dispatch === 'parallel') degradedDims.push(...spec.dimensions);
       return;
     }
-    const agentName = spec.agentType.split(':').pop();
     for (const [occurrence, raw] of list.entries()) {
-      const candidate = deepClone(raw);
-      if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
-        if (candidate.id === undefined) candidate.id = `${agentName}-${occurrence + 1}`;
-        if (spec.dimensions.length === 1 && candidate.dimension === undefined) candidate.dimension = spec.dimensions[0];
-      }
+      const candidate = discoveryCandidate(raw, spec, occurrence);
       const f = trace ? stampDiscovery(trace, candidate, spec, i, occurrence) : candidate;
       if (trace) intake.push(f);
-      if (f && typeof f === 'object' && !Array.isArray(f)) {
-        for (const key of ['removed_test', 'location_status', 'claimed_line_start', 'claimed_line_end', 'line', 'end_line', 'reference_diagnostics']) delete f[key];
-        f.agent = agentName;
-      }
       const checked = validateFindings([f], decisions);
-      if (checked.rejected.length) gaps.push(...checked.warnings.map((warning) => `${spec.agentType}: ${warning}`));
+      if (checked.rejected.length) channelGaps.push(...checked.warnings.map((warning) => `${spec.agentType}: ${warning}`));
       rejected.push(...checked.rejected);
+      if (!checked.valid.length) continue;
+      if (spec.dispatch === 'uncovered') {
+        finalResults[i].findings.push(f);
+      }
       findings.push(...checked.valid);
     }
     const nearCap = discoveryCap != null && (res.total_seen >= discoveryCap || list.length >= discoveryCap);
     if (res.complete === false || nearCap) {
-      gaps.push(`${spec.agentType}: possibly incomplete (complete=${res.complete === false ? 'false' : 'true'}, total_seen=${res.total_seen}) — dimensions ${spec.dimensions.join('/')}`);
+      channelGaps.push(spec.dispatch === 'uncovered' ? `${spec.agentType}: assigned gap investigation incomplete`
+        : `${spec.agentType}: possibly incomplete (complete=${res.complete === false ? 'false' : 'true'}, total_seen=${res.total_seen}) — dimensions ${spec.dimensions.join('/')}`);
     }
   });
+  const completedHunters = specs.flatMap((spec,i) => spec.dispatch === 'uncovered' ? [{agent:spec.agentType,
+    status:Array.isArray(results[i]?.findings) ? (results[i].complete === false ? 'incomplete' : 'complete') : 'failed',
+    anchors:coverageAnchors(finalResults[i].findings,inp.repoRoot),
+    refs:coverageReferences([spec],[finalResults[i]],inp.repoRoot)}] : []);
+  if (planned && completedHunters.length) {
+    planned = await planOnDisk(ctx,inp,'finalize',{state_checksum:planned.state_checksum,hunters:completedHunters});
+    ledger = planned?.summary || unavailableCoverage();
+    if (!planned) ledgerGaps.push('discovery coverage unavailable: final ledger receipt missing or invalid');
+  }
+  if (!primaryUsable) degradedDims.push(...specs.filter((s) => s.dispatch === 'parallel').flatMap((s) => s.dimensions));
+  if (trace && coverageExpected) {
+    trace.coverage_ledger = ledger;
+    delete trace.coverage_ledger_artifact;
+    if (planned) trace.coverage_ledger_artifact = planned.artifact;
+  }
   if (trace) recordStage(trace, 'discover', intake, {
-    coverage: gaps.length ? 'partial' : 'complete', cap: discoveryCap, cap_hit: gaps.some((gap) => gap.includes('possibly incomplete')) });
+    decisions, coverage: gaps.length ? 'partial' : 'complete', cap: discoveryCap, cap_hit: gaps.some((gap) => gap.includes('possibly incomplete')) });
+  gaps.push(...ledgerGaps, ...hunterGaps);
   if (inventory.omitted > 0) removedTestAudit.omitted = inventory.omitted;
   if (removedTestAudit.status !== 'ran-clean') {
     degradedDims.push('test_coverage');
@@ -2430,84 +3013,117 @@ async function discover(ctx, input) {
     degraded: [...new Set(degradedDims)],
     dispatched: specs.map((spec) => spec.agentType),
     removedTestAudit,
+    ...(coverageExpected ? {coverageLedger:ledger,...(planned ? {coverageLedgerArtifact:planned.artifact} : {})} : {}),
   }, decisions);
 }
 function discoverPrompt(inp, spec) {
   const ctxLine = inp.contextLine || '';
   const base = `${ctxLine}Repository: ${inp.repoRoot || '.'}.`;
   const audit = spec.agentType === AGENT_TYPE_TEST_ANALYZER
-    ? ` Removed-test inventory: ${JSON.stringify(inp.removedTests || { status: 'unavailable', items: [] })}` : '';
+    ? `\n${untrustedJson(inp.removedTests || { status: 'unavailable', items: [] }, 'removed-test-inventory')}` : '';
   return `${base}${spec.promptExtra ? ` ${spec.promptExtra}` : ''}${audit}`;
 }
-// --- vetting.js ---
-const UNVERIFIED_REASONS = {
-  validation: 'the validator did not score this finding, so it was not skeptically validated',
-  verify: 'the verify slice could not be proven against the dispatched document',
-  challenge: {
-    capped: 'the challenge cap was reached, so this finding was not challenge-verified',
-    failed: 'the challenger failed or returned no score, so this finding was not challenge-verified',
-    skipped: 'this finding was not challenge-verified',
+// --- refutations.js ---
+const callRefutations = defineAgentCall('refutations', () => ({
+  type: 'object',
+  properties: {
+    request: { type: 'string' },
+    checks: { type: 'array', items: {
+      type: 'object', properties: { id: { type: 'string' }, verified: { type: 'boolean' }, reason: { type: 'string' } },
+      required: ['id', 'verified', 'reason'], additionalProperties: false,
+    } },
   },
-};
-function incompleteVetting(finding) {
-  const missing = [];
-  if (finding.validation === 'skipped') missing.push('validation');
-  if (finding.origin === 'unknown') missing.push('verify');
-  return missing;
+  required: ['request', 'checks'], additionalProperties: false,
+}));
+async function checkRefutations(ctx, input, entries, label) {
+  const citations = entries.filter((e) => e.claim === 'refuted' && VERDICT_PROPERTIES.refutation_kind.enum.includes(e.refutation_kind)).map((e) => ({ id: e.id, refutation: e.refutation }));
+  for (const entry of entries) delete entry.refutation_check;
+  if (!citations.length) return [];
+  const request = JSON.stringify({ citations });
+  let result;
+  try {
+  if (input.repoRoot && input.pluginRoot && input.diffPath && input.headShaShort && input.targetKind) {
+    const command = [...pythonArgv(input.python), trustedScriptPath(input.pluginRoot, TRUSTED_SCRIPT_BASENAMES.refutations),
+      '--request', request, '--repo-root', input.repoRoot, '--head-sha', input.headShaShort,
+      '--target-kind', input.targetKind, '--diff-file', input.diffPath,
+      ...(input.incremental ? ['--incremental', ...(input.baseBranch ? ['--base-ref', input.baseBranch] : [])] : [])].map(shellWord).join(' ');
+    const results = await ctx.parallel([() => callRefutations(ctx, `Run exactly once and return the complete JSON stdout unchanged:\n${command}`, {
+      label, agentType: 'code-gauntlet:executor', model: modelFor('code-gauntlet:executor', input.policy || {}),
+    })]);
+    result = results[0];
+  }
+  } catch { result = null; }
+  const gaps = [];
+  for (const entry of entries.filter((e) => e.claim === 'refuted')) {
+    const checks = result?.request === request && Array.isArray(result.checks) ? result.checks.filter((row) => row?.id === entry.id) : [];
+    if (checks.length !== 1 || typeof checks[0].verified !== 'boolean' || typeof checks[0].reason !== 'string') gaps.push(`${label}: citation checker failed or returned an unbound result for ${entry.id}; refutation unverified`);
+    else if (['unavailable_diff', 'full_pr_diff_unavailable', 'unavailable_source'].includes(checks[0].reason)) gaps.push(`${label}: ${checks[0].reason}; refutation unverified for ${entry.id}`);
+    entry.refutation_check = checks.length === 1 && typeof checks[0].verified === 'boolean' && typeof checks[0].reason === 'string'
+      ? { verified: checks[0].verified, reason: checks[0].reason } : { verified: false, reason: 'unverified_citation' };
+  }
+  return gaps;
+}
+// --- applyValidations.js ---
+function applyValidations(findings, validations) {
+  const byId = new Map();
+  for (const finding of findings) {
+    for (const field of ['sites', 'verdict', 'validator_verdict', 'verdict_route', 'refutation_check', 'validator_refutation_check', 'challenge_verdict', 'challenge_refutation_check', 'reachability',
+      'policy_subject', 'admission_assessments', 'admission', 'body_fix_task_eligible', 'effective_test_kind',
+      'contested', 'contestation_drop', 'contestation_reason', 'validator_confidence']) delete finding[field];
+    byId.set(finding.id, finding);
+  }
+  let adjustedCount = 0;
+  const unmatchedIds = [];
+  for (const validation of validations) {
+    if (verdictRejections(validation, VERDICT_ENTRY_SCHEMA).length) continue;
+    const finding = byId.get(validation.id);
+    if (!finding) { unmatchedIds.push(validation.id); continue; }
+    const verdict = buildVerdict(validation);
+    finding.verdict = finding.validator_verdict = verdict;
+    finding.validation_justification = verdict.justification;
+    if (validation.refutation_check) finding.validator_refutation_check = finding.refutation_check = deepClone(validation.refutation_check);
+    const key = (site) => JSON.stringify([site.file, site.line_start, site.line_end]);
+    const confirmations = validation.site_confirmations || [];
+    if (finding.resolved_sites) finding.sites = finding.resolved_sites.filter((site) => canonicalRange(site)
+      && confirmations.filter((s) => key(s) === key(site)).length === 1
+      && confirmations.find((s) => key(s) === key(site)).confirmed === true);
+    adjustedCount += 1;
+  }
+  for (const finding of findings) routeVerdict(finding);
+  return { adjustedCount, unmatchedIds };
+}
+// --- groupRanking.js ---
+function groupTier(finding) {
+  return (finding.report_tag ?? finding.report_destination ?? finding.admission?.tier ?? 'main') === 'main' ? 1 : 0;
+}
+function groupSeverityRank(finding) {
+  const index = SEVERITY_ORDER.indexOf(asText(finding.severity).trim().toLowerCase());
+  return index < 0 ? 0 : SEVERITY_ORDER.length - index;
+}
+function rankKey(finding) {
+  const consequence = CONSEQUENCE_ORDER.indexOf(finding.verdict?.consequence);
+  return [-groupSeverityRank(finding), Math.max(0, consequence), (finding.dimension ?? '').toLowerCase() === 'security' ? 0 : 1,
+    finding.origin === 'unknown' ? 1 : 0, -groupTier(finding), deliveryAllows(finding, 'inline') ? 0 : 1,
+    asText(finding.file), Number(finding.line_start) || 0, asText(finding.id)];
+}
+function compareFindings(a, b) {
+  const ka = rankKey(a), kb = rankKey(b);
+  for (let i = 0; i < ka.length; i++) if (ka[i] !== kb[i]) return ka[i] < kb[i] ? -1 : 1;
+  return 0;
+}
+function rankFindings(findings) { return [...findings].sort(compareFindings); }
+function chooseGroupLead(members) { return rankFindings(members)[0]; }
+function groupDelivery(primary, corroborators = []) {
+  const members = [primary, ...corroborators];
+  const severity = SEVERITY_ORDER[SEVERITY_ORDER.length - Math.max(...members.map(groupSeverityRank))] ?? 'low';
+  const tier = members.some((f) => groupTier(f)) ? 'main' : 'suggestion';
+  return { ...primary, severity, report_tag: tier, report_destination: tier };
 }
 // --- admission.js ---
 const resolvedReference = (ref) => canonicalRange(ref) !== null;
 const hasValue = (value) => typeof value === 'string' && value.trim().length > 0;
-function admissionRequests(finding) {
-  const requests = {};
-  if (canonicalRange(finding)) requests.primary = { file: finding.file, line_start: finding.line_start, line_end: finding.line_end };
-  for (const [name, kind] of Object.entries(VERIFY_REFERENCE_DESCRIPTORS)) {
-    const value = finding.resolved_references?.[name];
-    const refs = kind !== 'reference' ? value : [value];
-    for (const [index, ref] of (Array.isArray(refs) ? refs : []).entries()) {
-      if (kind === 'search_paths' ? ref?.available === true : resolvedReference(ref)) {
-        requests[kind !== 'reference' ? `${name}:${index}` : name] = ref;
-      }
-    }
-  }
-  return requests;
-}
-function matchAssessments(finding, entries) {
-  const requests = admissionRequests(finding);
-  if (!Array.isArray(entries)) return [];
-  return entries.filter((entry) => {
-    const descriptor = ADMISSION_PREDICATES[entry?.predicate];
-    if (!ASSESSED_PREDICATES.includes(entry?.predicate) || !['confirmed', 'rejected', 'unresolved'].includes(entry.status)
-      || entries.filter((other) => other?.predicate === entry.predicate).length !== 1
-      || !Array.isArray(entry.references) || new Set(entry.references).size !== entry.references.length
-      || entry.references.some((key) => typeof key !== 'string' || !Object.hasOwn(requests, key))) return false;
-    const expected = Object.keys(requests).filter((key) => descriptor.references.some((name) => key === name || key.startsWith(`${name}:`)));
-    return expected.length === entry.references.length && expected.every((key) => entry.references.includes(key));
-  }).map(({ predicate, status, references }) => ({ predicate,
-    status: references.length === 0 && status === 'confirmed' ? 'unresolved' : status, references: [...references] }));
-}
-function hasPresentDefect(finding, entries) {
-  const { promotion } = admissionPolicy(finding);
-  return !!promotion && matchAssessments(finding, entries)
-    .some((entry) => entry.predicate === promotion.predicate && entry.status === 'confirmed');
-}
-const MISSING_ASSESSMENT = 'missing_assessment:';
-function missingAssessments(finding, validation) {
-  const assessments = matchAssessments(finding, validation?.admission_assessments);
-  const assessed = new Set(assessments.map((entry) => entry.predicate));
-  return requiredAssessments(finding, validation?.policy_subject, hasPresentDefect(finding, assessments))
-    .filter((predicate) => !assessed.has(predicate));
-}
-function validationRejections(finding, validation) {
-  if (!validation) return ['missing_entry'];
-  const reasons = [];
-  if (coerceInt(validation.confidence, INT_POLICY.validation) === null) reasons.push('invalid_confidence');
-  if (!VALIDATION_RETURN_PROPERTIES.policy_subject.enum.includes(validation.policy_subject)) reasons.push('invalid_policy_subject');
-  reasons.push(...missingAssessments(finding, validation).map((predicate) => `${MISSING_ASSESSMENT}${predicate}`));
-  return reasons;
-}
 const ADMISSION_INPUT_FIELDS = [...new Set(['id', 'file', 'anchor', 'dimension', 'origin_dimension', 'agent', 'origin', 'validation',
-  'policy_subject', 'admission_assessments', 'reachability', 'location_status', 'line_start', 'line_end', 'diff_validation',
+  'verdict', 'verdict_route', 'refutation_check', 'validator_refutation_check', 'challenge_refutation_check', 'validator_verdict', 'challenge_verdict', 'policy_subject', 'admission_assessments', 'reachability', 'location_status', 'line_start', 'line_end', 'diff_validation',
   'reference_diagnostics', ...Object.keys(VERIFY_FACT_PROPERTIES),
   ...DIMENSIONS.flatMap((row) => row.admission ? [row.admission.field,
     ...Object.values(row.admission.kinds).flatMap((kind) => [...kind.required, ...(kind.optional || [])])] : [])])];
@@ -2533,6 +3149,10 @@ function hasAdmission(finding) {
     && Array.isArray(stamp.reasons) && Array.isArray(stamp.input_fields)
     && stamp.input_proof === admissionProof(finding, stamp.input_fields);
 }
+function challengeEligible(finding) {
+  return finding.origin !== 'unknown' && ((verdictRule(finding).challenge === true)
+    || (hasAdmission(finding) && finding.admission.status === 'admitted'));
+}
 function factAssessment(finding, predicate) {
   const ref = finding.resolved_references;
   const facts = {
@@ -2549,6 +3169,7 @@ function factAssessment(finding, predicate) {
         || finding.reference_diagnostics?.length;
       return incomplete ? 'held_back' : null;
     },
+    production_element: () => referenceResult(finding, 'production_element'),
     duplicate_of: () => referenceResult(finding, 'duplicate_of'),
     precedent: () => referenceResult(finding, 'precedent'),
     precedent_not_added: () => {
@@ -2558,328 +3179,35 @@ function factAssessment(finding, predicate) {
       return ref.precedent.file_added ? 'report_only' : null;
     },
     equivalent: () => hasValue(finding.suggestion) || hasValue(finding.suggested_fix_code) ? null : 'report_only',
-    reachability: () => finding.reachability === 'current' ? null : 'held_back',
-    location: () => canonicalRange(finding) ? null : 'held_back',
   };
   return Object.hasOwn(facts, predicate) ? facts[predicate]() : 'held_back';
-}
-function predicateResult(finding, predicate) {
-  const descriptor = ADMISSION_PREDICATES[predicate];
-  if (!descriptor) return 'held_back';
-  if (descriptor.placement) return null;
-  const fact = descriptor.fact ? factAssessment(finding, descriptor.fact) : null;
-  if (fact) return fact;
-  if (descriptor.references) {
-    for (const name of descriptor.references) {
-      if (name === 'primary' && !canonicalRange(finding)) return 'held_back';
-      if (['production_element', 'duplicate_of', 'precedent'].includes(name)) {
-        const result = referenceResult(finding, name);
-        if (result) return result;
-      }
-    }
-    const assessment = matchAssessments(finding, finding.admission_assessments).find((entry) => entry.predicate === predicate);
-    if (!assessment || assessment.status === 'unresolved') return 'held_back';
-    if (assessment.status === 'rejected') return 'report_only';
-  }
-  return null;
 }
 function evaluateAdmission(finding) {
   delete finding.admission;
   delete finding.effective_test_kind;
-  const promoted = hasPresentDefect(finding, finding.admission_assessments);
-  const { original, promotion, terminal, policyFinding, row, kind, core, tier } = admissionPolicy(finding, finding.policy_subject, promoted);
-  const subject = row?.policySubjects[policyFinding.policy_subject];
-  const reasons = [];
-  const fail = (predicate, status) => { if (status) reasons.push({ predicate, status }); };
-  if (!['new', 'modified', 'surfaced', 'pre_existing'].includes(finding.origin)) fail('verification', 'held_back');
-  if (finding.validation !== 'validated') fail('validation', 'held_back');
-  if (!terminal && ((row?.admission && !subject) || policyFinding.policy_subject === 'unresolved')) fail('policy_subject', 'held_back');
-  if (!row || (row.admission && !kind)) fail('kind', 'held_back');
-  if (kind?.defaultDisposition === 'report_only') fail('value', 'report_only');
-  for (const predicate of kind?.predicates || []) fail(predicate, predicateResult(finding, predicate));
-  const assessed = new Set(matchAssessments(finding, finding.admission_assessments).map((entry) => entry.predicate));
-  for (const predicate of requiredAssessments(finding, finding.policy_subject, promoted)) {
-    if (!assessed.has(predicate) && !reasons.some((reason) => reason.predicate === predicate && reason.status === 'held_back')) {
-      fail(predicate, 'held_back');
+  const rule = verdictRule(finding);
+  const verified = ['new', 'modified', 'surfaced', 'pre_existing'].includes(finding.origin);
+  const { row, kind } = findingPolicy(finding);
+  const kindReasons = [];
+  if (rule.status === 'admitted') {
+    if (!row || (row.admission && !kind)) kindReasons.push({ predicate: 'kind', status: 'held_back' });
+    if (kind?.phase === 'deterministic' && kind.defaultDisposition === 'report_only') kindReasons.push({ predicate: 'value', status: 'report_only' });
+    for (const predicate of kind?.predicates || []) {
+      const descriptor = ADMISSION_PREDICATES[predicate];
+      const result = descriptor?.fact ? factAssessment(finding, descriptor.fact) : null;
+      if (result) kindReasons.push({ predicate, status: result });
     }
   }
-  let status = 'admitted';
-  if (reasons.some((reason) => reason.status === 'held_back')) status = 'held_back';
-  else if (reasons.length) status = 'report_only';
-  if (subject?.stamp && status === 'admitted') finding[subject.stamp] = subject.kind;
-  const selectedKind = (promoted && promotion.kind) || (!terminal && subject?.kind) || (row?.admission ? finding[row.admission.field] : 'ordinary');
-  if (promoted && status === 'admitted') {
-    finding.origin_dimension ??= original.row.dimension;
-    if (kind.dimension) finding.dimension = kind.dimension;
-    if (promotion.stamp) finding[promotion.stamp] = promotion.kind;
-  }
-  const inputFields = kind?.anyOf || [];
-  const routedTier = finding.report_tag ?? finding.report_destination;
-  let effectiveTier = tier || 'main';
-  if (!promoted && ['main', 'suggestion'].includes(routedTier)) effectiveTier = routedTier;
-  finding.admission = { version: 1, input_fields: inputFields, status, reasons,
-    kind: selectedKind || 'unknown', core, tier: effectiveTier,
-    inline_eligible: !kind?.predicates.includes('test_diff_site_for_inline')
-      || prOwnedTest(finding) };
-  finding.admission.input_proof = admissionProof(finding, inputFields);
-  finding.body_fix_task_eligible = status === 'admitted' && RIGHT_ELIGIBILITY.body.fixTask.every((predicate) => predicateResult(finding, predicate) === null);
-  if (status === 'admitted') finding.report_destination = finding.report_tag = finding.admission.tier;
+  let status = !verified ? 'held_back' : rule.status;
+  if (status === 'admitted' && kindReasons.length) status = kindReasons.some((r) => r.status === 'held_back') ? 'held_back' : 'report_only';
+  finding.admission = { version: 1, input_fields: [], status,
+    reasons: kindReasons.length ? kindReasons : status === 'admitted' ? [] : [{ predicate: verified ? 'verdict' : 'verification', status }],
+    kind: finding[row?.admission?.field] ?? 'ordinary',
+    core: findingPolicy(finding).core, tier: rule.tier,
+    inline_eligible: !kind?.predicates.includes('test_diff_site_for_inline') || prOwnedTest(finding) };
+  finding.admission.input_proof = admissionProof(finding, []);
+  finding.body_fix_task_eligible = status === 'admitted' && rule.route === 'posted' && canonicalRange(finding) !== null;
   return finding;
-}
-function admissionContext(finding, validation) {
-  const { promotion, original } = admissionPolicy(finding);
-  const promoted = hasPresentDefect(finding, validation?.admission_assessments);
-  const subjects = validation ? [validation.policy_subject] : Object.keys(original.row?.policySubjects || {});
-  const requirements = Object.fromEntries(subjects.map((subject) =>
-    [subject, requiredAssessments(finding, subject, promoted)]));
-  const missing = validation ? missingAssessments(finding, validation) : null;
-  const predicates = [...new Set(missing || [...Object.values(requirements).flat(), ...RIGHT_ELIGIBILITY.body.fixTask])]
-    .filter((predicate) => ASSESSED_PREDICATES.includes(predicate));
-  return { requests: admissionRequests(finding), facts: Object.fromEntries(Object.keys(VERIFY_FACT_PROPERTIES).map((key) => [key, finding[key]])),
-    policy: { policy_subjects: validation ? { [validation.policy_subject]: missing } : requirements,
-      ...(!validation && promotion ? { promotion: { predicate: promotion.predicate,
-        confirmed: requiredAssessments(finding, 'ordinary', true) } } : {}),
-      ...(!validation ? { body_fix_task: RIGHT_ELIGIBILITY.body.fixTask } : {}) },
-    predicates: Object.fromEntries(predicates.map((predicate) => [predicate, ADMISSION_PREDICATES[predicate]])),
-    claim: Object.fromEntries(DIMENSIONS.flatMap((row) => Object.keys(row.schemaExtra)).map((key) => [key, finding[key]])),
-    fix: finding.suggestion || finding.suggested_fix_code };
-}
-// --- applyValidations.js ---
-const REACHABILITY_VALUES = ['current', 'future_change_only', 'uncertain'];
-function applyValidations(findings, validations) {
-  const findingById = new Map();
-  for (const finding of findings) {
-    delete finding.sites;
-    delete finding.reachability;
-    for (const field of ['policy_subject', 'admission_assessments', 'admission', 'body_fix_task_eligible', 'effective_test_kind']) delete finding[field];
-    const fid = 'id' in finding ? finding.id : undefined;
-    if (fid !== null && fid !== undefined) findingById.set(fid, finding);
-  }
-  let adjustedCount = 0;
-  const unmatchedIds = [];
-  for (const validation of validations) {
-    const vid = 'id' in validation ? validation.id : undefined;
-    if (vid === null || vid === undefined) continue; // missing id -- skipped (warning)
-    const rawConf = 'confidence' in validation ? validation.confidence : undefined;
-    if (rawConf === null || rawConf === undefined) continue; // missing confidence -- skipped (warning)
-    const parsed = coerceInt(rawConf, INT_POLICY.validation);
-    if (parsed === null) continue; // non-integer confidence -- skipped (warning)
-    const newConf = Math.max(0, Math.min(100, parsed));
-    const finding = findingById.get(vid);
-    if (finding === undefined) {
-      unmatchedIds.push(vid);
-      continue;
-    }
-    if (!('original_confidence' in finding)) {
-      finding.original_confidence = 'confidence' in finding ? finding.confidence : 0;
-    }
-    finding.validator_confidence = newConf;
-    finding.confidence = newConf;
-    const justification = 'justification' in validation ? validation.justification : undefined;
-    if (justification) finding.validation_justification = justification;
-    const reachability = 'reachability' in validation ? validation.reachability : undefined;
-    if (REACHABILITY_VALUES.includes(reachability)) finding.reachability = reachability;
-    if (VALIDATION_RETURN_PROPERTIES.policy_subject.enum.includes(validation.policy_subject)) finding.policy_subject = validation.policy_subject;
-    if (Array.isArray(validation.admission_assessments)) finding.admission_assessments = matchAssessments(finding, validation.admission_assessments);
-    const key = (site) => JSON.stringify([site.file, site.line_start, site.line_end]);
-    const confirmations = new Map((Array.isArray(validation.site_confirmations) ? validation.site_confirmations : [])
-      .filter((site) => site && typeof site === 'object').map((site, _, sites) => [key(site),
-        site.confirmed === true && sites.filter((other) => key(other) === key(site)).length === 1]));
-    if (finding.resolved_sites) finding.sites = finding.resolved_sites.filter((site) => canonicalRange(site) && confirmations.get(key(site)) === true);
-    adjustedCount += 1;
-  }
-  return { adjustedCount, unmatchedIds };
-}
-// --- reviewConfig.js ---
-function cfgGet(config, key, fallback) {
-  const v = config ? config[key] : undefined;
-  return v === undefined || v === null ? fallback : v;
-}
-function stripMatchingQuotes(item) {
-  if (item.length >= 2) {
-    const first = item[0];
-    const last = item[item.length - 1];
-    if ((first === '"' || first === "'") && first === last) {
-      return item.slice(1, -1);
-    }
-  }
-  return item;
-}
-function splitReviewLines(text) {
-  return text.split(/\r\n|\r|\n/);
-}
-const REVIEW_BLOCK_PATTERNS = deepFreeze([
-  /```(?:yaml|)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*#?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*code-gauntlet(?:[^\n]*)?\n([^\x00]*?)```/i,
-  /<!--[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*code-gauntlet-config[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\n([^\x00]*?)-->/i,
-  /```(?:yaml|)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*#?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*deep-review(?:[^\n]*)?\n([^\x00]*?)```/i,
-  /<!--[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*deep-review-config[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\n([^\x00]*?)-->/i,
-]);
-const REVIEW_CONFIDENCE_RE =
-  /(?:^|\n)[ \t]*confidence_threshold[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[:=][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*([0-9]{1,3})(?![0-9])/i;
-const REVIEW_SECURITY_RE =
-  /(?:^|\n)[ \t]*security_min_confidence[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[:=][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*([0-9]{1,3})(?![0-9])/i;
-const REVIEW_SEVERITY_RE =
-  /(?:^|\n)[ \t]*severity_threshold[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[:=][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(critical|high|medium|low)/i;
-const REVIEW_IGNORE_RE =
-  /(?:^|\n)[ \t]*ignore[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*:[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\n((?:[ \t]*-[^\n]*\n?)+)/i;
-const REVIEW_IGNORE_ITEM_RE =
-  /^[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*-[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*/;
-const REVIEW_EXCL_BLOCK_RE =
-  /```[^\n]*\n([^\x00]*?)```/;
-const REVIEW_EXCL_BULLET_RE =
-  /^[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[-*][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+([^\n]+)$/;
-const REVIEW_CONFIG_RULES = deepFreeze([
-  ...REVIEW_BLOCK_PATTERNS.map((pattern) => ({ kind: 'block', pattern })),
-  { kind: 'numeric', key: 'confidence_threshold', pattern: REVIEW_CONFIDENCE_RE },
-  { kind: 'numeric', key: 'security_min_confidence', pattern: REVIEW_SECURITY_RE },
-  { kind: 'severity', key: 'severity_threshold', pattern: REVIEW_SEVERITY_RE },
-  { kind: 'ignore', pattern: REVIEW_IGNORE_RE, itemPattern: REVIEW_IGNORE_ITEM_RE },
-]);
-function parseReviewMd(text, rules = REVIEW_CONFIG_RULES) {
-  const config = { ignore: [] };
-  if (text === undefined || text === null) return config;
-  let blockText = '';
-  for (const row of rules) {
-    if (row.kind !== 'block') continue;
-    const m = row.pattern.exec(text);
-    if (m) {
-      blockText = m[1];
-      break;
-    }
-  }
-  if (!blockText) blockText = text;
-  for (const row of rules) {
-    if (row.kind === 'block') continue;
-    const m = row.pattern.exec(blockText);
-    if (!m) continue;
-    if (row.kind === 'numeric') {
-      const value = parseInt(m[1], 10);
-      if (value <= 100) config[row.key] = value;
-    } else if (row.kind === 'severity') {
-      config[row.key] = m[1].toLowerCase();
-    } else if (row.kind === 'ignore') {
-      for (const line of splitReviewLines(m[1])) {
-        const item = line.replace(row.itemPattern, '').replace(WS_TRIM_RE, '');
-        if (item) config.ignore.push(stripMatchingQuotes(item));
-      }
-    }
-  }
-  return config;
-}
-function reviewScopeDir(path) {
-  const slash = path.lastIndexOf('/');
-  return slash < 0 ? '' : path.slice(0, slash);
-}
-function reviewScopeDepth(dir) {
-  return dir.split('/').length;
-}
-function mergeReviewLayer(layer, parsed, rules) {
-  for (const row of rules) {
-    if (row.key !== undefined && parsed[row.key] !== undefined) layer[row.key] = parsed[row.key];
-  }
-  layer.ignore.push(...parsed.ignore);
-}
-function buildReviewConfig(entries, rules = REVIEW_CONFIG_RULES) {
-  const root = { ignore: [] };
-  const scopes = [];
-  for (let index = 0; index < entries.length; index++) {
-    const entry = entries[index];
-    const dir = reviewScopeDir(entry.path);
-    const parsed = parseReviewMd(entry.text, rules);
-    if (dir === '') {
-      mergeReviewLayer(root, parsed, rules);
-      continue;
-    }
-    let scope = scopes.find((candidate) => candidate.dir === dir);
-    if (!scope) {
-      scope = { dir, ignore: [], _index: index };
-      scopes.push(scope);
-    }
-    mergeReviewLayer(scope, parsed, rules);
-  }
-  scopes.sort((a, b) =>
-    (reviewScopeDepth(a.dir) - reviewScopeDepth(b.dir)) || (a._index - b._index));
-  for (const scope of scopes) delete scope._index;
-  if (scopes.length > 0) root.scopes = scopes;
-  return root;
-}
-function scopeMatchesFile(scope, file) {
-  return typeof file === 'string'
-    && scope && typeof scope.dir === 'string'
-    && scope.dir !== ''
-    && file.startsWith(`${scope.dir}/`);
-}
-function configForFile(config, file, keys = REVIEW_SETTING_KEYS) {
-  const source = config || {};
-  const view = { ignore: [...(source.ignore === undefined ? [] : source.ignore)] };
-  for (const key of keys) {
-    if (key in source) view[key] = source[key];
-  }
-  if (!Array.isArray(source.scopes) || typeof file !== 'string') return view;
-  const matching = source.scopes
-    .map((scope, index) => ({ scope, index }))
-    .filter(({ scope }) => scopeMatchesFile(scope, file))
-    .sort(({ scope: a, index: ai }, { scope: b, index: bi }) =>
-      (reviewScopeDepth(a.dir) - reviewScopeDepth(b.dir)) || (ai - bi));
-  for (const { scope } of matching) {
-    for (const key of keys) {
-      if (key in scope) view[key] = scope[key];
-    }
-    view.ignore.push(...(scope.ignore === undefined ? [] : scope.ignore));
-  }
-  return view;
-}
-function loadExclusions(text) {
-  if (text === undefined || text === null) return [];
-  const patterns = [];
-  const blockMatch = REVIEW_EXCL_BLOCK_RE.exec(text);
-  if (blockMatch) {
-    for (const rawLine of splitReviewLines(blockMatch[1])) {
-      const line = rawLine.replace(WS_TRIM_RE, '');
-      if (line && !line.startsWith('#')) patterns.push(line);
-    }
-    return patterns;
-  }
-  for (const line of splitReviewLines(text)) {
-    const m = REVIEW_EXCL_BULLET_RE.exec(line);
-    if (m) patterns.push(m[1].replace(WS_TRIM_RE, ''));
-  }
-  return patterns;
-}
-function applyExclusions(findings, exclusionPatterns, config = null, keys = REVIEW_SETTING_KEYS) {
-  const hasConfig = config !== null && config !== undefined;
-  if (!hasConfig && (!exclusionPatterns || !exclusionPatterns.length)) {
-    return { kept: findings, eliminated: [] };
-  }
-  const kept = [];
-  const eliminated = [];
-  for (const finding of findings) {
-    const patterns = hasConfig
-      ? [...configForFile(config, finding.file, keys).ignore, ...(exclusionPatterns || [])]
-      : (exclusionPatterns || []);
-    const title = asText(finding.title);
-    const description = asText(finding.description);
-    const suggestion = typeof finding.suggestion === 'string' ? finding.suggestion : '';
-    const combined = `${title}\n${description}\n${suggestion}`;
-    let matchedPattern = null;
-    for (const pattern of patterns) {
-      const rx = new RegExp(escapeRegExp(pattern), 'i');
-      if (rx.test(combined)) {
-        matchedPattern = pattern;
-        break;
-      }
-    }
-    if (matchedPattern) {
-      eliminated.push({
-        ...finding,
-        eliminated_by: 'exclusion',
-        elimination_reason: `matched exclusion pattern: ${JSON.stringify(matchedPattern)}`,
-      });
-    } else {
-      kept.push(finding);
-    }
-  }
-  return { kept, eliminated };
 }
 // --- injection.js ---
 const INJECTION_TITLE_PATTERNS = deepFreeze([
@@ -2942,12 +3270,6 @@ const INJECTION_VULN_INTRO_PATTERNS = deepFreeze([
   /\bskip[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:certificate|cert)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:verification|validation)\b/i,
   /\bdisable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+security[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:check|feature|control)\b/i,
 ]);
-const MIN_BODY_WORDS = 10;
-const HIGH_CONFIDENCE_THRESHOLD = 85;
-const WORD_SPLIT_RE = /[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+/;
-function countWords(text) {
-  return (text || '').split(WORD_SPLIT_RE).filter(Boolean).length;
-}
 const CONFUSABLE_FOLD_PACKED =
   '\u00aaa\u00bao\u00d7x\u00fep\u0130i\u0131i\u017fs\u0184b\u018dg\u0192f\u0196l\u01a6R' +
   '\u01bds\u01bfp\u01c0l\u0251a\u0261g\u0263y\u0269i\u026ai\u026fw\u028bu\u028fy\u02b0h' +
@@ -3151,8 +3473,6 @@ const INJECTION_RULES = deepFreeze([
     patterns: INJECTION_ENCODED_PATTERNS, prose: true },
   { kind: 'pattern', domain: 'combined', label: 'contains bypass/auto-approve instruction',
     patterns: INJECTION_BYPASS_PATTERNS, prose: true },
-  { kind: 'shortBody', minimumWords: MIN_BODY_WORDS, confidence: HIGH_CONFIDENCE_THRESHOLD,
-    label: 'suspiciously short description ({words} words) with high confidence ({confidence})' },
   { kind: 'pattern', domain: 'combined', label: 'uses instructional tone',
     patterns: INJECTION_INSTRUCTIONAL_PATTERNS, prose: true },
   { kind: 'pattern', domain: 'combined', label: 'recommends introducing vulnerability',
@@ -3174,6 +3494,15 @@ function stripInjectionField(finding, field, reason) {
   kept[`${field}_removal_reason`] = reason;
   return kept;
 }
+function proseInjection(value, rules) {
+  const folded = foldConfusables(value);
+  for (const row of rules) {
+    if (!row.prose) continue;
+    const match = firstMatch(value, folded, row.patterns);
+    if (match) return { row, match };
+  }
+  return null;
+}
 function stripInjectedProseFields(finding, rules) {
   let kept = finding;
   let firstPatternStrip = null;
@@ -3183,17 +3512,20 @@ function stripInjectedProseFields(finding, rules) {
       continue;
     }
     const value = typeof kept[field] === 'string' ? kept[field] : '';
-    if (!value) continue;
-    const valueFolded = foldConfusables(value);
-    for (const row of rules) {
-      if (!row.prose) continue;
-      const m = firstMatch(value, valueFolded, row.patterns);
-      if (m) {
-        kept = stripInjectionField(kept, field, `${field} ${row.label}: ${JSON.stringify(m)}`);
-        if (firstPatternStrip === null) firstPatternStrip = [field, row.label];
-        break;
-      }
+    const injection = value && proseInjection(value, rules);
+    if (injection) {
+      const { row, match } = injection;
+      kept = stripInjectionField(kept, field, `${field} ${row.label}: ${JSON.stringify(match)}`);
+      firstPatternStrip ??= [field, row.label];
     }
+  }
+  const comment = confirmedComment(kept);
+  const injection = comment?.fix && proseInjection(comment.fix, rules);
+  if (injection) {
+    const statement = { ...comment };
+    delete statement.fix;
+    kept = { ...kept, verdict: { ...kept.verdict, comment: statement } };
+    firstPatternStrip ??= ['comment.fix', injection.row.label];
   }
   return [kept, firstPatternStrip];
 }
@@ -3215,17 +3547,19 @@ function stripSuggestedFixCodeIfNeeded(finding, firstPatternStrip) {
 }
 function applyInjectedProseStrip(finding, rules = INJECTION_RULES) {
   const [stripped, firstPatternStrip] = stripInjectedProseFields(finding, rules);
-  return stripSuggestedFixCodeIfNeeded(stripped, firstPatternStrip);
+  const kept = stripSuggestedFixCodeIfNeeded(stripped, firstPatternStrip);
+  return kept.verdict !== finding.verdict && hasAdmission(finding) ? evaluateAdmission(kept) : kept;
 }
-function injectionScanCore(findings, includeH4, rules) {
+function applyInjectionFilter(findings, rules = INJECTION_RULES) {
   const kept = [];
   const eliminated = [];
   const seenSignatures = new Map();
   for (const finding of findings) {
-    const title = asText(finding.title);
-    const description = asText(finding.description);
+    const comment = confirmedComment(finding);
+    const discoveryTitle = asText(finding.title);
+    const title = [discoveryTitle, comment?.title].filter(Boolean).join('\n');
+    const description = [asText(finding.description), comment?.body].filter(Boolean).join('\n');
     const filepath = asText(finding.file);
-    const confidence = asConfidence(finding.confidence);
     const combined = `${title}\n${description}`;
     const combinedFolded = foldConfusables(combined);
     const titleFolded = foldConfusables(title);
@@ -3236,21 +3570,16 @@ function injectionScanCore(findings, includeH4, rules) {
         const folded = row.domain === 'title' ? titleFolded : combinedFolded;
         const m = firstMatch(raw, folded, row.patterns);
         if (m) reasons.push(`${row.label}: ${JSON.stringify(m)}`);
-      } else if (row.kind === 'shortBody' && includeH4) {
-        const wordCount = countWords(description);
-        if (wordCount < row.minimumWords && confidence >= row.confidence) {
-          reasons.push(row.label.replace('{words}', wordCount).replace('{confidence}', confidence));
-        }
       } else if (row.kind === 'path') {
         if (!filepath || row.pattern.test(filepath)) {
           reasons.push(`${row.label}: ${JSON.stringify(filepath)}`);
         }
       } else if (row.kind === 'duplicate') {
-        const sig = JSON.stringify([title.toLowerCase().replace(WS_TRIM_RE, ''), filepath, canonicalRange(finding) ? ['resolved', finding.line_start] : ['unconfirmed', finding.id]]);
+        const sig = JSON.stringify([discoveryTitle.toLowerCase().replace(WS_TRIM_RE, ''), filepath, canonicalRange(finding) ? ['resolved', finding.line_start] : ['unconfirmed', finding.id]]);
         if (seenSignatures.has(sig)) {
           reasons.push(`${row.label} ${JSON.stringify(seenSignatures.get(sig))}`);
         } else {
-          seenSignatures.set(sig, finding.id !== undefined && finding.id !== null ? finding.id : title);
+          seenSignatures.set(sig, finding.id !== undefined && finding.id !== null ? finding.id : discoveryTitle);
         }
       }
     }
@@ -3263,22 +3592,7 @@ function injectionScanCore(findings, includeH4, rules) {
   }
   return { kept, eliminated };
 }
-function applyInjectionFilter(findings, rules = INJECTION_RULES) {
-  return injectionScanCore(findings, true, rules);
-}
-function applyReplayInjectionScan(findings, rules = INJECTION_RULES) {
-  return injectionScanCore(findings, false, rules);
-}
 // --- filterFindings.js ---
-const FUNCTIONAL_VIOLATION_KEYWORDS =
-  /\bcrash\b|\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+loss\b|\bsilent(?:ly)?\b|\bincorrect\b|\bwrong\b|\bfail(?:s|ure)?\b|\bruntime[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bexception\b|\bpanic\b|\bundefined[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavio(?:u)?r\b/i;
-const FILTER_DIMENSION_ROUTES = deepFreeze({ convention: { patterns: [FUNCTIONAL_VIOLATION_KEYWORDS] } });
-const FILTER_SUPPRESSION_RULES = deepFreeze([
-  { agent: AGENT_BUG_DETECTOR, pattern: /\bintentional\b|\bby[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+design\b|\bexpected[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavior\b|\bdeliberate\b/,
-    eliminatedBy: 'suppressed:intentional', subject: 'behaviour', conclusion: 'intentional' },
-  { agent: AGENT_TEST_ANALYZER, pattern: /\bgenerated\b|\bscaffolding\b|\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?generated\b|\bboilerplate\b/,
-    eliminatedBy: 'suppressed:generated', subject: 'code', conclusion: 'generated/scaffolding' },
-]);
 function normalizeFieldNames(findings, renames = FIELD_RENAMES) {
   let normalizedCount = 0;
   for (const finding of findings) {
@@ -3294,84 +3608,18 @@ function normalizeFieldNames(findings, renames = FIELD_RENAMES) {
   }
   return normalizedCount;
 }
-const FILTER_DEFAULTS = deepFreeze({
-  confidenceThreshold: 70,
-  nonsecurityConfidenceThreshold: 55,
-  securityMinConfidence: 70,
-  severityThreshold: 'low',
-});
-const CONTESTATION_DROP_THRESHOLD = 25;
-function applyThresholdFilter(findings, config, severityOrder = SEVERITY_ORDER) {
-  const kept = [];
-  const eliminated = [];
-  let contestedCount = 0;
+function applyVerdictRoutes(findings) {
+  const kept = [], eliminated = [];
   for (const finding of findings) {
-    const fileConfig = configForFile(config, finding.file);
-    const confidence = asConfidence(pyGet(finding, 'confidence', 0));
-    let severity = (asText(finding.severity) || 'low').toLowerCase();
-    const dimensions = finding.dimension ? [String(finding.dimension).toLowerCase()] : [];
-    const isSecurity = dimensions.includes('security');
-    let effectiveThreshold;
-    if (isSecurity) {
-      const minConf = cfgGet(fileConfig, 'security_min_confidence', FILTER_DEFAULTS.securityMinConfidence);
-      effectiveThreshold = Math.min(cfgGet(fileConfig, 'confidence_threshold', FILTER_DEFAULTS.confidenceThreshold), minConf);
-    } else {
-      effectiveThreshold = cfgGet(fileConfig, 'confidence_threshold', FILTER_DEFAULTS.nonsecurityConfidenceThreshold);
-    }
-    let isContested = false;
-    const originalConfidence = 'original_confidence' in finding ? finding.original_confidence : undefined;
-    if (originalConfidence !== undefined && originalConfidence !== null) {
-      const drop = originalConfidence - confidence;
-      if (drop > CONTESTATION_DROP_THRESHOLD) {
-        isContested = true;
-        contestedCount += 1;
-        finding.contested = true;
-        finding.contestation_drop = drop;
-        finding.contestation_reason =
-          `validator dropped confidence by ${drop} points (original: ${originalConfidence}, current: ${confidence})`;
-      }
-    }
-    if (!isContested && confidence < effectiveThreshold) {
-      eliminated.push({
-        ...finding,
-        eliminated_by: 'threshold',
-        elimination_reason: `confidence ${confidence} < threshold ${effectiveThreshold}`,
-      });
+    for (const key of ['consensus_boost', 'singleton_penalty', 'contested', 'contestation_drop', 'contestation_reason']) delete finding[key];
+    routeVerdict(finding);
+    if (finding.verdict_route === 'eliminated') {
+      eliminated.push({ ...finding, eliminated_by: 'verified_refutation', elimination_reason: finding.verdict.justification });
       continue;
-    }
-    if (!isContested) {
-      const severityThreshold = cfgGet(fileConfig, 'severity_threshold', FILTER_DEFAULTS.severityThreshold);
-      const sevThresholdIdx = severityOrder.indexOf(severityThreshold);
-      if (!severityOrder.includes(severity)) severity = 'low';
-      const sevIdx = severityOrder.indexOf(severity);
-      if (sevIdx > sevThresholdIdx) {
-        eliminated.push({
-          ...finding,
-          eliminated_by: 'threshold',
-          elimination_reason: `severity '${severity}' is below threshold '${severityOrder[sevThresholdIdx]}'`,
-        });
-        continue;
-      }
     }
     kept.push(finding);
   }
-  return { kept, eliminated, contestedCount };
-}
-const REACHABILITY_DEMOTION_REASON =
-  'validator found no code path that reaches this issue without a future change';
-function applyReachabilityDemotion(findings) {
-  let demotedCount = 0;
-  for (const finding of findings) {
-    if (finding.reachability !== 'future_change_only') continue;
-    if (finding.severity !== 'low') {
-      if ('severity' in finding) finding.original_severity = finding.severity;
-      finding.severity = 'low';
-    }
-    finding.demoted_by = 'reachability';
-    finding.demotion_reason = REACHABILITY_DEMOTION_REASON;
-    demotedCount += 1;
-  }
-  return { findings, demotedCount };
+  return { kept, eliminated };
 }
 function pyGet(obj, key, dflt) {
   return key in obj ? obj[key] : dflt;
@@ -3388,128 +3636,29 @@ function lineBucket(line, proximity) {
   if (n === null) return 0;
   return pyRound(n / proximity) * proximity;
 }
-const CONSENSUS_BOOST = 10;
-const SINGLETON_PENALTY = 15;
-function groupFilterFindings(findings, keyFor) {
-  const groups = new Map();
+function groupByProximity(findings, lineProximity) {
+  const files = new Map();
+  const groups = [];
   for (const finding of findings) {
-    const key = canonicalRange(finding) ? keyFor(finding) : finding;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(finding);
+    if (!canonicalRange(finding)) { groups.push([finding]); continue; }
+    const file = pyGet(finding, 'file', '');
+    if (!files.has(file)) files.set(file, []);
+    files.get(file).push(finding);
+  }
+  for (const rows of files.values()) {
+    rows.sort((a, b) => a.line_start - b.line_start);
+    let group;
+    for (const finding of rows) {
+      if (!group || finding.line_start - group[0].line_start > lineProximity) {
+        group = [];
+        groups.push(group);
+      }
+      group.push(finding);
+    }
   }
   return groups;
 }
-function detectDisagreement(findings, rules = FILTER_SUPPRESSION_RULES) {
-  for (const f of findings) {
-    for (const key of ['consensus_count', 'consensus_boost', 'corroborated_by', 'singleton_penalty', 'contradiction', 'security_escalation', 'escalation_note']) delete f[key];
-  }
-  const locationGroups = groupFilterFindings(findings, (finding) => JSON.stringify([
-    pyGet(finding, 'file', ''), lineBucket(finding.line_start, 10),
-  ]));
-  const suppressedIds = new Set();
-  const suppressed = [];
-  const idKey = (f) => (('id' in f) ? f.id : f);
-  for (const group of locationGroups.values()) {
-    if (group.length < 2) continue;
-    const agentMap = groupFilterFindings(group, (f) => pyGet(f, 'agent', '').toLowerCase());
-    for (const row of rules) {
-      if (!agentMap.has(row.agent) || !agentMap.has(AGENT_CONVENTIONS)) continue;
-      for (const convFinding of agentMap.get(AGENT_CONVENTIONS)) {
-        const convText = `${asText(convFinding.description)} ${asText(convFinding.title)}`.toLowerCase();
-        if (!row.pattern.test(convText)) continue;
-        for (const target of agentMap.get(row.agent)) {
-          const fid = idKey(target);
-          if (suppressedIds.has(fid)) continue;
-          suppressedIds.add(fid);
-          suppressed.push({
-            ...target,
-            eliminated_by: row.eliminatedBy,
-            elimination_reason:
-              `conventions-and-intent confirms ${row.subject} at ${pyGet(target, 'file', '?')}:` +
-              `${pyGet(target, 'line_start', '?')} is ${row.conclusion}`,
-          });
-        }
-        break;
-      }
-    }
-  }
-  const active = findings.filter((f) => !suppressedIds.has(idKey(f)));
-  const consensusGroups = groupFilterFindings(active, (finding) => JSON.stringify([
-    pyGet(finding, 'file', ''), lineBucket(finding.line_start, 10), pyGet(finding, 'origin', '') === 'unknown',
-  ]));
-  let boostedCount = 0;
-  for (const group of consensusGroups.values()) {
-    const count = group.length;
-    const agentsInGroup = group.filter((f) => f.agent).map((f) => f.agent);
-    if (count > 1) {
-      boostedCount += count;
-      for (const finding of group) {
-        const thisAgent = pyGet(finding, 'agent', '');
-        const otherAgents = agentsInGroup.filter((a) => a !== thisAgent);
-        finding.consensus_count = count;
-        finding.consensus_boost = CONSENSUS_BOOST;
-        finding.corroborated_by = otherAgents;
-        const originalConf = asConfidence(finding.confidence);
-        finding.confidence = Math.min(originalConf + CONSENSUS_BOOST, 100);
-      }
-    } else {
-      const finding = group[0];
-      finding.consensus_count = 1;
-      finding.consensus_boost = 0;
-      if (!('corroborated_by' in finding)) finding.corroborated_by = [];
-      if (finding.dimension && !findingPolicy(finding).core) {
-        const originalConf = asConfidence(finding.confidence);
-        finding.confidence = Math.max(0, originalConf - SINGLETON_PENALTY);
-        finding.singleton_penalty = true;
-      }
-    }
-  }
-  const locationGroupsActive = groupFilterFindings(active, (finding) => JSON.stringify([
-    pyGet(finding, 'file', ''), pyGet(finding, 'line_start', 0),
-  ]));
-  for (const group of locationGroupsActive.values()) {
-    if (group.length < 2) {
-      if (!('contradiction' in group[0])) group[0].contradiction = false;
-      if (!('security_escalation' in group[0])) group[0].security_escalation = false;
-      continue;
-    }
-    const severities = new Set(group.map((f) => (asText(f.severity) || 'low').toLowerCase()));
-    const agentsHere = new Set(group.map((f) => pyGet(f, 'agent', '').toLowerCase()));
-    const hasContradiction = severities.has('critical') && severities.has('low');
-    const hasSecurityEscalation =
-      agentsHere.has(AGENT_SECURITY_REVIEWER) && agentsHere.size > 1 && severities.has('low');
-    for (const finding of group) {
-      finding.contradiction = hasContradiction;
-      finding.security_escalation = hasSecurityEscalation;
-      if (hasSecurityEscalation && pyGet(finding, 'agent', '').toLowerCase() === AGENT_SECURITY_REVIEWER) {
-        finding.escalation_note =
-          'Kept: security-reviewer finding retained despite conflicting low-severity ' +
-          'signal from another agent (security escalation rule)';
-      }
-    }
-  }
-  return { active, suppressed, boostedCount };
-}
-function routeByDimension(finding, routes = FILTER_DIMENSION_ROUTES) {
-  const dimension = pyGet(finding, 'dimension', '').toLowerCase();
-  if (!dimension) return null;
-  if (!dimensionRow(finding.origin_dimension) && !dimensionRow(dimension)) return null;
-  const policy = findingPolicy(finding);
-  if (policy.row?.functionalRouting && Object.hasOwn(routes, dimension)) {
-    return findingMatchesPatterns(finding, routes[dimension].patterns) ? 'main' : 'suggestion';
-  }
-  return policy.tier ?? null;
-}
-function findingMatchesPatterns(finding, patterns) {
-  const combined = `${asText(finding.title)}\n${asText(finding.description)}`;
-  return patterns.some((rx) => rx.test(combined));
-}
-function groupByProximity(findings, lineProximity) {
-  return groupFilterFindings(findings, (finding) => JSON.stringify([
-    pyGet(finding, 'file', ''), lineBucket(finding.line_start, lineProximity),
-  ]));
-}
-function consolidateCrossAgent(findings, prefer = () => false) {
+function consolidateCrossAgent(findings) {
   const LINE_PROXIMITY = 5;
   for (const f of findings) {
     if (f && typeof f === 'object') {
@@ -3517,20 +3666,6 @@ function consolidateCrossAgent(findings, prefer = () => false) {
       delete f.consolidation_primary;
     }
   }
-  const winnerKey = (f) => {
-    const isCore = findingPolicy(f).core ? 1 : 0;
-    const conf = asConfidence(f.confidence);
-    const descLen = asText(f.description).length;
-    return [prefer(f) ? 1 : 0, isCore, conf, descLen];
-  };
-  const compareWinnerDesc = (a, b) => {
-    const ka = winnerKey(a);
-    const kb = winnerKey(b);
-    for (let i = 0; i < ka.length; i += 1) {
-      if (ka[i] !== kb[i]) return kb[i] - ka[i];
-    }
-    return 0; // tie -> preserve original order (stable sort)
-  };
   const groups = groupByProximity(findings, LINE_PROXIMITY);
   let consolidatedCount = 0;
   for (const group of groups.values()) {
@@ -3539,10 +3674,9 @@ function consolidateCrossAgent(findings, prefer = () => false) {
     const file = pyGet(group[0], 'file', '');
     const bucket = lineBucket(group[0].line_start, LINE_PROXIMITY);
     const consolidationKey = `${file}:${bucket}`;
-    const ranked = [...group].sort(compareWinnerDesc);
-    const primary = ranked.find((f) => pyGet(f, 'id', ''));
-    for (const f of group) {
-      if (!pyGet(f, 'id', '')) continue; // id-less findings stay unstamped
+    const members = group.filter((f) => pyGet(f, 'id', ''));
+    const primary = chooseGroupLead(members);
+    for (const f of members) {
       f.consolidation_key = consolidationKey;
       f.consolidation_primary = f === primary;
       consolidatedCount += 1;
@@ -3550,48 +3684,24 @@ function consolidateCrossAgent(findings, prefer = () => false) {
   }
   return { findings, consolidatedCount };
 }
-function tagFindings(findings, routes = FILTER_DIMENSION_ROUTES) {
-  let mainCount = 0;
-  let suggestionCount = 0;
+function tagFindings(findings) {
+  let mainCount = 0, suggestionCount = 0;
   for (const finding of findings) {
     delete finding.consolidation_key;
     delete finding.consolidation_primary;
-    const agent = pyGet(finding, 'agent', '').toLowerCase();
-    let destination;
-    if (finding.demoted_by === 'reachability') {
-      destination = 'suggestion';
-      finding.routed_by = 'reachability';
-    } else {
-      const dimRoute = routeByDimension(finding, routes);
-      if (dimRoute !== null) {
-        destination = dimRoute;
-        if (dimRoute === 'suggestion') finding.routed_by = 'dimension';
-      } else {
-        const rows = DIMENSIONS.filter((row) => row.agentType.split(':').pop() === agent);
-        destination = (rows.find((row) => row.agentFallback) || rows[0])?.defaultTier || 'main';
-      }
-    }
-    finding.report_destination = destination;
-    finding.report_tag = destination; // Artifact readers consume both routing names.
-    if (destination === 'main') mainCount += 1;
+    const tier = finding.report_tag;
+    if (tier === 'main') mainCount += 1;
     else suggestionCount += 1;
   }
   return { tagged: findings, mainCount, suggestionCount };
 }
-function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
+function applyFilterPipeline(findings, generatedAt) {
   const total = findings.length;
   normalizeFieldNames(findings);
-  applyReachabilityDemotion(findings);
   const allEliminated = [];
-  const { kept: afterThreshold, eliminated: elimThreshold, contestedCount } = applyThresholdFilter(findings, config);
-  allEliminated.push(...elimThreshold);
-  const passedThreshold = afterThreshold.length;
-  const { kept: afterExclusions, eliminated: elimExclusions } = applyExclusions(
-    afterThreshold, exclusionPatterns, config,
-  );
-  allEliminated.push(...elimExclusions);
-  const exclusionsRemoved = elimExclusions.length;
-  const { kept: afterInjection, eliminated: elimInjection } = applyInjectionFilter(afterExclusions);
+  const { kept: routed, eliminated: refuted } = applyVerdictRoutes(findings);
+  allEliminated.push(...refuted);
+  const { kept: afterInjection, eliminated: elimInjection } = applyInjectionFilter(routed);
   allEliminated.push(...elimInjection);
   const injectionsRemoved = elimInjection.length;
   const proseFieldsRemoved = Object.fromEntries(
@@ -3603,31 +3713,21 @@ function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
   const suggestedFixCodesRemoved = afterInjection.filter(
     (f) => f.suggested_fix_code_removed_by === 'injection',
   ).length;
-  const { active, suppressed: elimSuppressed, boostedCount: consensusBoosted } = detectDisagreement(afterInjection);
-  allEliminated.push(...elimSuppressed);
-  const { tagged, mainCount, suggestionCount } = tagFindings(active);
+  const { tagged, mainCount, suggestionCount } = tagFindings(afterInjection);
   const promotedCount = tagged.filter((finding) => {
     const { row, kind } = findingPolicy(finding);
     return kind?.dimension && kind.dimension === finding.dimension && row.dimension !== finding.dimension;
   }).length;
-  const dimensionRouted = tagged.filter((f) => f.routed_by === 'dimension').length;
   const reachabilityDemoted = [...tagged, ...allEliminated]
-    .filter((f) => f.demoted_by === 'reachability').length;
-  const singletonPenalized = [...tagged, ...allEliminated].filter((f) => f.singleton_penalty).length;
+    .filter((f) => f.verdict?.consequence === 'latent').length;
   return {
     filtered: tagged,
     eliminated: allEliminated,
     stats: {
       total,
-      passed_threshold: passedThreshold,
-      contested_count: contestedCount,
-      exclusions_removed: exclusionsRemoved,
       injections_removed: injectionsRemoved,
       ...proseFieldsRemoved,
       suggested_fix_codes_removed: suggestedFixCodesRemoved,
-      consensus_boosted: consensusBoosted,
-      singleton_penalized: singletonPenalized,
-      dimension_routed: dimensionRouted,
       reachability_demoted: reachabilityDemoted,
       test_analyzer_promoted: promotedCount,
       tagged_main: mainCount,
@@ -3637,128 +3737,81 @@ function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
   };
 }
 // --- applyChallenges.js ---
-function downgradeSeverity(severity) {
-  const idx = typeof severity === 'string' ? SEVERITY_ORDER.indexOf(severity.toLowerCase()) : -1;
-  if (idx < 0 || idx + 1 >= SEVERITY_ORDER.length) return null;
-  return SEVERITY_ORDER[idx + 1];
-}
-function rankKey(finding) {
-  const sev = (finding.severity ?? 'low').toLowerCase();
-  let sevIdx = SEVERITY_ORDER.indexOf(sev);
-  if (sevIdx < 0) sevIdx = SEVERITY_ORDER.length;
-  const degraded = finding.origin === 'unknown' ? 1 : 0;
-  const conf = finding.confidence ?? 0;
-  let tertiary;
-  const rl = finding.risk_level;
-  if (rl !== undefined && rl !== null && Number.isFinite(Number(rl))) tertiary = -Number(rl);
-  else tertiary = -((finding.description ?? '').length);
-  return [sevIdx, degraded, -conf, tertiary];
-}
-function rankFindings(findings) {
-  return [...findings].sort((a, b) => {
-    const ka = rankKey(a);
-    const kb = rankKey(b);
-    return ka[0] - kb[0] || ka[1] - kb[1] || ka[2] - kb[2] || ka[3] - kb[3];
-  });
-}
 function applyChallenges(findings, challenges) {
-  const challengeById = new Map();
-  for (const entry of challenges) {
-    const cid = 'id' in entry ? entry.id : undefined;
-    if (cid === undefined || cid === null) continue;
-    const rawScore = 'score' in entry ? entry.score : undefined;
-    if (rawScore === undefined || rawScore === null) continue;
-    if (coerceInt(rawScore, INT_POLICY.validation) === null) continue;
-    challengeById.set(cid, entry);
-  }
-  const active = [];
-  const eliminated = [];
-  const stats = {
-    challenge_removed: 0,
-    challenge_downgraded: 0,
-    challenge_contested: 0,
-    challenge_survived: 0,
-    unchallenged: 0,
-  };
-  for (let finding of findings) {
-    const fid = 'id' in finding ? finding.id : undefined;
-    const entry = challengeById.get(fid);
-    if (entry === undefined) {
-      stats.unchallenged += 1;
-      active.push(finding);
-      continue;
-    }
-    const rawScore = 'score' in entry ? entry.score : 0;
-    const score = coerceInt(rawScore, INT_POLICY.validation);
-    const justification = 'justification' in entry ? entry.justification : undefined;
-    finding = deepClone(finding);
-    finding.challenge_score = score;
-    if (justification) finding.challenge_justification = justification;
-    const isSurfaced = ('origin' in finding ? finding.origin : '').toLowerCase() === 'surfaced';
-    const isSecurity = ('dimension' in finding ? finding.dimension : '').toLowerCase() === 'security';
-    if (score < 25 && !isSecurity) {
-      eliminated.push({
-        ...finding,
-        eliminated_by: 'challenge:removed',
-        elimination_reason: `challenge score ${score} < 25; finding does not survive blind challenge`,
-      });
+  const byId = new Map(challenges.filter((entry) => verdictRejections(entry, VERDICT_ENTRY_SCHEMA).length === 0).map((entry) => [entry.id, entry]));
+  const active = [], eliminated = [];
+  const stats = { total_input: findings.length, challenge_removed: 0, challenge_survived: 0, unchallenged: 0 };
+  for (const original of findings) {
+    const entry = byId.get(original.id);
+    if (!entry) { active.push(original); stats.unchallenged += 1; continue; }
+    const finding = deepClone(original);
+    const { refutation_check } = entry;
+    const verdict = buildVerdict(entry);
+    finding.challenge_verdict = verdict;
+    const validator = finding.validator_verdict ?? finding.verdict;
+    finding.verdict = resolveVerdict(validator, verdict, finding.validator_refutation_check, refutation_check);
+    delete finding.challenge_refutation_check;
+    if (refutation_check) finding.challenge_refutation_check = deepClone(refutation_check);
+    const effectiveCheck = finding.verdict === verdict ? refutation_check : finding.validator_refutation_check;
+    delete finding.refutation_check;
+    if (effectiveCheck) finding.refutation_check = deepClone(effectiveCheck);
+    finding.challenge_justification = verdict.justification;
+    routeVerdict(finding);
+    finding.challenge = finding.verdict_route === 'not-established' ? 'failed' : 'survived';
+    if (finding.verdict_route === 'eliminated') {
+      eliminated.push({ ...finding, eliminated_by: 'verified_refutation', elimination_reason: finding.verdict.justification });
       stats.challenge_removed += 1;
-    } else if (score < 50) {
-      const currentSev = ('severity' in finding ? finding.severity : 'low').toLowerCase();
-      const newSev = downgradeSeverity(currentSev);
-      finding.challenge_contested = false;
-      const removed = score < 25 && newSev === null;
-      if (newSev === null) {
-        eliminated.push({
-          ...finding,
-          eliminated_by: removed ? 'challenge:removed' : 'challenge:downgraded',
-          elimination_reason: score < 25
-            ? `challenge score ${score} < 25; security finding severity already ` +
-              `'${currentSev}' (lowest) — finding removed`
-            : `challenge score ${score} in 25-49 range; severity already ` +
-              `'${currentSev}' (lowest) — finding removed`,
-        });
-      } else {
-        finding.severity = newSev;
-        finding.severity_downgraded = true;
-        finding.original_severity = currentSev;
-        finding.report_destination = 'suggestion';
-        finding.report_tag = 'suggestion';
-        active.push(finding);
-      }
-      stats[removed ? 'challenge_removed' : 'challenge_downgraded'] += 1;
-    } else if (score < 75) {
-      finding.challenge_contested = true;
-      if (isSurfaced) {
-        finding.report_destination = 'suggestion';
-        finding.report_tag = 'suggestion';
-      }
-      active.push(finding);
-      stats.challenge_contested += 1;
     } else {
-      finding.challenge_contested = false;
-      active.push(finding);
-      stats.challenge_survived += 1;
+      active.push(evaluateAdmission(finding));
+      if (finding.verdict_route !== 'not-established') stats.challenge_survived += 1;
     }
   }
-  const totalInput = findings.length;
-  const ranked = rankFindings(active);
-  return {
-    findings: ranked,
-    eliminated,
-    stats: {
-      total_input: totalInput,
-      challenge_removed: stats.challenge_removed,
-      challenge_downgraded: stats.challenge_downgraded,
-      challenge_contested: stats.challenge_contested,
-      challenge_survived: stats.challenge_survived,
-      unchallenged: stats.unchallenged,
-      final_count: ranked.length,
-    },
-  };
+  return { findings: rankFindings(active), eliminated, stats: { ...stats, final_count: active.length } };
+}
+// --- vetting.js ---
+const UNVERIFIED_REASONS = {
+  validation: 'neither the validator nor the challenger established this finding',
+  verify: 'the verify slice could not be proven against the dispatched document',
+  challenge: {
+    capped: 'the challenge cap was reached, so this finding was not challenge-verified',
+    failed: 'the challenger failed or returned no typed verdict, so this finding was not challenge-verified',
+    skipped: 'this finding was not challenge-verified',
+  },
+};
+function incompleteVetting(finding) {
+  const missing = [];
+  const independent = finding.challenge === 'survived' && ['confirmed', 'refuted_verified']
+    .includes(verdictState(finding.challenge_verdict, finding.challenge_refutation_check));
+  if (finding.validation === 'skipped' && !independent) missing.push('validation');
+  if (finding.origin === 'unknown') missing.push('verify');
+  return missing;
 }
 // --- dispose.js ---
-const DELIVERABLE_CHALLENGES = ['survived', 'contested', 'downgraded'];
+const DELIVERABLE_CHALLENGES = ['survived'];
+function findingDisposition(finding, heldBack = false) {
+  const reasons = incompleteVetting(finding).map((stage) => stage === 'verify' ? 'verify_unproven' : 'validation_skipped');
+  if (Object.hasOwn(UNVERIFIED_REASONS.challenge, finding.challenge) && finding.challenge !== 'skipped') {
+    reasons.push(finding.challenge === 'capped' ? 'challenge_cap' : 'challenge_failed');
+  }
+  if (heldBack && !reasons.length) reasons.push('held_back');
+  let disposition = 'body';
+  const admitted = hasAdmission(finding);
+  if (reasons.length) disposition = 'held_back';
+  else if (!admitted || finding.admission.status !== 'admitted') {
+    disposition = admitted ? finding.admission.status : 'held_back';
+    reasons.push(disposition);
+  } else if (!DELIVERABLE_CHALLENGES.includes(finding.challenge)) {
+    disposition = 'held_back';
+    reasons.push('challenge_failed');
+  } else if (finding.admission.inline_eligible
+    && finding.diff_validation?.in_diff === true && locationAllows(finding, 'inline')) {
+    disposition = 'deliver';
+  } else reasons.push('body_routed');
+  return { disposition, reasons: [...new Set([...reasons, ...(admitted ? finding.admission.reasons.map((reason) => reason.status) : [])])] };
+}
+function isDeliveryCandidate(finding) {
+  return ['deliver', 'body'].includes(findingDisposition(finding).disposition);
+}
 function disposeFindings(challenged) {
   const input = deepClone(challenged);
   const findings = [];
@@ -3771,26 +3824,9 @@ function disposeFindings(challenged) {
     delete finding.consolidation_key;
     delete finding.consolidation_primary;
     delete finding.delivery_group;
-    const reasons = incompleteVetting(finding).map((stage) => stage === 'verify' ? 'verify_unproven' : 'validation_skipped');
-    if (Object.hasOwn(UNVERIFIED_REASONS.challenge, finding.challenge) && finding.challenge !== 'skipped') {
-      reasons.push(finding.challenge === 'capped' ? 'challenge_cap' : 'challenge_failed');
-    }
-    if ((input.unverified || []).includes(finding) && !reasons.length) reasons.push('held_back');
-    let disposition = 'body';
-    const admitted = hasAdmission(finding);
-    if (reasons.length) disposition = 'held_back';
-    else if (!admitted || finding.admission.status !== 'admitted') {
-      disposition = admitted ? finding.admission.status : 'held_back';
-      reasons.push(disposition);
-    } else if (!DELIVERABLE_CHALLENGES.includes(finding.challenge)) {
-      disposition = 'held_back';
-      reasons.push('challenge_failed');
-    } else if (finding.admission.inline_eligible && finding.reachability !== 'future_change_only'
-      && finding.diff_validation?.in_diff === true && locationAllows(finding, 'inline')) {
-      disposition = 'deliver';
-    } else reasons.push('body_routed');
+    const { disposition, reasons } = findingDisposition(finding, (input.unverified || []).includes(finding));
     finding.disposition = disposition;
-    finding.disposition_reasons = [...new Set([...reasons, ...(admitted ? finding.admission.reasons.map((reason) => reason.status) : [])])];
+    finding.disposition_reasons = reasons;
     (disposition === 'held_back' ? unverified : findings).push(finding);
     if (finding.trace_id) for (const reason of finding.disposition_reasons) {
       decisions.push(traceDecision(finding, reason, reason, [], ['held_back', 'report_only'].includes(disposition) ? disposition : 'body_routed',
@@ -3806,25 +3842,50 @@ function disposeFindings(challenged) {
   }
   decisions.push(...eliminations.filter((_, index) => eliminated[index].trace_id));
   const actionable = findings.filter((f) => deliveryAllows(f, 'body'));
-  const { consolidatedCount } = consolidateCrossAgent(actionable, (f) => deliveryAllows(f, 'inline'));
-  const groups = deliveryGroups(actionable).map(({ primary, corroborators }, index) => {
+  const groupingNeeded = (input.grouping_ids || actionable).length >= 2;
+  const accepted = groupingNeeded ? acceptGroupingReply(input.grouping_reply, input.grouping_ids || [
+    ...(input.findings || []), ...(input.unverified || []), ...(input.eliminated || []),
+  ].map((f) => f.id), actionable) : { error: null, groups: [] };
+  const grouping = !groupingNeeded ? 'not_needed' : accepted.error ? 'positional' : 'model';
+  const gaps = accepted.error ? [`grouping: ${input.grouping_error || accepted.error}; same-lines grouping used`] : [];
+  if (accepted.error) consolidateCrossAgent(actionable);
+  const candidates = accepted.error
+    ? deliveryGroups(actionable).filter((g) => g.corroborators.length).map(({ primary, corroborators }) => ({
+      members: [primary, ...corroborators], consolidation_key: primary.consolidation_key,
+    })) : accepted.groups;
+  for (const group of candidates) {
+    const primary = chooseGroupLead(group.members);
+    for (const member of group.members) {
+      member.consolidation_key = group.consolidation_key ?? primary.id;
+      member.consolidation_primary = member === primary;
+    }
+  }
+  const delivery = deliveryGroups(actionable);
+  const placementTradeoffs = delivery.filter(({ primary, corroborators }) => !deliveryAllows(primary, 'inline')
+    && corroborators.some((f) => deliveryAllows(f, 'inline'))).length;
+  const groupedMembers = delivery.filter((g) => g.corroborators.length).reduce((n, g) => n + 1 + g.corroborators.length, 0);
+  const groups = delivery.map(({ primary, corroborators }, index) => {
     const members = [primary, ...corroborators];
     const ids = members.map((f) => f.id);
-    const issueKey = primary.consolidation_key ? `group:${primary.consolidation_key}` : `issue:${primary.id || index}`;
+    const issueKey = primary.consolidation_key ? `group:${grouping === 'model' ? primary.id : primary.consolidation_key}` : `issue:${primary.id || index}`;
     const stamp = { issue_key: issueKey, lead_id: primary.id, finding_ids: ids };
+    const delivered = groupDelivery(primary, corroborators);
     if (ids.every((id) => typeof id === 'string' && id)) for (const member of members) member.delivery_group = stamp;
     return { ...stamp, sites: members.flatMap((f) => f.sites || []),
-      tier: members.some((f) => (f.report_tag ?? f.report_destination) === 'main') ? 'main' : 'suggestion',
-      disposition: primary.disposition };
+      severity: delivered.severity, tier: delivered.report_tag,
+      disposition: primary.disposition, same_challenge_verdict: new Set(members.map((f) => f.verdict_route ?? f.challenge)).size === 1 };
   });
   for (const finding of findings.filter((f) => f.consolidation_key && !f.consolidation_primary && f.trace_id)) {
     const related = findings.filter((f) => f.consolidation_key === finding.consolidation_key && f !== finding && f.trace_id).map((f) => f.trace_id);
     if (related.length) decisions.push(traceDecision(finding, 'folded', 'cross-agent consolidation', related, 'coalesced'));
   }
-  return { findings, unverified, eliminated, groups, decisions, stats: { ...input.stats,
+  return { findings, unverified, eliminated, groups, decisions, gaps,
+    ...Object.fromEntries(['grouping_reply', 'grouping_ids', 'grouping_error'].filter((key) => Object.hasOwn(input, key)).map((key) => [key, input[key]])), stats: { ...input.stats,
     skipped: unverified.filter((f) => Object.hasOwn(UNVERIFIED_REASONS.challenge, f.challenge)).length,
     held_back: unverified.length,
-    cross_agent_consolidated: consolidatedCount, final_count: findings.length } };
+    grouping, grouped_members: groupedMembers, grouping_placement_tradeoffs: placementTradeoffs,
+    grouping_verdicts: groups.filter((g) => g.finding_ids.length > 1).map((g) => ({ issue_key: g.issue_key, same_challenge_verdict: g.same_challenge_verdict })),
+    cross_agent_consolidated: groupedMembers, final_count: findings.length } };
 }
 function deliveryGroups(findings) {
   const groups = [];
@@ -3841,6 +3902,27 @@ function deliveryGroups(findings) {
     const primary = ordered.find((f) => stamp ? f.id === stamp.lead_id : f.consolidation_primary) || ordered[0];
     return { primary, corroborators: ordered.filter((f) => f !== primary) };
   });
+}
+function acceptGroupingReply(reply, ids, findings) {
+  const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+  const reject = (error) => ({ error, groups: [] });
+  if (!object(reply)) return reject('missing or non-object reply');
+  if (!Array.isArray(reply.groups)) return reject('groups is not an array');
+  if (Object.keys(reply).some((key) => key !== 'groups')) return reject('unexpected reply field');
+  const known = new Set(ids);
+  const seen = new Set();
+  for (const group of reply.groups) {
+    if (!object(group) || !Array.isArray(group.finding_ids)) return reject('invalid group');
+    for (const id of group.finding_ids) {
+      if (!known.has(id)) return reject('unknown id');
+      if (seen.has(id)) return reject('overlapping id');
+      seen.add(id);
+    }
+  }
+  const byId = new Map(findings.map((f) => [f.id, f]));
+  return { error: null, groups: reply.groups.map((group) => ({
+    members: group.finding_ids.map((id) => byId.get(id)).filter(Boolean),
+  })).filter((group) => group.members.length >= 2) };
 }
 // --- outboundText.js ---
 const OUTBOUND_NAMED_ENTITIES = deepFreeze({
@@ -4510,8 +4592,13 @@ function dimensionsSummaryTable(input, dimensions = DIMENSIONS) {
   });
   return ['| Dimension | Agent | Findings | Notes |', '|-----------|-------|----------|-------|', ...rows].join('\n');
 }
-function consolidateForReport(findings) {
+function consolidateForReport(findings, delivery = false, sources = new WeakMap()) {
   return deliveryGroups(findings).map(({ primary, corroborators }) => {
+    if (delivery) {
+      const finding = groupDelivery(primary, corroborators);
+      sources.set(finding, primary);
+      return finding;
+    }
     if (!corroborators.length) return primary;
     return {
       ...primary,
@@ -4520,8 +4607,11 @@ function consolidateForReport(findings) {
         agent: c.agent,
         dimension: c.dimension,
         confidence: c.confidence,
+        severity: c.severity,
+        report_tag: c.report_tag ?? c.report_destination,
         title: c.title,
         description: c.description,
+        verdict: c.verdict,
       })),
     };
   });
@@ -4554,6 +4644,8 @@ function reportCorroboration(value) {
     const text = reportOptionalText(safeReportField(value, key));
     if (text !== undefined) out[key] = text;
   }
+  const verdict = safeReportField(value, 'verdict');
+  if (verdict) out.verdict = verdict;
   const confidence = reportAsConfidence(safeReportField(value, 'confidence'));
   if (confidence !== undefined) out.confidence = confidence;
   return out;
@@ -4575,13 +4667,17 @@ function coerceReportFinding(finding, severities) {
       value = raw;
     } else if (key === 'confidence') {
       value = reportAsConfidence(raw);
+    } else if (key === 'verdict') {
+      value = plainReportObject(raw) ? { claim: reportOptionalText(safeReportField(raw, 'claim')),
+        consequence: reportOptionalText(safeReportField(raw, 'consequence')),
+        comment: confirmedComment({ verdict: raw }) } : undefined;
     } else if (key === 'corroborations') {
       value = Array.isArray(raw) ? raw.map(reportCorroboration) : undefined;
     } else if (key === 'sites') {
       value = Array.isArray(raw) ? raw : [];
     } else if (['disposition_reasons', 'delivery_group', 'admission', 'admission_assessments', 'body_fix_task_eligible'].includes(key)) {
       value = raw;
-    } else if (key === 'consolidation_primary' || key === 'challenge_contested') {
+    } else if (key === 'consolidation_primary') {
       value = raw;
     } else if (key === 'risk_level') {
       value = reportRiskLevel(raw);
@@ -4790,7 +4886,8 @@ function renderFinding(builder, finding, unverified, permalinks) {
   }
   const classification = [];
   if (isPresent(finding.dimension)) classification.push(`**Dimension:** ${inline(finding.dimension)}`);
-  if (isPresent(finding.confidence)) classification.push(`**Confidence:** ${inline(finding.confidence)}%`);
+  if (finding.verdict) classification.push(`**Verdict:** ${inline(finding.verdict.claim)}${finding.verdict.claim === 'confirmed' ? ` / ${inline(finding.verdict.consequence)}` : ''}`);
+  else if (isPresent(finding.confidence)) classification.push(`**Discovery confidence:** ${inline(finding.confidence)}%`);
   if (classification.length) bullets.push(`- ${classification.join(' · ')}`);
   if (finding.origin === 'surfaced') {
     bullets.push('- **Origin:** surfaced — pre-existing, surfaced by this change');
@@ -4802,10 +4899,16 @@ function renderFinding(builder, finding, unverified, permalinks) {
   if (finding.demoted_by === 'reachability') {
     bullets.push('- **Reachability:** only under a future change (severity demoted to low)');
   }
-  if (finding.challenge_contested === true) {
-    bullets.push('- **Contested:** the challenger could not confirm the cited location');
-  }
   if (bullets.length) blocks.push(() => bullets.forEach((line) => builder.addSpans(line, [where])));
+  if (finding.verdict?.comment) blocks.push(() => {
+    builder.add(`**Confirmed statement:** ${inline(finding.verdict.comment.title)}`);
+    builder.add();
+    builder.add(foldedProse(finding.verdict.comment.body));
+    if (finding.verdict.comment.fix) {
+      builder.add();
+      builder.add(`**Confirmed fix:** ${foldedProse(finding.verdict.comment.fix)}`);
+    }
+  });
   if (isPresent(finding.description)) blocks.push(() => builder.add(foldedProse(finding.description)));
   if (isPresent(finding.evidence)) {
     blocks.push(() => {
@@ -4848,9 +4951,14 @@ function renderFinding(builder, finding, unverified, permalinks) {
       for (const corroboration of finding.corroborations) {
         const agent = preparedCodeSpan(corroboration.agent, false, undefined, REPORT_FOLD_LIMITS.inlineChars);
         const dimension = preparedCodeSpan(corroboration.dimension, false, undefined, REPORT_FOLD_LIMITS.inlineChars);
-        const confidence = inline(corroboration.confidence);
         const title = inline(corroboration.title);
-        builder.addSpans(`- **Corroborated by** ${agent} (${dimension}, confidence ${confidence}) — ${title}`, [agent, dimension]);
+        builder.addSpans(`- **Corroborated by** ${agent} (${dimension}, severity ${inline(normalizeReportSeverity(corroboration.severity))}, tier ${inline(corroboration.report_tag ?? 'main')}): ${title}`, [agent, dimension]);
+        const comment = confirmedComment(corroboration);
+        if (comment) {
+          builder.add(`  **Confirmed statement:** ${inline(comment.title)}`);
+          builder.add(foldedProse(comment.body).split(/\r?\n/).map((line) => `  ${line}`).join('\n'));
+          if (comment.fix) builder.add(`  **Confirmed fix:** ${foldedProse(comment.fix)}`);
+        }
         if (isPresent(corroboration.description)) {
           builder.add(foldedProse(corroboration.description).split(/\r?\n/).map((line) => `  ${line}`).join('\n'));
         }
@@ -4886,7 +4994,7 @@ function renderSeverityBuckets(builder, view, unverified, permalinks) {
 function plural(count, noun) {
   return count === 1 ? noun : `${noun}s`;
 }
-function countsSentence(findings, rawCount, unverified, view) {
+function localCountsSentence(findings, rawCount, unverified, view) {
   const count = findings.length;
   let sentence = count === rawCount
     ? `${count} ${plural(count, 'finding')} after the gauntlet`
@@ -4900,10 +5008,21 @@ function countsSentence(findings, rawCount, unverified, view) {
   if (unverified.length > held) sentence += ` ${unverified.length - held} unverified / pipeline-degraded.`;
   return sentence;
 }
+function publicSummaryText(template, values) {
+  return template.replace(/\{(\w+)\}/g, (_, key) => values[key]);
+}
+function countsSentence(findings, view) {
+  const count = findings.length;
+  const breakdown = view.order.map((severity) => `${view.buckets.get(severity).length} ${severity}`);
+  let sentence = publicSummaryText(PUBLIC_SUMMARY.counts, { count, issues: plural(count, 'issue'), breakdown: breakdown.length ? ': ' + breakdown.join(', ') : '' });
+  const suggestions = findings.filter((finding) => (finding.report_tag ?? finding.report_destination) === 'suggestion').length;
+  if (suggestions === 1) sentence += publicSummaryText(PUBLIC_SUMMARY.improvement, { count: suggestions });
+  else if (suggestions > 1) sentence += publicSummaryText(PUBLIC_SUMMARY.improvements, { count: suggestions });
+  return sentence;
+}
 function reportUnitKey(finding, original) {
-  return finding.consolidation_key
-    ? finding.consolidation_key
-    : (original && typeof original === 'object' ? original : finding);
+  return finding.delivery_group?.issue_key ?? finding.consolidation_key
+    ?? (original && typeof original === 'object' ? original : finding);
 }
 function plainReportObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -4914,11 +5033,10 @@ function plainReportObject(value) {
     return false;
   }
 }
-function summaryIndex(rawFindings, findingsView, input) {
+function summaryIndex(rawFindings, findingsView, input, projected, sources) {
   const reported = findingsView.order.flatMap((severity) => findingsView.buckets.get(severity));
-  if (!Array.isArray(input.delivered)) return { indexed: reported, reasons: [] };
+  if (!Array.isArray(input.delivered)) return { indexed: reported, reasons: [], references: new Map(reported.map((f) => [f, typeof f.id === 'string' && f.id ? f.id : projected.indexOf(sources.get(f) ?? f)])) };
   const originals = Array.isArray(input.findings) ? input.findings : [];
-  const projected = rawFindings;
   const delivered = input.delivered.filter(plainReportObject);
   const deliveredOriginals = new Set(delivered);
   const deliveryOrder = new Map();
@@ -4931,6 +5049,7 @@ function summaryIndex(rawFindings, findingsView, input) {
   for (let index = 0; index < originals.length; index += 1) {
     const original = originals[index];
     const finding = projected[index] || {};
+    if (!rawFindings.includes(finding)) continue;
     if (finding && typeof finding === 'object') originalByProjected.set(finding, original);
     const key = reportUnitKey(finding, original);
     if (!unitMembers.has(key)) unitMembers.set(key, []);
@@ -4940,27 +5059,33 @@ function summaryIndex(rawFindings, findingsView, input) {
     }
   }
   pairs.sort((left, right) => deliveryOrder.get(left.original) - deliveryOrder.get(right.original));
-  const deliveredUnits = new Map(consolidateForReport(pairs.map((pair) => pair.finding)).map((finding) => (
-    [reportUnitKey(finding, originalByProjected.get(finding)), finding]
+  const deliveredUnits = new Map(consolidateForReport(pairs.map((pair) => pair.finding), true, sources).map((finding) => (
+    [reportUnitKey(finding, originalByProjected.get(sources.get(finding) ?? finding)), finding]
   )));
   const indexed = reported.map((finding) => deliveredUnits.get(
-    reportUnitKey(finding, originalByProjected.get(finding)),
+    reportUnitKey(finding, originalByProjected.get(sources.get(finding) ?? finding)),
   )).filter(Boolean);
   const omittedUnits = [...unitMembers].filter(([key]) => !deliveredUnits.has(key)).map(([, members]) => members);
   const reasons = [];
-  const isMain = (finding) => (finding.report_tag ?? finding.report_destination) === 'main';
+  const unitTier = (members) => {
+    const delivered = groupDelivery(members[0], members.slice(1));
+    return delivered.report_tag;
+  };
   if (typeof input.deliveryCap === 'number' && omittedUnits.some((members) => (
-    input.deliveryTier !== 'main_only' || members.some(isMain)
+    input.deliveryTier !== 'main_only' || unitTier(members) === 'main'
   ))) {
-    reasons.push(`over the delivery cap of ${input.deliveryCap} ${plural(input.deliveryCap, 'finding')}`);
+    reasons.push(`this review posts at most ${input.deliveryCap} ${plural(input.deliveryCap, 'issue')}`);
   }
   if (input.deliveryTier === 'main_only' && omittedUnits.some((members) => (
-    members.some((finding) => (finding.report_tag ?? finding.report_destination) === 'suggestion')
+    unitTier(members) === 'suggestion'
   ))) {
-    reasons.push('improvement suggestions held back by delivery tier main_only');
+    reasons.push('this review includes defects only');
   }
-  if (!reasons.length && omittedUnits.length) reasons.push('not selected for delivery');
-  return { indexed, reasons };
+  if (!reasons.length && omittedUnits.length) reasons.push('not selected for this review');
+  const references = new Map(indexed.map((finding) => [finding,
+    typeof finding.id === 'string' && finding.id ? finding.id : delivered.indexOf(originalByProjected.get(sources.get(finding) ?? finding)),
+  ]));
+  return { indexed, reasons, references };
 }
 function partitionByDisposition(inp, findingsRight) {
   const projected = coerceReportFindings(inp.findings);
@@ -4972,12 +5097,19 @@ function partitionByDisposition(inp, findingsRight) {
 }
 function summaryBlock(builder, input, findingsRight = 'body') {
   const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  const { rawFindings, rawUnverified } = partitionByDisposition(inp, findingsRight);
-  const findings = consolidateForReport(rawFindings);
+  const { projected, rawFindings, rawUnverified } = partitionByDisposition(inp, findingsRight);
+  const local = findingsRight === 'report';
+  const sources = new WeakMap();
+  const findings = consolidateForReport(rawFindings, !local, sources);
   const unverified = consolidateForReport(rawUnverified);
   const findingsView = severityView(findings);
-  builder.add(countsSentence(findings, rawFindings.length, unverified, findingsView));
-  const { indexed, reasons } = summaryIndex(rawFindings, findingsView, inp);
+  const counts = local ? localCountsSentence(findings, rawFindings.length, unverified, findingsView) : countsSentence(findings, findingsView);
+  builder.add(counts);
+  const selection = summaryIndex(rawFindings, findingsView, local ? { ...inp, delivered: undefined } : inp, projected, sources);
+  const indexed = selection.indexed.filter((finding) => local || deliveryAllows(finding, 'inline'));
+  const bodyCount = selection.indexed.length - indexed.length;
+  const reasons = [...selection.reasons];
+  const records = [];
   const permalinks = permalinkContext(inp.prIdentity);
   const bullets = [];
   let indexChars = 0;
@@ -4987,34 +5119,36 @@ function summaryBlock(builder, input, findingsRight = 'body') {
     const where = quotedSummaryLocation(finding) || '`location unavailable`';
     const url = locationUrl(finding, permalinks);
     const link = url ? `[${where}](${url})` : where;
-    const suggestion = (finding.report_tag ?? finding.report_destination) === 'suggestion' ? ' (improvement suggestion)' : '';
+    const suggestion = (finding.report_tag ?? finding.report_destination) === 'suggestion' ? PUBLIC_SUMMARY.suggestion : '';
     const bullet = outboundTildeRuns(
-      `- ${severityMark(severity)} [${severity.toUpperCase()}] ${link}${suggestion}: ${prepareSummaryTitle(finding.title)}`,
+      publicSummaryText(PUBLIC_SUMMARY.index, { mark: severityMark(severity), severity: severity.toUpperCase(), location: link, suggestion, title: prepareSummaryTitle((local ? null : confirmedComment(finding))?.title ?? finding.title) }),
     );
+    records.push({ lead_id: selection.references.get(finding), bullet });
     const nextChars = [...bullet].length + (bullets.length ? 1 : 0);
-    if (indexChars + nextChars > REPORT_FOLD_LIMITS.summaryIndexChars) {
+    if (cutForLength || indexChars + nextChars > REPORT_FOLD_LIMITS.summaryIndexChars) {
       cutForLength = true;
-      break;
+      continue;
     }
     bullets.push(bullet);
     indexChars += nextChars;
   }
   if (bullets.length) builder.add();
   for (const bullet of bullets) builder.add(bullet);
-  const remainder = findings.length - bullets.length;
-  if (cutForLength) reasons.push('over the summary length limit');
-  const remainderNoun = findings.length === rawFindings.length
+  const remainder = findings.length - bullets.length - bodyCount;
+  if (cutForLength) reasons.push(local ? 'over the summary length limit' : 'did not fit in this comment');
+  const remainderNoun = !local ? plural(remainder, 'issue') : findings.length === rawFindings.length
     ? plural(remainder, 'finding')
     : `reported ${plural(remainder, 'issue')}`;
   if (remainder) {
     builder.add();
-    builder.add(`${remainder} more ${remainderNoun} not listed here (${reasons.join('; ')}).`);
+    builder.add(publicSummaryText(PUBLIC_SUMMARY.remainder, { count: remainder, issues: remainderNoun, reasons: reasons.join('; ') }));
   }
+  return { counts, index: records, omitted: findings.length - selection.indexed.length, reasons: selection.reasons };
 }
-function renderSummaryBody(input) {
+function renderPublicSummary(input) {
   const builder = reportBuilder();
-  summaryBlock(builder, input);
-  return builder.finish();
+  const data = summaryBlock(builder, input);
+  return { ...data, body: builder.finish() };
 }
 function receiptSafe(value) {
   if (value === undefined || value === null) return 'unknown';
@@ -5124,6 +5258,7 @@ function methodologyRows(input, rawFindings) {
   ]);
   const gapCount = Number.isInteger(input.gapCount) ? input.gapCount : 0;
   rows.push(['Gaps', String(gapCount)]);
+  for (const gap of input.gaps || []) rows.push(['Gap', inline(gap)]);
   const dispatched = Array.isArray(input.dimensions && input.dimensions.dispatched) ? input.dimensions.dispatched.length : 0;
   const degraded = Array.isArray(input.dimensions && input.dimensions.degraded) ? input.dimensions.degraded.length : 0;
   rows.push(['Dimensions', `dispatched=${dispatched}; degraded=${degraded}`]);
@@ -5202,6 +5337,7 @@ function renderReport(input, knobs = KNOB_REGISTRY) {
   builder.add();
   summaryBlock(builder, inp, 'report');
   builder.add();
+  if (inp.unsupportedReviewConfig === true) builder.add('REVIEW.md settings are no longer supported; use CODE_GAUNTLET_DELIVERY for delivery; its prose is read as project rules.');
   builder.add('## Change Context');
   builder.add();
   if (isPresent(inp.summary)) {
@@ -5250,64 +5386,13 @@ function renderReport(input, knobs = KNOB_REGISTRY) {
   builder.add();
   builder.add(dimensionsTable);
   renderMethodology(builder, { ...inp, mode: inp.mode || 'interactive' }, rawFindings, knobs);
-  if (inp.hasReviewMd === false) {
-    builder.add();
-    builder.add('A REVIEW.md at the repository root is the preferred way to state review rules: focus, ignore paths, and severity.');
-    builder.add('Format reference: https://github.com/liatrio-labs/claude-code-gauntlet/blob/main/skills/code-gauntlet/references/review-md-spec.md');
-  }
   return builder.finish();
 }
 // --- reviewStages.js ---
-const VALIDATE_SCHEMA = {
-  type: 'object',
-  properties: {
-    validations: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          finding_id: { type: 'string' },
-          confidence: { type: 'number' },
-          justification: { type: 'string' },
-          reachability: { type: 'string', enum: REACHABILITY_VALUES },
-          ...VALIDATION_RETURN_PROPERTIES,
-        },
-        required: ['finding_id', 'confidence', 'policy_subject'],
-      },
-    },
-  },
-  required: ['validations'],
-};
-function assessmentRequirement(predicates) {
-  return { ...(predicates.length ? { properties: { admission_assessments: { allOf: predicates.map((predicate) => ({
-    contains: { properties: { predicate: { const: predicate } }, required: ['predicate'] },
-  })) } } } : {}), required: predicates.length ? ['admission_assessments'] : [] };
-}
-function validateSchema(batch, accepted) {
-  const base = VALIDATE_SCHEMA.properties.validations.items;
-  const variants = batch.flatMap((finding) => {
-    const previous = accepted.get(finding.id);
-    if (previous) {
-      const requirements = assessmentRequirement(missingAssessments(finding, previous));
-      return [{ ...requirements, properties: { finding_id: { enum: [finding.id] }, ...requirements.properties } }];
-    }
-    const { promotion } = admissionPolicy(finding);
-    const references = Object.hasOwn(admissionRequests(finding), 'primary') ? ['primary'] : [];
-    return VALIDATION_RETURN_PROPERTIES.policy_subject.enum.map((subject) => {
-      const requirements = assessmentRequirement(requiredAssessments(finding, subject));
-      const properties = { finding_id: { enum: [finding.id] }, policy_subject: { enum: [subject] } };
-      const plain = { properties: { ...properties, ...requirements.properties }, required: [...base.required, ...requirements.required] };
-      if (!promotion || references.length === 0) return plain;
-      return { properties, required: base.required, if: { properties: { admission_assessments: { contains: {
-          properties: { predicate: { const: promotion.predicate }, status: { const: 'confirmed' },
-            references: { const: references } }, required: ['predicate', 'status', 'references'],
-        } } }, required: ['admission_assessments'] },
-        then: assessmentRequirement(requiredAssessments(finding, subject, true)), else: requirements,
-      };
-    });
-  });
-  return { ...VALIDATE_SCHEMA, properties: { validations: { type: 'array', items: { ...base, required: ['finding_id'], anyOf: variants } } } };
-}
+const VALIDATE_SCHEMA = { type: 'object', properties: { validations: { type: 'array',
+  items: READER_VALIDATION_VERDICT_SCHEMA,
+} }, required: ['validations'], additionalProperties: false };
+const callValidator = defineAgentCall('validate', () => VALIDATE_SCHEMA);
 function validatorAudit(audit, label, result, rejections) {
   const raw = JSON.stringify(result ?? null);
   const record = { label, raw: raw.slice(0, 8192), raw_characters: raw.length, truncated: raw.length > 8192,
@@ -5333,30 +5418,22 @@ async function validateStage(ctx, input) {
   const terminalRejections = new Map();
   let completed = 0;
   let dispatched = 0;
-  const dispatch = (batch, label) => () => ctx.agent(validatePrompt(inp, batch, accepted), {
-    label, agentType: 'code-gauntlet:validator', model, schema: validateSchema(batch, accepted),
+  const dispatch = (batch, label) => () => callValidator(ctx, validatePrompt(inp, batch), {
+    label, agentType: 'code-gauntlet:validator', model,
   });
   const consume = (res, batch, label) => {
-    const list = res === null || res === undefined
-      ? null
-      : (Array.isArray(res) ? res : (Array.isArray(res.validations) ? res.validations : null));
+    const list = res && Array.isArray(res.validations)
+      && !verdictRejections({ ...res, validations: [] }, VALIDATE_SCHEMA).length ? res.validations : null;
     if (list) completed += 1;
-    const entries = (list || []).filter((e) => e && typeof e === 'object').map((e) => ({ ...e, id: e.id ?? e.finding_id }));
+    const entries = (list || []).filter((e) => e && typeof e === 'object').map((e) => ({ raw: e, id: e.finding_id }));
     const rejections = [];
     for (const finding of batch) {
       const matches = entries.filter((entry) => entry.id === finding.id);
       if (!matches.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons: [list ? 'missing_entry' : 'malformed_return'] });
       for (const entry of matches) {
-        const previous = accepted.get(finding.id);
-        const missing = previous ? missingAssessments(finding, previous) : [];
-        const replacements = (Array.isArray(entry.admission_assessments) ? entry.admission_assessments : [])
-          .filter((assessment) => missing.includes(assessment?.predicate));
-        const merged = previous && label.startsWith('validate-retry-') ? { ...previous,
-          admission_assessments: [...(Array.isArray(previous.admission_assessments) ? previous.admission_assessments : []).filter((assessment) =>
-            !replacements.some((replacement) => replacement?.predicate === assessment?.predicate)), ...replacements] } : entry;
-        const reasons = validationRejections(finding, merged);
+        const reasons = matches.length === 1 ? verdictRejections(entry.raw, VALIDATION_VERDICT_SCHEMA) : ['duplicate_entry'];
         if (reasons.length) rejections.push({ id: String(finding.id).slice(0, 128), reasons });
-        if (reasons.every((reason) => reason.startsWith(MISSING_ASSESSMENT))) accepted.set(finding.id, merged);
+        else accepted.set(finding.id, { ...entry.raw, id: entry.id });
       }
     }
     validatorAudit(audit, label, res, rejections);
@@ -5366,7 +5443,7 @@ async function validateStage(ctx, input) {
   const results = await ctx.parallel(batches.map((batch, idx) => dispatch(batch, `validate-batch-${idx}`)));
   dispatched += batches.length;
   const mainLists = batches.map((batch, idx) => consume(results[idx], batch, `validate-batch-${idx}`));
-  const pending = findings.filter((finding) => validationRejections(finding, accepted.get(finding.id)).length);
+  const pending = findings.filter((finding) => !accepted.has(finding.id));
   if (pending.length) {
     const retries = [];
     const retrySize = effectiveValidationRetrySize(limits, findings.length);
@@ -5376,17 +5453,17 @@ async function validateStage(ctx, input) {
     retries.forEach((batch, idx) => consume(retried[idx], batch, `validate-retry-${idx}`));
   }
   batches.forEach((batch, idx) => {
-    const unscored = batch.filter((finding) => !accepted.has(finding.id));
-    if (unscored.length) {
-      const reasons = [...new Set(unscored.flatMap((finding) => terminalRejections.get(String(finding.id).slice(0, 128)) || []))]
-        .filter((reason) => !reason.startsWith(MISSING_ASSESSMENT));
-      let problem = mainLists[idx] ? 'omitted scores' : 'returned null/malformed';
+    const unanswered = batch.filter((finding) => !accepted.has(finding.id));
+    if (unanswered.length) {
+      const reasons = [...new Set(unanswered.flatMap((finding) => terminalRejections.get(String(finding.id).slice(0, 128)) || []))];
+      let problem = mainLists[idx] ? 'omitted verdicts' : 'returned null/malformed';
       if (reasons.some((reason) => !['missing_entry', 'malformed_return'].includes(reason))) {
         problem = `returned invalid/incomplete entries (${reasons.join(', ')})`;
       }
-      gaps.push(`validate-batch-${idx}: validator ${problem} — ${unscored.length} finding(s) unvalidated (validation=skipped, held back to the report)`);
+      gaps.push(`validate-batch-${idx}: validator ${problem} — ${unanswered.length} finding(s) unvalidated (validation=skipped, sent to blind challenge)`);
     }
   });
+  gaps.push(...await checkRefutations(ctx, inp, [...accepted.values()], 'validate-refutations'));
   const { adjustedCount } = applyValidations(findings, [...accepted.values()]);
   let skipped = 0;
   for (const f of findings) {
@@ -5406,35 +5483,17 @@ async function validateStage(ctx, input) {
     },
   };
 }
-function validatePrompt(inp, batch, accepted) {
-  const ctxLine = inp.contextLine || '';
-  const block = batch.map((f) => {
-    const range = !locationAllows(f, 'sourceLink') ? 'location unconfirmed' : f.line_end != null && f.line_end !== f.line_start
-      ? `${f.line_start}-${f.line_end}`
-      : `${f.line_start != null ? f.line_start : '?'}`;
-    const ev = f.evidence ? ` | evidence: ${f.evidence}` : '';
-    const sites = (f.resolved_sites || []).filter((site) => locationAllows(site, 'sourceLink'));
-    const requests = sites.length ? ` | site_requests: ${JSON.stringify(sites)}` : '';
-    return `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${range} — ${f.description || ''}${ev}${requests} | admission_context: ${JSON.stringify(admissionContext(f, accepted.get(f.id)))}`;
-  }).join('\n');
-  if (batch.every((finding) => accepted.has(finding.id))) return `${ctxLine}Supply missing admission assessments in admission_context; correctness, reachability and policy_subject are fixed. References name inspected requests.\nFindings:\n${block}`;
-  return `${ctxLine}Judge correctness and reachability independently of admission evidence or posting value. Classify policy_subject by the claim, regardless of producer or test location. Assess admission_context predicates; references name inspected requests. Resolved locations and confidence alone do not confirm predicates. Assess body_fix_task separately. Confirm site_requests only for the same defect requiring the same correction.\nFindings:\n${block}`;
+function validatePrompt(inp, batch) {
+  const block = batch.map((f) => `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${f.line_start ?? '?'}-${f.line_end ?? f.line_start ?? '?'} | location_status=${f.location_status ?? 'unconfirmed'} — ${f.description || ''}${f.evidence ? ` | evidence: ${f.evidence}` : ''}${f.resolved_sites?.length ? ` | site_requests: ${JSON.stringify(f.resolved_sites)}` : ''}`).join('\n');
+  return `${inp.contextLine || ''}Return factual claim and consequence separately using the schema. Confirm additional sites only for the same correction.\nFindings:\n${block}`;
 }
 function filterStage(input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
   const findings = inp.findings || [];
-  const config = inp.reviewConfig || {};
-  const exclusionPatterns = inp.exclusionPatterns || [];
-  return applyFilterPipeline(findings, config, exclusionPatterns, inp.generatedAt);
+  return applyFilterPipeline(findings, inp.generatedAt);
 }
-const CHALLENGE_SCHEMA = {
-  type: 'object',
-  properties: {
-    confidence_claim_is_correct: { type: 'number' },
-    justification: { type: 'string' },
-  },
-  required: ['confidence_claim_is_correct'],
-};
+const CHALLENGE_SCHEMA = { type: 'object', properties: { verdict: VERDICT_SCHEMA }, required: ['verdict'], additionalProperties: false };
+const callChallenger = defineAgentCall('challenge', () => ({ ...CHALLENGE_SCHEMA, properties: { verdict: READER_VERDICT_SCHEMA } }));
 function blindChallengeFields(finding, diffPath) {
   return {
     title: finding.title || '',
@@ -5469,45 +5528,48 @@ async function challengeStage(ctx, input) {
       findings: [], unverified: [], eliminated: [], gaps: [],
       stats: {
         total_input: 0, dispatched: 0, completed: 0, skipped: 0,
-        challenge_removed: 0, challenge_downgraded: 0, challenge_contested: 0,
+        challenge_removed: 0,
         challenge_survived: 0, unchallenged: 0, final_count: 0,
       },
       generated_at: inp.generatedAt,
     };
   }
   const model = modelFor('code-gauntlet:challenger', policy);
-  const actionable = (f) => hasAdmission(f) && f.admission.status === 'admitted' && incompleteVetting(f).length === 0;
-  const terminal = findings.filter((f) => !actionable(f)).map((f) => ({ ...f, challenge: 'admission_terminal' }));
-  const ranked = rankFindings(findings.filter(actionable));
+  const terminal = findings.filter((f) => !challengeEligible(f)).map((f) => ({ ...f, challenge: 'admission_terminal' }));
+  const ranked = rankFindings(findings.filter(challengeEligible));
   const candidates = ranked.slice(0, cap);
   const overflow = ranked.slice(cap);
-  const thunks = candidates.map((finding, idx) => () => ctx.agent(challengePrompt(finding, inp.diffPath), {
+  const thunks = candidates.map((finding, idx) => () => callChallenger(ctx, challengePrompt(finding, inp.diffPath), {
     label: `challenge-${idx}`,
     agentType: 'code-gauntlet:challenger',
     model,
-    schema: CHALLENGE_SCHEMA,
   }));
   const results = thunks.length ? await ctx.parallel(thunks) : [];
   const gaps = [];
   const challenged = [];
   const challenges = [];
   const skipped = [];
-  results.forEach((res, idx) => {
+  results.forEach((result, idx) => {
+    const res = result?.verdict;
     const finding = candidates[idx];
-    const rawScore = res && typeof res === 'object' ? (res.confidence_claim_is_correct ?? res.score) : undefined;
-    if (res === null || res === undefined || coerceInt(rawScore, INT_POLICY.validation) === null) {
-      gaps.push(`challenge-${idx}: challenger returned null/unscored — finding ${finding.id} unchallenged (challenge=failed, pipeline-degraded)`);
+    const rejections = verdictRejections(result, CHALLENGE_SCHEMA);
+    if (rejections.length) {
+      gaps.push(`challenge-${idx}: challenger returned no typed verdict (${rejections.join(', ')}) — finding ${finding.id} unchallenged`);
       skipped.push({ ...finding, challenge: 'failed' });
       return;
     }
-    challenges.push({ id: finding.id, score: rawScore, justification: res.justification });
+    challenges.push({ ...res, id: finding.id });
     challenged.push({ ...finding, challenge: 'survived' });
   });
   for (const f of overflow) skipped.push({ ...f, challenge: 'capped' });
   if (overflow.length) {
     gaps.push(`challenge: ${overflow.length} finding(s) over challengeCap=${cap} left unchallenged (challenge=capped, pipeline-degraded)`);
   }
+  gaps.push(...await checkRefutations(ctx, inp, challenges, 'challenge-refutations'));
   const applied = applyChallenges(challenged, challenges);
+  const unresolved = applied.findings.filter((f) => f.verdict_route === 'not-established');
+  skipped.push(...unresolved);
+  applied.findings = applied.findings.filter((f) => f.verdict_route !== 'not-established');
   const unverified = rankFindings(skipped);
   return {
     findings: [...applied.findings, ...terminal],
@@ -5521,25 +5583,29 @@ async function challengeStage(ctx, input) {
       completed: challenged.length,
       skipped: skipped.length,
       challenge_removed: applied.stats.challenge_removed,
-      challenge_downgraded: applied.stats.challenge_downgraded,
-      challenge_contested: applied.stats.challenge_contested,
       challenge_survived: applied.stats.challenge_survived,
       unchallenged: applied.stats.unchallenged,
-      final_count: applied.stats.final_count,
+      final_count: applied.findings.length + terminal.length,
     },
     generated_at: inp.generatedAt,
   };
 }
 function selectDelivery(survivors, cap, tier) {
-  const members = tier === 'main_only'
-    ? (survivors || []).filter((f) => (f.report_tag ?? f.report_destination) === 'main')
-    : (survivors || []);
-  const pool = deliveryGroups(members);
-  const rankable = pool.map(({ primary, corroborators }) => rankFindings(coerceReportFindings([primary, ...corroborators]))[0]);
-  const originalByRankable = new Map(rankable.map((finding, index) => [finding, pool[index]]));
-  let ranked = rankFindings(rankable).map((finding) => originalByRankable.get(finding));
+  const pool = deliveryGroups(survivors || []).filter(({ primary, corroborators }) =>
+    tier !== 'main_only' || groupDelivery(primary, corroborators).report_tag === 'main');
+  const rankable = pool.map(({ primary, corroborators }) => groupDelivery(
+    coerceReportFindings([primary])[0], coerceReportFindings(corroborators)));
+  const originals = new Map(rankable.map((finding, index) => [finding, pool[index]]));
+  let ranked = rankFindings(rankable).map((finding) => originals.get(finding));
   if (cap !== undefined && cap !== null) ranked = ranked.slice(0, Math.max(0, cap));
   return ranked.flatMap(({ primary, corroborators }) => [primary, ...corroborators]);
+}
+function deliveryOmissions(survivors, selected, tier) {
+  const posted = new Set(selected);
+  return deliveryGroups(survivors).filter(({ primary }) => !posted.has(primary)).map(({ primary, corroborators }) => ({
+    findings: [primary, ...corroborators],
+    reason: tier === 'main_only' && groupDelivery(primary, corroborators).report_tag !== 'main' ? 'delivery_tier' : 'delivery_cap',
+  }));
 }
 // --- verifyStage.js ---
 const VERIFY_RECEIPT_FIELDS = {
@@ -5604,6 +5670,7 @@ const VERIFY_SCHEMA = {
   },
   required: ['status'],
 };
+const callVerify = defineAgentCall('verify', () => VERIFY_SCHEMA);
 const VERIFY_FANOUT_DISCLOSE_THRESHOLD = 5;
 async function verifyStage(ctx, input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
@@ -5805,11 +5872,10 @@ async function verifySliceWithRetry(c, inp, i, slice, record) {
 async function dispatchVerifySlice(c, inp, i, slice, record, sliceNonce, label, attempt = '') {
   let env;
   try {
-    env = await c.agent(verifyPrompt(inp, i, sliceNonce, record.inlinePayload, attempt), {
+    env = await callVerify(c, verifyPrompt(inp, i, sliceNonce, record.inlinePayload, attempt), {
       label,
       agentType: 'code-gauntlet:executor',
       model: record.model,
-      schema: VERIFY_SCHEMA,
     });
   } catch (e) {
     return { ok: false, reason: `executor threw (${(e && e.message) || 'unknown'})` };
@@ -5935,16 +6001,10 @@ function resolveRemovedTestsArgs(args) {
 }
 const ARGS_VERSION = 1;
 const NONCE_RE = /^[A-Za-z0-9._-]+$/;
-const NULLABLE_TOP_LEVEL = deepFreeze(['reviewConfig', 'exclusionPatterns', 'reviewMd', 'exclusionsText', 'delivery', 'checkpoints',
+const NULLABLE_TOP_LEVEL = deepFreeze(['delivery', 'checkpoints',
   'persist', 'scopeAnswer']);
 const RISK_LEVELS = deepFreeze(['low', 'medium', 'high']);
 const NULL_TOLERANCE_CONSEQUENCE = deepFreeze({
-  reviewConfig: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with ' +
-    'no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
-  exclusionPatterns: 'no exclusion patterns are applied, so the delivered findings can differ',
-  reviewMd: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with ' +
-    'no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
-  exclusionsText: 'no exclusion patterns are applied, so the delivered findings can differ',
   delivery: 'delivery falls back to tier "all" with no PR identity',
   'delivery.tier': 'delivery falls back to tier "all", so a narrowing intent is lost',
   'delivery.prIdentity': 'the post-review artifact is persisted as a bare findings array instead of the post_review-ready wrapper',
@@ -5961,8 +6021,6 @@ const LIMIT_KEYS = deepFreeze([
 const ARGS_SHAPES = deepFreeze({
   pathFields: ['repoRoot', 'outputDir', 'headShaShort', 'diffPath', 'pluginRoot'],
   riskFields: ['path', 'risk'],
-  reviewMdFields: ['path', 'text', 'checksum'],
-  scopeLayerFields: ['dir', 'ignore', ...REVIEW_SETTING_KEYS],
   scopeFields: ['requested', 'kind', 'since', 'commits', 'detector'],
   scopeKinds: ['full', 'incremental'],
   detectorFields: ['previously_reviewed', 'sha_resolvable', 'head_advanced', 'sha_is_ancestor', 'incremental_safe', 'error'],
@@ -5977,6 +6035,7 @@ const ARGS_FIELD_CHECKS = deepFreeze({
       message: `invalid {label}: {value} (expected distinct values from ${MODEL_ALIASES.join(', ')})` },
   ],
   changed: [
+    { key: 'unsupportedReviewConfig', domain: 'boolean', message: 'unsupportedReviewConfig must be a boolean when present' },
     { key: 'measurementTrace', domain: 'boolean', message: 'measurementTrace must be a boolean when present' },
     { key: 'changedFiles', domain: 'array', message: 'changedFiles must be an array of repo-relative paths' },
     { key: 'changedLines', domain: 'number', message: 'changedLines must be a number' },
@@ -5987,14 +6046,6 @@ const ARGS_FIELD_CHECKS = deepFreeze({
     boundMessage: '{label} is {value}, above the {maximum} ceiling '
       + '\u2014 that is not a review context, it is a mis-measurement',
   })),
-  review: REVIEW_SETTING_KEYS.map((key) => key === 'severity_threshold'
-    ? { key, presence: 'in', values: SEVERITY_ORDER, separator: '|',
-      message: '{label} must be one of {values} when present (pre-parsed REVIEW.md enum)' }
-    : { key, presence: 'in', domain: 'integer', minimum: 0, maximum: 100,
-      message: '{label} must be an integer from 0 through 100 when present' }),
-  exclusions: [
-    { key: 'exclusionsText', domain: 'string', message: 'exclusionsText must be a string when present' },
-  ],
   persist: [
     { key: 'returnPrimaries', domain: 'boolean', message: 'persist.returnPrimaries must be a boolean when present' },
   ],
@@ -6059,36 +6110,6 @@ function validatePrIdentity(id, errors) {
       for (const extra of field.extraChecks || []) {
         if (!extra.check(value)) errors.push(`delivery.prIdentity.${field.name} ${extra.message}`);
       }
-    }
-  }
-}
-function validatePathSegments(value, label, reviewFile = false) {
-  const errors = [];
-  if (reviewFile) {
-    if (value.startsWith('/')) errors.push(`${label} must be repo-relative (must not start with /)`);
-    if (value.endsWith('/')) errors.push(`${label} must not have a trailing /`);
-  } else if (value.startsWith('/') || value.endsWith('/')) {
-    errors.push(`${label} must not have a leading or trailing /`);
-  }
-  if (value.includes('\\')) errors.push(`${label} must use / separators, not backslashes`);
-  if (CONTROL_RE.test(value)) errors.push(`${label} must not contain a control character`);
-  const segments = value.split('/');
-  if (segments.some((segment) => segment === '')) errors.push(`${label} must not contain an empty path segment`);
-  if (segments.some((segment) => segment === '.' || segment === '..')) errors.push(`${label} must not contain . or .. path segments`);
-  if (reviewFile && segments[segments.length - 1] !== 'REVIEW.md') {
-    errors.push(`${label} must end with exactly REVIEW.md`);
-  }
-  return errors;
-}
-function validateFlatPatterns(value, label, errors, ignore = false) {
-  if (!Array.isArray(value)) {
-    errors.push(`${label} must be an array of flat pattern strings`);
-    return;
-  }
-  for (let i = 0; i < value.length; i++) {
-    if (typeof value[i] !== 'string') {
-      const suffix = ignore ? ' \u2014 parseReviewMd emits strings, never objects' : '';
-      errors.push(`${label}[${i}] must be a flat pattern string (got ${typeof value[i]})${suffix}`);
     }
   }
 }
@@ -6182,10 +6203,28 @@ function stripNullOptionalsReport(args, descriptors = KNOB_REGISTRY) {
 }
 function normalizeArgsReport(raw, descriptors = KNOB_REGISTRY) {
   const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-  const report = stripNullOptionalsReport(parsed, descriptors);
+  const equal = (a, b) => a === b || (a !== null && b !== null && typeof a === 'object' && typeof b === 'object'
+    && Array.isArray(a) === Array.isArray(b) && Object.keys(a).length === Object.keys(b).length
+    && Object.keys(a).every((key) => Object.hasOwn(b, key) && equal(a[key], b[key])));
+  const receiptFields = isPlainObject(parsed?.contextReceipt)
+    ? CONTEXT_RECEIPT_FIELDS.filter((key) => Object.hasOwn(parsed.contextReceipt, key)) : [];
+  const contextReceiptGaps = receiptFields.filter((key) => Object.hasOwn(parsed, key) && !equal(parsed[key], parsed.contextReceipt[key]))
+    .map((key) => `contextReceipt.${key} conflicts with top-level ${key}; preparation receipt value used`);
+  const withContext = isPlainObject(parsed?.contextReceipt) ? { ...parsed,
+    ...Object.fromEntries(receiptFields.map((key) => [key, parsed.contextReceipt[key]])) } : parsed;
+  const report = stripNullOptionalsReport(withContext, descriptors);
+  if (Object.hasOwn(report.args || {}, 'discoveryPlan') || Object.hasOwn(parsed?.contextReceipt || {}, 'discoveryPlan')) {
+    delete report.args.discoveryPlan;
+    if (isPlainObject(report.args.contextReceipt)) {
+      report.args.contextReceipt = {...report.args.contextReceipt};
+      delete report.args.contextReceipt.discoveryPlan;
+    }
+    contextReceiptGaps.push('inline discoveryPlan is no longer accepted; supply the preparation discoveryPlanRef instead');
+  }
   const { args, derivedPaths } = deriveConfigWaist(report.args, descriptors);
   report.args = args;
   report.derivedPaths = derivedPaths;
+  if (contextReceiptGaps.length) report.contextReceiptGaps = contextReceiptGaps;
   return report;
 }
 function normalizeArgs(raw, descriptors = KNOB_REGISTRY) {
@@ -6303,99 +6342,6 @@ function validateArgs(args, descriptors = KNOB_REGISTRY) {
   if (isPlainObject(args.policy)) validateArgsFields(args.policy, 'policy', errors, 'policy');
   validateArgsFields(args, 'changed', errors);
   validateArgsFields(args, 'context', errors);
-  if (args.contextChars !== undefined && args.contextLines === undefined) {
-    errors.push('contextChars requires contextLines — chars alone cannot size a line-offset read plan');
-  }
-  if (args.contextMaxLineChars !== undefined && args.contextLines === undefined) {
-    errors.push('contextMaxLineChars requires contextLines — line width alone cannot size a line-offset read plan');
-  }
-  if (args.reviewConfig !== undefined) {
-    if (!isPlainObject(args.reviewConfig)) {
-      errors.push('reviewConfig must be an object (the parseReviewMd output shape) when present');
-    } else {
-      const validateLayer = (layer, label, allowDir) => {
-        validateArgsFields(layer, 'review', errors, label);
-        if (layer.ignore !== undefined) validateFlatPatterns(layer.ignore, `${label}.ignore`, errors, true);
-        if (!allowDir) return;
-        if (typeof layer.dir !== 'string' || layer.dir === '') {
-          errors.push(`${label}.dir must be a non-empty string`);
-          return;
-        }
-        errors.push(...validatePathSegments(`${layer.dir}`, `${label}.dir`));
-      };
-      validateLayer(args.reviewConfig, 'reviewConfig', false);
-      if (args.reviewConfig.scopes !== undefined) {
-        if (!Array.isArray(args.reviewConfig.scopes)) {
-          errors.push('reviewConfig.scopes must be an array when present');
-        } else {
-          const seenDirs = new Set();
-          for (let i = 0; i < args.reviewConfig.scopes.length; i++) {
-            const label = `reviewConfig.scopes[${i}]`;
-            const scope = args.reviewConfig.scopes[i];
-            if (!isPlainObject(scope)) {
-              errors.push(`${label} must be a plain object`);
-              continue;
-            }
-            const extra = extraKeys(scope, ARGS_SHAPES.scopeLayerFields, true);
-            if (extra.length > 0) errors.push(`${label} has unexpected key(s): ${extra.join(', ')}`);
-            validateLayer(scope, label, true);
-            if (typeof scope.dir === 'string' && scope.dir !== '') {
-              if (seenDirs.has(scope.dir)) errors.push(`${label}.dir duplicates another scope dir: ${scope.dir}`);
-              seenDirs.add(scope.dir);
-            }
-          }
-        }
-      }
-    }
-  }
-  if (args.exclusionPatterns !== undefined) validateFlatPatterns(args.exclusionPatterns, 'exclusionPatterns', errors);
-  if (args.reviewMd !== undefined) {
-    if (typeof args.reviewMdSetChecksum !== 'string') {
-      errors.push('reviewMdSetChecksum must be a string when reviewMd is present');
-    }
-    if (!Array.isArray(args.reviewMd)) {
-      errors.push('reviewMd must be an array of {path, text, checksum} objects when present');
-    } else {
-      for (let i = 0; i < args.reviewMd.length; i++) {
-        const entry = args.reviewMd[i];
-        if (!isPlainObject(entry)) {
-          errors.push(`reviewMd[${i}] must be an object of the form {path, text, checksum}`);
-          continue;
-        }
-        const extra = extraKeys(entry, ARGS_SHAPES.reviewMdFields, true);
-        if (extra.length > 0) {
-          errors.push(`reviewMd[${i}] has unexpected key(s): ${extra.join(', ')} (only path, text and checksum are allowed)`);
-        }
-        if (typeof entry.path !== 'string' || entry.path === '') {
-          errors.push(`reviewMd[${i}].path must be a non-empty string`);
-        } else {
-          errors.push(...validatePathSegments(entry.path, `reviewMd[${i}].path`, true));
-        }
-        if (entry.checksum !== null && typeof entry.checksum !== 'string') {
-          errors.push(`reviewMd[${i}].checksum must be a string or null`);
-        }
-        if (typeof entry.text !== 'string') {
-          errors.push(`reviewMd[${i}].text must be a string`);
-        }
-      }
-      const hasRootReviewMd = args.reviewMd.some((entry) => (
-        isPlainObject(entry) && entry.path === 'REVIEW.md'
-      ));
-      const hasReviewConfigPath = args.reviewConfigPath != null;
-      if (hasRootReviewMd !== hasReviewConfigPath) {
-        errors.push('reviewMd and reviewConfigPath must agree: reviewConfigPath must be non-null iff reviewMd ' +
-          'contains an entry with path exactly REVIEW.md');
-      }
-    }
-  }
-  validateArgsFields(args, 'exclusions', errors);
-  if (args.reviewMd !== undefined && args.reviewConfig !== undefined) {
-    errors.push('reviewMd and reviewConfig are both present — pass raw reviewMd or pre-parsed reviewConfig, not both (single authority)');
-  }
-  if (args.exclusionsText !== undefined && args.exclusionPatterns !== undefined) {
-    errors.push('exclusionsText and exclusionPatterns are both present — pass raw exclusionsText or ' +
-      'pre-parsed exclusionPatterns, not both (single authority)');
-  }
   if (args.delivery !== undefined) {
     if (!isPlainObject(args.delivery)) {
       errors.push('delivery must be an object of the form { tier } when present');
@@ -6533,52 +6479,103 @@ function validateArgs(args, descriptors = KNOB_REGISTRY) {
         : stamped === expected;
       if (!matches) errors.push(`${descriptor.waistPath} does not match configEcho.${descriptor.key}`);
     }
-    for (const descriptor of descriptors) {
-      if (!descriptor.modes.includes(args.mode)
-        || descriptor.derivedFrom === null
-        || !Object.hasOwn(DERIVED_FROM, descriptor.derivedFrom)) continue;
-      const entry = receiptEntryFor(args, descriptor);
-      if (entry !== null && entry.value !== DERIVED_FROM[descriptor.derivedFrom].fill(args)) {
-        errors.push(`configEcho.${descriptor.key} does not match ${descriptor.derivedFrom}`);
-      }
-    }
   }
   return { ok: errors.length === 0, errors };
 }
-function reviewMdSetChecksum(entries) {
-  return fnv1a32(entries.map((entry) => `${entry.path}\0${entry.checksum || 'null'}`).join('\n'));
-}
-function resolveReviewConfig(A) {
-  const a = A || {};
-  const reviewConfigSource = a.reviewMd !== undefined ? 'reviewMd'
-    : (a.reviewConfig !== undefined ? 'preParsed' : 'none');
-  const exclusionsSource = a.exclusionsText !== undefined ? 'exclusionsText'
-    : (a.exclusionPatterns !== undefined ? 'preParsed' : 'none');
-  let reviewConfig;
-  let reviewMdEntryCount = 0;
-  const gaps = [];
-  if (a.reviewMd !== undefined) {
-    const entries = a.reviewMd.map((entry) => {
-      const text = normalizeReviewText(entry.text);
-      if (entry.checksum === null) {
-        gaps.push(`review_md: ${entry.path} text is unproven (no collector checksum); its settings were applied as stamped`);
-      } else if (fnv1a32(text) !== entry.checksum) {
-        gaps.push(`review_md: ${entry.path} text differs from the collected file (checksum mismatch); its settings were applied as stamped`);
+// --- jsonSyntax.js ---
+function jsonSyntaxFault(text) {
+  let offset = 0;
+  const fault = (reason) => ({ offset, reason });
+  const digit = (c) => c >= '0' && c <= '9';
+  const string = () => {
+    offset++;
+    while (offset < text.length) {
+      const c = text[offset++];
+      if (c === '"') return null;
+      if (c < ' ') { offset--; return fault('unescaped control character in JSON string'); }
+      if (c !== '\\') continue;
+      if (offset === text.length) return fault('incomplete escape in JSON string');
+      const escape = text[offset++];
+      if (escape === 'u') {
+        for (let n = 0; n < 4; n++, offset++) {
+          if (!/^[0-9a-fA-F]$/.test(text[offset] || '')) return fault('expected four hexadecimal digits in Unicode escape');
+        }
+      } else if (!'"\\/bfnrt'.includes(escape)) {
+        offset--;
+        return fault('invalid escape in JSON string');
       }
-      return { ...entry, text };
-    });
-    reviewConfig = buildReviewConfig(entries);
-    reviewMdEntryCount = a.reviewMd.length;
-  } else {
-    reviewConfig = a.reviewConfig || {};
+    }
+    return fault('unterminated JSON string');
+  };
+  const number = () => {
+    if (text[offset] === '-') offset++;
+    if (!digit(text[offset])) return fault('expected a digit in JSON number');
+    if (text[offset] === '0') {
+      offset++;
+      if (digit(text[offset])) return fault('leading zero in JSON number');
+    } else while (digit(text[offset])) offset++;
+    if (text[offset] === '.') {
+      offset++;
+      if (!digit(text[offset])) return fault('expected a digit after decimal point');
+      while (digit(text[offset])) offset++;
+    }
+    if (text[offset] === 'e' || text[offset] === 'E') {
+      offset++;
+      if (text[offset] === '+' || text[offset] === '-') offset++;
+      if (!digit(text[offset])) return fault('expected a digit in JSON exponent');
+      while (digit(text[offset])) offset++;
+    }
+    return null;
+  };
+  const stack = [{ kind: 'root', state: 'value' }];
+  for (;;) {
+    while (offset < text.length && ' \t\r\n'.includes(text[offset])) offset++;
+    const frame = stack[stack.length - 1];
+    const c = text[offset];
+    if (frame.state === 'done') return offset === text.length ? null : fault('unexpected data after the top-level JSON value');
+    const close = frame.kind === 'object' ? '}' : ']';
+    const emptyArray = frame.state === 'valueOrEnd';
+    if (frame.state === 'keyOrEnd' || frame.state === 'valueOrEnd') {
+      if (c === close) { offset++; stack.pop(); continue; }
+      if (frame.state === 'keyOrEnd' && c !== '"') return fault("expected a quoted property name or '}'");
+      frame.state = frame.kind === 'object' ? 'key' : 'value';
+    }
+    if (frame.state === 'key') {
+      if (c !== '"') return fault('expected a quoted property name');
+      const error = string();
+      if (error) return error;
+      frame.state = 'colon';
+      continue;
+    }
+    if (frame.state === 'colon') {
+      if (c !== ':') return fault("expected ':' after property name");
+      offset++;
+      frame.state = 'value';
+      continue;
+    }
+    if (frame.state === 'comma') {
+      if (c === close) { offset++; stack.pop(); continue; }
+      if (c !== ',') return fault(`expected ',' or '${close}'`);
+      offset++;
+      frame.state = frame.kind === 'object' ? 'key' : 'value';
+      continue;
+    }
+    frame.state = frame.kind === 'root' ? 'done' : 'comma';
+    if (c === '{' || c === '[') {
+      offset++;
+      stack.push(c === '{' ? { kind: 'object', state: 'keyOrEnd' } : { kind: 'array', state: 'valueOrEnd' });
+    } else if (c === '"' || c === '-' || digit(c)) {
+      const error = c === '"' ? string() : number();
+      if (error) return error;
+    } else {
+      const literal = ['true', 'false', 'null'].find((word) => word[0] === c);
+      if (!literal) return fault(emptyArray ? "expected a JSON value or ']'" : 'expected a JSON value');
+      for (const char of literal) {
+        if (text[offset] !== char) return fault(`expected '${literal}'`);
+        offset++;
+      }
+    }
   }
-  if ((a.reviewMd !== undefined || a.reviewMdSetChecksum !== undefined) &&
-      reviewMdSetChecksum(a.reviewMd || []) !== a.reviewMdSetChecksum) {
-    gaps.push('review_md: stamped entries differ from the collected list (omitted, extra or reordered REVIEW.md); settings were applied as stamped');
-  }
-  const exclusionPatterns = a.exclusionsText !== undefined ? loadExclusions(a.exclusionsText)
-    : (a.exclusionPatterns || []);
-  return { reviewConfig, exclusionPatterns, reviewConfigSource, exclusionsSource, reviewMdEntryCount, gaps };
 }
 // --- entry.js ---
 const REVIEW_TARGET_LABEL = deepFreeze({
@@ -6621,10 +6618,22 @@ function unwrapWaist(raw) {
     if (isPlainObject(value)) return { waist: value, terminal: value };
     if (typeof value !== 'string' || depth === MAX_JSON_UNWRAP) break;
     let next;
-    try { next = JSON.parse(value); } catch { break; }
+    try { next = JSON.parse(value); } catch {
+      return { waist: null, terminal: value, malformedJson: value.trimStart().startsWith('{') ? value : null };
+    }
     value = next;
   }
   return { waist: null, terminal: value };
+}
+function malformedArgsMessage(text) {
+  const fault = jsonSyntaxFault(text);
+  if (!fault) return 'args JSON does not parse: the JSON parser rejected it without a locatable syntax fault. No args were accepted.';
+  const start = Math.max(0, fault.offset - 40);
+  const end = Math.min(text.length, fault.offset + 40);
+  const excerpt = JSON.stringify(text.slice(start, end)).replace(/[\u007f-\uffff]/g,
+    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  return `args JSON does not parse: ${fault.reason} at character offset ${fault.offset} (zero-based UTF-16). `
+    + `Excerpt [${start}, ${end}): ${excerpt}. Fix the JSON syntax and call this workflow again with the assembled args object. No args were accepted.`;
 }
 function describeShape(raw) {
   if (typeof raw === 'string') {
@@ -6648,6 +6657,7 @@ function refusalFrom(raw, unwrapped) {
   }
   const { waist, terminal } = unwrapped;
   if (waist !== null) return null;
+  if (unwrapped.malformedJson !== undefined && unwrapped.malformedJson !== null) return malformedArgsMessage(unwrapped.malformedJson);
   const target = classifyReviewTarget(raw) || classifyReviewTarget(terminal);
   if (target && !/["\\]/.test(target.ref)) {
     return `args was ${REVIEW_TARGET_LABEL[target.kind]} (${target.ref}), not the assembled argsVersion:1 `
@@ -6746,7 +6756,7 @@ function toV2Aliased(f) {
   }
   return out;
 }
-function postReviewWrapper(id, reviewBody) {
+function postReviewWrapper(id, reviewBody, reviewSummary) {
   return {
     owner: id.owner,
     repo: id.repo,
@@ -6755,6 +6765,7 @@ function postReviewWrapper(id, reviewBody) {
     platform: id.platform,
     web_origin: id.web_origin,
     review_body: typeof reviewBody === 'string' ? reviewBody : '',
+    ...(reviewSummary ? { review_summary: reviewSummary } : {}),
   };
 }
 function writerPayload(inp) {
@@ -6763,7 +6774,7 @@ function writerPayload(inp) {
   return {
     findings: (inp.findings || []).map(toV2Aliased),
     postReview: id
-      ? { ...postReviewWrapper(id, inp.reviewBody), findings: postReviewSet }
+      ? { ...postReviewWrapper(id, inp.reviewBody, inp.reviewSummary), findings: postReviewSet }
       : postReviewSet,
     report: inp.report || '',
     checkpoints: inp.checkpoints || {},
@@ -6806,7 +6817,7 @@ function persistPlan(inp, paths) {
       path: paths.postReview,
       source: paths.findings,
       ids: (inp.postReview || []).map((f) => f && f.id),
-      wrapper: id ? postReviewWrapper(id, inp.reviewBody) : null,
+      wrapper: id ? postReviewWrapper(id, inp.reviewBody, inp.reviewSummary) : null,
     },
     checkpoint: {
       path: paths.checkpoints,
@@ -6814,6 +6825,31 @@ function persistPlan(inp, paths) {
       skeleton,
     },
   };
+  plan.planChecksum = fnv1a32(JSON.stringify(plan, null, 2));
+  return plan;
+}
+function returnPersistPlan(inp, paths) {
+  const plan = persistPlan(inp, paths);
+  const byId = new Map((inp.findings || []).map((f) => [f.id, toV2Aliased(f)]));
+  const projections = [];
+  const visit = (value, at) => {
+    if (!value || typeof value !== 'object') return value;
+    const source = !Array.isArray(value) && byId.get(value.id);
+    if (source) {
+      const keys = Object.keys(value);
+      const overrides = Object.fromEntries(keys
+        .filter((key) => !Object.hasOwn(source, key) || JSON.stringify(source[key]) !== JSON.stringify(value[key]))
+        .map((key) => [key, value[key]]));
+      projections.push({ at, id: value.id, keys, overrides });
+      return null;
+    }
+    return Array.isArray(value) ? value.map((child, index) => visit(child, [...at, index]))
+      : Object.fromEntries(Object.entries(value).map(([key, child]) => [key, visit(child, [...at, key])]));
+  };
+  plan.planVersion = 4;
+  plan.checkpoint = { path: paths.checkpoints, source: paths.findings,
+    skeleton: visit(plan.checkpoint.skeleton, []), projections };
+  delete plan.planChecksum;
   plan.planChecksum = fnv1a32(JSON.stringify(plan, null, 2));
   return plan;
 }
@@ -6870,6 +6906,9 @@ const WRITTEN_SCHEMA = {
   type: 'object',
   properties: { written: { type: 'array', items: { type: 'string' } } },
 };
+const callWriter = defineAgentCall('persist:writer', () => WRITER_SCHEMA);
+const callEntriesWriter = defineAgentCall('persist:entries', () => WRITTEN_SCHEMA);
+const callAssemble = defineAgentCall('persist:assemble', () => ASSEMBLE_RECEIPT_SCHEMA);
 function writerEchoCoversPaths(echoed, paths) {
   if (!echoed || typeof echoed !== 'object') return false;
   return Object.keys(paths).every((k) => echoed[k] === paths[k]);
@@ -6913,17 +6952,23 @@ async function writeArtifacts(ctx, input) {
     const scriptPath = inp.persist && inp.pluginRoot
       ? trustedScriptPath(inp.pluginRoot, TRUSTED_SCRIPT_BASENAMES.assemble) : null;
     const wantsReturn = persist.returnPrimaries === true;
-    if (scriptPath || wantsReturn) {
+    if (wantsReturn) {
+      const derivable = persistDerivable(inp);
+      if (derivable.ok) return returnChannelPersist(inp, paths, outputDir, sha);
+      const held = writerPayload(inp);
+      const { findingsJson, reportMd } = persistPrimaries(inp);
+      return { artifactPaths: paths, gaps: [], partial: false,
+        persistReturn: { channel: 'return', nonce: inp.nonce || null, assemble: false,
+          entries: [
+            { path: paths.findings, text: findingsJson },
+            { path: paths.report, text: reportMd },
+            { path: paths.postReview, text: JSON.stringify(held.postReview, null, 2) },
+            { path: paths.checkpoints, text: JSON.stringify(held.checkpoints, null, 2) },
+          ] } };
+    }
+    if (scriptPath) {
       const derivable = persistDerivable(inp);
       if (derivable.ok) {
-        if (wantsReturn) {
-          const viaReturn = returnChannelPersist(inp, paths, outputDir, sha);
-          if (viaReturn.ok) return viaReturn.result;
-          const gap = `writeArtifacts: ${viaReturn.reason} — persisted through the artifact-writer instead, which transcribes the bytes`;
-          if (!scriptPath) return await writeArtifactsLegacy(ctx, inp, paths, outputDir, policy, partial, [gap]);
-          const fallback = await writeArtifactsDerived(ctx, inp, paths, outputDir, sha, policy, partial, scriptPath);
-          return { ...fallback, gaps: [gap].concat(fallback.gaps) };
-        }
         return await writeArtifactsDerived(ctx, inp, paths, outputDir, sha, policy, partial, scriptPath);
       }
       return await writeArtifactsLegacy(ctx, inp, paths, outputDir, policy, partial, [
@@ -6938,11 +6983,10 @@ async function writeArtifacts(ctx, input) {
 async function writeArtifactsLegacy(c, inp, paths, outputDir, policy, partial, extraGaps) {
   const model = modelFor('code-gauntlet:artifact-writer', policy);
   try {
-    const result = await c.agent(writeArtifactsPrompt(inp, paths), {
+    const result = await callWriter(c, writeArtifactsPrompt(inp, paths), {
       label: 'artifact-writer',
       agentType: 'code-gauntlet:artifact-writer',
       model,
-      schema: WRITER_SCHEMA,
     });
     if (!result) return partial('writer returned null', extraGaps);
     const echoed = result.artifactPaths;
@@ -6963,37 +7007,27 @@ async function writeArtifactsLegacy(c, inp, paths, outputDir, policy, partial, e
     return partial(`writer agent threw (${persistErrorMessage(e)})`, extraGaps);
   }
 }
-function persistEntries(inp, paths, outputDir, sha) {
+function persistEntries(inp, paths, outputDir, sha, viaReturn = false) {
   const planPath = persistPlanPath(outputDir, sha);
   const { findingsJson, reportMd } = persistPrimaries(inp);
-  const plan = persistPlan(inp, paths);
+  const plan = viaReturn ? returnPersistPlan(inp, paths) : persistPlan(inp, paths);
   return {
     plan,
     planPath,
     entries: [
       { path: paths.findings, text: findingsJson },
       { path: paths.report, text: reportMd },
-      { path: planPath, text: hardenEscapeRuns(JSON.stringify(plan, null, 2)) },
+      { path: planPath, text: hardenEscapeRuns(JSON.stringify(plan, null, viaReturn ? undefined : 2)) },
     ],
   };
 }
 function returnChannelPersist(inp, paths, outputDir, sha) {
-  const { planPath, entries } = persistEntries(inp, paths, outputDir, sha);
-  const chars = JSON.stringify(entries).length;
-  if (chars > RETURN_CHAR_BUDGET) {
-    return {
-      ok: false,
-      reason: `the persisted primaries serialize to ${chars} chars, over the ${RETURN_CHAR_BUDGET}-char return budget`,
-    };
-  }
+  const { planPath, entries } = persistEntries(inp, paths, outputDir, sha, true);
   return {
-    ok: true,
-    result: {
-      artifactPaths: paths,
-      gaps: [],
-      partial: false,
-      persistReturn: { channel: 'return', nonce: inp.nonce || null, planPath, entries },
-    },
+    artifactPaths: paths,
+    gaps: [],
+    partial: false,
+    persistReturn: { channel: 'return', nonce: inp.nonce || null, planPath, entries },
   };
 }
 async function writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, partial, assembleScriptPath) {
@@ -7024,11 +7058,10 @@ async function attemptDerivedPersist(c, entries, planPath, plan, paths, outputDi
   const fail = (reason, retryable) => ({ ok: false, retryable: !!retryable, reason });
   let writerOut;
   try {
-    writerOut = await c.agent(finalArtifactsWriterPrompt(entries), {
+    writerOut = await callEntriesWriter(c, finalArtifactsWriterPrompt(entries), {
       label: 'artifact-writer',
       agentType: 'code-gauntlet:artifact-writer',
       model: modelFor('code-gauntlet:artifact-writer', policy),
-      schema: WRITTEN_SCHEMA,
     });
   } catch (e) {
     return fail(`writer agent threw (${persistErrorMessage(e)})`);
@@ -7046,11 +7079,10 @@ async function attemptDerivedPersist(c, entries, planPath, plan, paths, outputDi
   }
   let receipt;
   try {
-    receipt = await c.agent(assemblePrompt(assembleScriptPath, planPath, python), {
+    receipt = await callAssemble(c, assemblePrompt(assembleScriptPath, planPath, python), {
       label: 'assemble-artifacts',
       agentType: 'code-gauntlet:executor',
       model: modelFor('code-gauntlet:executor', policy),
-      schema: ASSEMBLE_RECEIPT_SCHEMA,
     });
   } catch (e) {
     return fail(`assemble executor threw (${persistErrorMessage(e)})`);
@@ -7438,7 +7470,7 @@ function beltPartitionList(list) {
   if (!Array.isArray(list) || list.length === 0) return { list, eliminated: [] };
   const objectElements = list.map((el, idx) => ({ ...el, [REPLAY_BELT_INDEX_KEY]: idx }));
   normalizeFieldNames(objectElements);
-  const { kept, eliminated } = applyReplayInjectionScan(objectElements);
+  const { kept, eliminated } = applyInjectionFilter(objectElements);
   const survivorByIdx = new Map();
   for (const f of kept) {
     const { [REPLAY_BELT_INDEX_KEY]: idx, ...clean } = f;
@@ -7535,17 +7567,41 @@ function applyChallengeReplayBelt(challengeOut) {
   }
   return challengeOut.eliminated.filter((f) => f.replay_belt === true).length;
 }
+// --- groupFindings.js ---
+function groupingPrompt(findings) {
+  const fold = (text, limit) => {
+    const value = String(text ?? '').replace(/\s+/g, ' ').trim();
+    return limit === undefined ? value : value.slice(0, limit);
+  };
+  return 'Findings:\n' + findings.map((f) => {
+    const range = f.line_end && f.line_end !== f.line_start ? `${f.line_start}-${f.line_end}` : f.line_start;
+    return `- ${f.id} | ${fold(f.file)}:${range} | ${fold(f.severity)} | ${fold(f.title)} | ${fold(f.description, 600)} | Fix: ${fold(f.suggestion, 200)}`;
+  }).join('\n');
+}
+function groupingSchema(ids) {
+  const id = { type: 'string', enum: ids };
+  return { type: 'object', properties: { groups: { type: 'array', items: {
+    type: 'object', properties: { finding_ids: { type: 'array', items: id } },
+    required: ['finding_ids'], additionalProperties: false,
+  } } }, required: ['groups'], additionalProperties: false };
+}
+const callGrouper = defineAgentCall('challenge:group', groupingSchema, () => [[['finding']]]);
+async function groupFindings(ctx, findings, policy = {}) {
+  const grouping_ids = findings.map((f) => f.id);
+  if (findings.length < 2) return { grouping_ids };
+  try {
+    const grouping_reply = await callGrouper(ctx, groupingPrompt(findings), {
+      label: 'group-findings', agentType: 'code-gauntlet:grouper',
+      model: modelFor('code-gauntlet:grouper', policy),
+    }, grouping_ids);
+    return { grouping_ids, grouping_reply: grouping_reply ?? null };
+  } catch (error) {
+    return { grouping_ids, grouping_reply: null, grouping_error: `dispatch failed: ${asText(error?.message || error) || 'unknown error'}` };
+  }
+}
 // --- measurementReplay.js ---
 function promptSha256(text) {
-  const bytes = [];
-  for (const char of text) {
-    let code = char.codePointAt(0);
-    if (code >= 0xd800 && code <= 0xdfff) code = 0xfffd;
-    if (code < 0x80) bytes.push(code);
-    else if (code < 0x800) bytes.push(0xc0 | (code >> 6), 0x80 | (code & 63));
-    else if (code < 0x10000) bytes.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 63), 0x80 | (code & 63));
-    else bytes.push(0xf0 | (code >> 18), 0x80 | ((code >> 12) & 63), 0x80 | ((code >> 6) & 63), 0x80 | (code & 63));
-  }
+  const bytes = utf8Encode(text);
   const bits = bytes.length * 8;
   bytes.push(0x80);
   while (bytes.length % 64 !== 56) bytes.push(0);
@@ -7578,8 +7634,8 @@ function promptSha256(text) {
   return hash.map((word) => (word >>> 0).toString(16).padStart(8, '0')).join('');
 }
 function captureDeliveryReplay(c, args, state) {
-  const { limits, gaps, completed, phaseOutputs, resolvedReview, reviewMdSubtrees, derivedAgentFlags, phaseReached } = state;
-  const saved = deepClone({ limits, gaps, completed, phaseOutputs, resolvedReview, reviewMdSubtrees, derivedAgentFlags, phaseReached });
+  const { limits, gaps, completed, phaseOutputs, derivedAgentFlags, phaseReached } = state;
+  const saved = deepClone({ limits, gaps, completed, phaseOutputs, derivedAgentFlags, phaseReached });
   stripTraceFields(saved);
   const record = { args: deepClone(state.replayArgs || args), pipelineVersion: c.pipelineVersion, state: saved, persistence: [] };
   const dispatch = c.agent;
@@ -7677,8 +7733,7 @@ function compactMethodology(m) {
 }
 async function deliverFromCheckpoint(c, A, state) {
   const policy = A.policy || {};
-  const { limits, gaps, completed, phaseOutputs, measurementTrace, resolvedReview,
-    reviewMdSubtrees, derivedAgentFlags, runPhase, measured } = state;
+  const { limits, gaps, completed, phaseOutputs, measurementTrace, derivedAgentFlags, runPhase, measured } = state;
   const replay = measurementTrace ? captureDeliveryReplay(c, A, state) : null;
   if (replay) c = replay.ctx;
   const { summarize: summaryOut, discover: discoverOut, merge: mergeOut,
@@ -7690,6 +7745,7 @@ async function deliverFromCheckpoint(c, A, state) {
   gaps.push(...(rawChallenge.gaps || []));
   const markedCount = applyChallengeReplayBelt(challengeCopy);
   const challengeOut = disposeFindings(challengeCopy);
+  gaps.push(...challengeOut.gaps);
   if (measurementTrace) recordStage(measurementTrace, 'dispose', challengeOut, { decisions: challengeOut.decisions });
   if (markedCount > 0) {
     gaps.push(`replay-filter: ${markedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter and were removed — disclosed per-finding in the eliminated set (eliminated_by:'injection', replay_belt:true), not counted in stats.filter`);
@@ -7701,22 +7757,22 @@ async function deliverFromCheckpoint(c, A, state) {
   ));
   const deliveryTier = A.delivery && A.delivery.tier;
   const eligible = challengeOut.findings.filter((f) => deliveryAllows(f, 'body'));
-  const selected = selectDelivery(eligible, limits.deliveryCap, deliveryTier);
-  const postReview = selected;
+  const postReview = selectDelivery(eligible, limits.deliveryCap, deliveryTier);
+  const omitted = deliveryOmissions(eligible, postReview, deliveryTier);
   if (measurementTrace) recordStage(measurementTrace, 'select', postReview, { cap: limits.deliveryCap,
-    cap_hit: selectDelivery(eligible, null, deliveryTier).length > postReview.length,
-    decisions: challengeOut.findings.filter((f) => !postReview.includes(f) && f.trace_id).map((f) => traceDecision(f,
-      f.disposition === 'report_only' ? 'report_only'
-        : deliveryTier === 'main_only' && (f.report_tag ?? f.report_destination) !== 'main' ? 'delivery_tier' : 'delivery_cap',
-      'delivery selection', [], 'not_selected', f.disposition === 'report_only' ? { kind: f.admission.kind } : null)),
+    cap_hit: omitted.some((group) => group.reason === 'delivery_cap'),
+    decisions: [
+      ...deliveryGroups(postReview).filter(({ primary }) => primary.trace_id && primary.verdict?.claim === 'confirmed' && !confirmedComment(primary))
+        .map(({ primary }) => traceDecision(primary, 'comment_text_fallback', 'resolved verdict has no valid comment text', [], 'kept')),
+      ...omitted.flatMap((group) => group.findings.filter((f) => f.trace_id).map((f) =>
+        traceDecision(f, group.reason, 'delivery selection', [], 'not_selected'))),
+      ...challengeOut.findings.filter((f) => f.disposition === 'report_only' && f.trace_id).map((f) =>
+        traceDecision(f, 'report_only', 'delivery selection', [], 'not_selected', { kind: f.admission.kind })),
+    ],
   });
   if (measurementTrace) measurementTrace.complete = true;
   stripTraceFields(phaseOutputs);
   stripTraceFields(challengeOut);
-  const headlessCommentsEnabled = (configEchoValue(A, 'delivery') || '').split(',').includes('pr_comments');
-  const includeDelivered = Boolean(A.delivery && A.delivery.prIdentity)
-    && (A.mode !== 'headless'
-      || headlessCommentsEnabled);
   const pathNormalization = {};
   for (const [phase, output] of Object.entries(phaseOutputs)) {
     const counts = {};
@@ -7727,7 +7783,6 @@ async function deliverFromCheckpoint(c, A, state) {
   }
   const reportInput = {
     summary: summaryCopy.summary,
-    ...(includeDelivered ? { delivered: postReview } : {}),
     findings: challengeOut.findings,
     unverified: challengeOut.unverified,
     eliminated: challengeOut.eliminated,
@@ -7748,13 +7803,13 @@ async function deliverFromCheckpoint(c, A, state) {
     pluginRoot: A.pluginRoot,
     pipelineVersion: c.pipelineVersion,
     reviewScope: A.reviewScope,
-    hasReviewMd: Array.isArray(A.reviewMd) ? A.reviewMd.length > 0 : A.reviewConfigPath != null,
+    unsupportedReviewConfig: A.unsupportedReviewConfig === true,
     policy,
     deliveryTier: deliveryTier ?? 'all',
     deliveryCap: limits.deliveryCap ?? null,
-    gapCount: gaps.length,
+    gapCount: gaps.length, gaps: [...gaps],
   };
-  const reviewBody = renderSummaryBody(reportInput);
+  const { body: reviewBody, ...reviewSummary } = renderPublicSummary({ ...reportInput, delivered: postReview });
   let reportOut = await runPhase('report', () => ({ report: renderReport(reportInput), gaps: [] }));
   const reportGaps = reportOut.gaps || [];
   gaps.push(...reportGaps);
@@ -7764,7 +7819,7 @@ async function deliverFromCheckpoint(c, A, state) {
     findings: [...challengeOut.findings, ...challengeOut.unverified, ...challengeOut.eliminated],
     postReview,
     prIdentity: (A.delivery || {}).prIdentity,
-    reviewBody,
+    reviewBody, reviewSummary,
     report: reportOut.report,
     checkpoints: slimPersistedCheckpoints(phaseOutputs, completed, state.phaseReached),
     outputDir: A.outputDir,
@@ -7789,10 +7844,6 @@ async function deliverFromCheckpoint(c, A, state) {
       degraded: discoverOut.degraded || [],
       validate: validateOut.stats,
       filter: filterOut.stats,
-      reviewConfigSource: resolvedReview.reviewConfigSource,
-      exclusionsSource: resolvedReview.exclusionsSource,
-      reviewMdEntryCount: resolvedReview.reviewMdEntryCount,
-      reviewMdSubtrees,
       scope: {
         lightEligible: computeLightEligible(A.riskTable, A.changedLines),
         scopeAnswer: A.scopeAnswer !== undefined ? A.scopeAnswer : null,
@@ -7815,8 +7866,10 @@ async function runWith(ctx, rawArgs) {
     dropped: droppedNulls,
     respelled: respelledNulls,
     derivedPaths,
+    contextReceiptGaps = [],
   } = normalizeArgsReport(entry.waist);
   const nullArgGaps = [
+    ...contextReceiptGaps,
     ...nullToleranceRejectedKeys(A, droppedNulls, derivedPaths).map((key) => nullToleranceGap(key)),
     ...respelledNulls.map(nullRespellGap),
   ];
@@ -7827,12 +7880,12 @@ async function runWith(ctx, rawArgs) {
       [...nullArgGaps, ...check.errors],
     );
   }
-  const c = { ...defaultCtx(), ...(ctx || {}) };
+  const c = { ...defaultCtx(), ...(ctx || {}), agentRequests: [] };
   const nChangedFiles = (A.changedFiles || []).length;
   let limits = coarsenLimits(A.limits || {}, nChangedFiles, 0, A.baseBranch, A);
   const policy = A.policy || {};
   const contextPath = `${A.outputDir}/code-gauntlet-context-${A.headShaShort}.md`;
-  const { contextLine, contextSizeGap } = setupContext({ contextPath, contextLines: A.contextLines, contextChars: A.contextChars, contextMaxLineChars: A.contextMaxLineChars });
+  const { contextLine, contextSizeGap } = setupContext({ contextPath, contextLines: A.contextLines, contextChars: A.contextChars, contextMaxLineChars: A.contextMaxLineChars, contextReadChunks: A.contextReadChunks, contextReadPlanVersion: A.contextReadPlanVersion });
   const discardGap = checkpointDiscardGap(A.checkpoints);
   const checkpoints = readCheckpoints(A);
   const checksumViolations = checkpointChecksumErrors(A.checkpoints);
@@ -7856,6 +7909,12 @@ async function runWith(ctx, rawArgs) {
     phaseAttempting = name;
     const replayed = checkpoints[name] !== undefined;
     const out = replayed ? checkpoints[name] : await thunk();
+    const requestError = !replayed && repeatedRequestGap(c.agentRequests, name);
+    if (requestError) {
+      out.gaps = requestFailureGaps(out.gaps || [], c.agentRequests, name, requestError);
+      const snapshot = measurementTrace?.snapshots.find((item) => item.stage === name);
+      if (snapshot) { snapshot.gaps = [...out.gaps]; snapshot.coverage = 'partial'; }
+    }
     const rejected = [];
     if (replayed || name === 'discover') normalizePhaseFindings(name, out, replayed, A, rejected);
     let verifyRequests;
@@ -7899,7 +7958,7 @@ async function runWith(ctx, rawArgs) {
     }));
     const derivedAgentFlags = deriveAgentFlags(A.riskTable, A.changedLines, A.scopeAnswer);
     const discoverSettled = replay('discover') ? null : settle(discover(c, {
-      measurementTrace, agentFlags: derivedAgentFlags, limits, policy, contextLine, repoRoot: A.repoRoot, removedTests: resolveRemovedTestsArgs(A),
+      measurementTrace, agentFlags: derivedAgentFlags, limits, policy, contextLine, contextPath, contextLines: A.contextLines, discoveryPlanRef:A.discoveryPlanRef, changedFiles:A.changedFiles, outputDir:A.outputDir,headShaShort:A.headShaShort,nonce:A.nonce,pluginRoot:A.pluginRoot,python:A.python, riskTable: A.riskTable, repoRoot: A.repoRoot, removedTests: resolveRemovedTestsArgs(A),
     }));
     const summaryOut = await runPhase('summarize', async () => (await summarizeSettled)());
     gaps.push(...(summaryOut.gaps || []));
@@ -7939,20 +7998,12 @@ async function runWith(ctx, rawArgs) {
     gaps.push(...(verifyOut.gaps || []));
     const validateOut = await runPhase('validate', () => validateStage(c, {
       findings: verifyOut.findings || [], limits, policy, contextLine,
+      python: A.python, repoRoot: A.repoRoot, pluginRoot: A.pluginRoot, headShaShort: A.headShaShort,
+      diffPath: A.diffPath, targetKind: A.verify?.targetKind, incremental: A.reviewScope?.kind === 'incremental', baseBranch: A.baseBranch,
     }));
     gaps.push(...(validateOut.gaps || []));
-    const resolvedReview = resolveReviewConfig(A);
-    gaps.push(...resolvedReview.gaps);
-    const reviewMdSubtrees = (Array.isArray(resolvedReview.reviewConfig.scopes)
-      ? resolvedReview.reviewConfig.scopes
-      : []).map((scope) => ({
-        dir: scope.dir,
-        matched: (validateOut.findings || []).filter((finding) =>
-          scopeMatchesFile(scope, finding.file)).length,
-      }));
     const filterOut = await runPhase('filter', () => filterStage({
-      findings: (validateOut.findings || []).map((finding) => evaluateAdmission(deepClone(finding))), reviewConfig: resolvedReview.reviewConfig,
-      exclusionPatterns: resolvedReview.exclusionPatterns, generatedAt: A.generatedAt,
+      findings: (validateOut.findings || []).map((finding) => evaluateAdmission(deepClone(finding))), generatedAt: A.generatedAt,
     }));
     gaps.push(...(filterOut.gaps || []));
     await runPhase('challenge', async () => {
@@ -7963,13 +8014,14 @@ async function runWith(ctx, rawArgs) {
       });
       const out = await challengeStage(c, {
         findings: admitted, limits, policy, generatedAt: A.generatedAt, diffPath: A.diffPath,
+        python: A.python, repoRoot: A.repoRoot, pluginRoot: A.pluginRoot, headShaShort: A.headShaShort, targetKind: A.verify?.targetKind, incremental: A.reviewScope?.kind === 'incremental', baseBranch: A.baseBranch,
       });
+      Object.assign(out, await groupFindings(c, (out.findings || []).filter(isDeliveryCandidate), policy));
       out.eliminated = [...(verifyOut.eliminated || []), ...(filterOut.eliminated || []), ...(out.eliminated || [])];
       return out;
     });
     return await deliverFromCheckpoint(c, A, {
-      limits, gaps, completed, phaseOutputs, measurementTrace, resolvedReview,
-      reviewMdSubtrees, derivedAgentFlags, runPhase, measured, replayArgs,
+      limits, gaps, completed, phaseOutputs, measurementTrace, derivedAgentFlags, runPhase, measured, replayArgs,
       get phaseReached() { return phaseReached; },
     });
   } catch (e) {

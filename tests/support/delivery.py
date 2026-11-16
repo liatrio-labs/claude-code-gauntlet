@@ -2,8 +2,10 @@
 
 import json
 from pathlib import Path
+from typing import cast
 
 from gauntlet.delivery.compose import SkippedEntry
+from gauntlet.delivery.input import Finding
 from gauntlet.registry import Admission
 
 
@@ -74,3 +76,43 @@ def patch_inputs(root: Path, findings: object, capture: bytes | None = None) -> 
     )
     if capture is not None:
         (root / "code-gauntlet-diff-abc1234.patch").write_bytes(capture)
+
+
+def date_override_members() -> list[Finding]:
+    spans = [(107, 109), (114, 114), (125, 127), (141, 141)]
+    agents = ["bug-detector", "cross-file-impact", "bug-detector", "security-reviewer"]
+    stamp = {
+        "issue_key": "group:F107",
+        "lead_id": "F107",
+        "finding_ids": [f"F{start}" for start, _ in spans],
+    }
+    rows = []
+    for (start, end), agent in zip(spans, agents, strict=True):
+        description = (
+            "When a day has multiple date overrides, each range replaces the previous range. Valid slots in earlier ranges become unavailable."
+            if start == 107
+            else f"At site {start}, overlapping date overrides erase slots that should remain available."
+        )
+        rows.append(
+            cast(
+                Finding,
+                finding(
+                    id=f"F{start}",
+                    file="src/availability/slots.ts",
+                    line=start,
+                    end_line=end,
+                    title="Multiple date overrides on one day make valid slots unavailable"
+                    if start == 107
+                    else f"Repeated date override defect at {start}",
+                    body=description,
+                    description=description,
+                    agent=agent,
+                    dimension="bug",
+                    confidence=90,
+                    suggestion="Combine all override ranges for the day before filtering slots.",
+                    report_tag="main",
+                    delivery_group=stamp,
+                ),
+            )
+        )
+    return rows

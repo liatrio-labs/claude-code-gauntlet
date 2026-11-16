@@ -332,3 +332,13 @@ def test_recorded_container_no_action_control(oracle) -> None:
     )
     assert row["commands"] == []
     assert row["stored_equals_posted"] is True
+
+
+def test_grouped_quick_action_probe_exercises_rendered_lead_text():
+    case = next(
+        case
+        for case in build_composed_quick_action_cases()
+        if case["id"] == "grouped_lead"
+    )
+    assert "\\/close" in case["text"]
+    assert "Grouped member" not in case["text"]

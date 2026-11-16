@@ -229,8 +229,7 @@ def collect_entries_file(payload: object) -> list[ReviewEntryWire]:
     return _entries_from(payload, None, "timestamp")
 
 
-# Each corroborator renders this header in delivery.compose._render_corroboration;
-# its count lets old groups suppress delivery without all member markers.
+# Header counts let older comments suppress retries when member markers are incomplete.
 _CORROBORATION_HEADER = "Corroborating finding — "
 
 

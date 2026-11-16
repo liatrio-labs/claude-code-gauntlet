@@ -130,10 +130,12 @@ def build_composed_quick_action_cases() -> list[dict[str, Any]]:
         inline_body(finding("Safe body", suggestion="Fix context.\n/close")),
     )
     primary = finding(
-        "Grouped primary", consolidation_key="probe", consolidation_primary=True
+        "<details>\n/close\n</details>",
+        consolidation_key="probe",
+        consolidation_primary=True,
     )
     corroborator = finding(
-        "<details>\n/close\n</details>",
+        "Grouped member",
         agent="probe-agent",
         dimension="correctness",
         confidence="high",
@@ -142,7 +144,7 @@ def build_composed_quick_action_cases() -> list[dict[str, Any]]:
     group = compose.consolidate_delivery([primary, corroborator])[0]
     group_marker = post_review._delivery_marker_suffix(sha, list(keys))
     add(
-        "grouped_corroborator",
+        "grouped_lead",
         inline_body(
             group.primary, corroborators=group.corroborators, marker=group_marker
         ),

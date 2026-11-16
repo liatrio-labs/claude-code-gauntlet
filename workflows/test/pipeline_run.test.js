@@ -68,7 +68,7 @@ for (const row of PERSIST_WIRING_ROWS) test(`persistence dispatch wiring: ${row.
   }
 });
 
-const WRAPPER_BODY = '2 findings after the gauntlet \u2014 2 high.\n\n- \ud83d\udfe0 [HIGH] '
+const WRAPPER_BODY = 'Found 2 issues in this change: 2 high.\n\n- \ud83d\udfe0 [HIGH] '
   + '[`F1.js:10`](https://github.com/o/r/blob/0123456789abcdef0123456789abcdef01234567/F1.js#L10): finding F1\n- '
   + '\ud83d\udfe0 [HIGH] [`F2.js:10`](https://github.com/o/r/blob/0123456789abcdef0123456789abcdef01234567/F2.js#L10): '
   + 'finding F2';
@@ -91,7 +91,7 @@ const WRAPPER_ROWS = [
       + '| Reviewed up to: 0123456789abcdef01234567', marker: true },
 ];
 for (const row of WRAPPER_ROWS) test(`persisted wrapper bytes: ${row.name}`, async () => {
-  const args = validArgs({ contextLines: 10, delivery: { tier: 'all', prIdentity: {
+  const args = validArgs({ contextLines: 10, contextReadPlanVersion: 1, contextReadChunks: [10], delivery: { tier: 'all', prIdentity: {
     owner: 'o', repo: 'r', pr_number: 279, sha_full: '0123456789abcdef0123456789abcdef01234567',
     platform: 'github', web_origin: 'https://github.com',
   } } });
@@ -99,7 +99,7 @@ for (const row of WRAPPER_ROWS) test(`persisted wrapper bytes: ${row.name}`, asy
   assert.equal(out.ok, true);
   if (row.name === 'benign context') {
     assert.deepEqual(Object.keys(payload), ['findings', 'postReview', 'report', 'checkpoints']);
-    assert.deepEqual(Object.keys(payload.postReview), ['owner', 'repo', 'pr_number', 'sha', 'platform', 'web_origin', 'review_body', 'findings']);
+    assert.deepEqual(Object.keys(payload.postReview), ['owner', 'repo', 'pr_number', 'sha', 'platform', 'web_origin', 'review_body', 'review_summary', 'findings']);
     assert.equal(payload.postReview.owner, 'o');
     assert.equal(payload.postReview.repo, 'r');
     assert.equal(payload.postReview.pr_number, 279);
@@ -109,22 +109,20 @@ for (const row of WRAPPER_ROWS) test(`persisted wrapper bytes: ${row.name}`, asy
   }
   const body = payload.postReview.review_body;
   assert.equal(body, WRAPPER_BODY);
-  assert.ok(payload.report.includes('## Summary\n\n' + WRAPPER_BODY + '\n\n## Change Context'));
+  assert.ok(payload.report.includes('## Summary\n\n' + WRAPPER_BODY.replace('Found 2 issues in this change: ', '2 findings after the gauntlet — ') + '\n\n## Change Context'));
   assert.equal(body.includes(row.summary), false);
   if (row.marker) { assert.ok(payload.report.includes('&lt;!--')); assert.equal(body.includes('&lt;!--'), false); }
   assert.equal((payload.report.match(/^## Review Methodology$/gm) || []).length, 1);
   if (row.name === 'benign context') {
     assert.ok(payload.report.includes(DIMENSIONS_TABLE));
-    assert.ok(payload.report.endsWith('orchestrator at delivery.\n\n'
-      + 'A REVIEW.md at the repository root is the preferred way to state review rules: focus, ignore paths, and severity.\n'
-      + 'Format reference: https://github.com/liatrio-labs/claude-code-gauntlet/blob/main/skills/code-gauntlet/references/review-md-spec.md'));
+    assert.ok(payload.report.endsWith('orchestrator at delivery.'));
     assert.ok(payload.report.includes('pipeline_version=3.26.0 (bundle)'));
     assert.ok(payload.report.includes('plugin_root=/plugin (resolved)'));
     assert.ok(payload.report.includes('merge: per-channel: ndjson=2, text_fallback=0; duplicates resolved=0; '
       + 'dropped-no-id=0; truncation warnings=0; validation warnings=0'));
     assert.ok(payload.report.includes('selection policy: tier=all, cap=25'));
     assert.ok(payload.report.includes('| Dimensions | dispatched=7; degraded=0 |'));
-    assert.ok(payload.report.includes('| Gaps | 0 |'));
+    assert.ok(payload.report.includes('| Gaps | 1 |'));
     assert.deepEqual(payload.checkpoints.completed, PHASES);
     assert.deepEqual(payload.checkpoints.counts, { summarize: 0, discover: 2, merge: 2, verify: 2,
       validate: 2, filter: 2, challenge: 2, report: 0 });
@@ -198,7 +196,7 @@ test('persisted checkpoint wiring: slim challenge survives empty and degraded fr
 test('persisted gap wiring: pre-report count reaches persisted methodology', async () => {
   const { out, payload } = await runAndCapture(validArgs(), { nullAgentLabels: ['code-gauntlet:bug-detector'] });
   assert.equal(out.ok, true);
-  assert.equal(out.gaps.length, 2);
+  assert.equal(out.gaps.length, 3);
   assert.ok(out.gaps.includes('code-gauntlet:bug-detector: agent returned null (dispatch failed) \u2014 dimensions bug not covered'));
-  assert.ok(payload.report.includes('| Gaps | 2 |'));
+  assert.ok(payload.report.includes('| Gaps | 3 |'));
 });

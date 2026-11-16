@@ -10,13 +10,15 @@ phantom: it makes the row look cross-checked while the only file actually
 proving the string is the producer itself. When no component parses the bytes —
 the reader matches them by regex, or the string is a two-copy invariant with no
 machine reader at all — write `—` in the parser column and say why in the notes.
-That is an honest empty, and the test enforces the explanation.
+That is an honest empty, and the test enforces the explanation. Legacy strings with no
+current producer use `—` in the producer column and state that in the notes.
 
 Tracking: issue #37. Sibling point-in-time audit:
 [v3-residue-audit-2026-07.md](v3-residue-audit-2026-07.md).
 
 | string | producer path(s) | parser path(s) | notes |
 | --- | --- | --- | --- |
+| `Corroborating finding —` | `—` | `scripts/gauntlet/prior_review.py` | Legacy comment header; no current producer exists. Kept to recognize comments posted by older versions. |
 | `Return findings by value as` | `scripts/gauntlet/contract_gen.py`, `agents/bug-detector.md`, `agents/security-reviewer.md`, `agents/cross-file-impact.md`, `agents/test-analyzer.md`, `agents/type-design-analyzer.md`, `agents/code-simplifier.md`, `agents/conventions-and-intent.md` | `scripts/gauntlet/contract_gen.py` | `_DISCOVERY_ANCHOR` recognizes this prefix to restore a markerless output contract. Normal regeneration uses the generated-block markers. |
 | `confirmed` / `relocated` / `unconfirmed` | `workflows/src/registry.js`, `scripts/gauntlet/registry.py` | `workflows/src/location.js`, `scripts/gauntlet/location.py` | Pipeline-owned location status selects delivery rights; absent or unknown status grants only review-body visibility. |
 | `location_unconfirmed` | `scripts/gauntlet/delivery/gate.py`, `scripts/gauntlet/patches.py` | `—` | Fix rejection reason when location rights deny replacement code; receipt reason counts are displayed by key without parsing its spelling. |
@@ -46,5 +48,4 @@ Tracking: issue #37. Sibling point-in-time audit:
 | `host-path-text:` | `workflows/src/run.js`, `workflows/pipeline.js` | `—` | Prefixes `runWith` gaps for findings or change summaries whose stored text mentions `repoRoot`, `pluginRoot`, `outputDir`, or the user home directory those roots sit under, including case variants of a multi-segment root and ASCII percent-encoded spellings. Repository-root paths in prose are rewritten to repo-relative text first. The gap covers remaining mentions, names only safe labels and field names, leaves that text unchanged, and is re-derived from challenge checkpoint data rather than persisted into a phase output; no component parses it yet, so the operator reads `gaps` directly |
 | `checkpoint-checksum:` | `workflows/src/checkpoints.js`, `workflows/pipeline.js` | `skills/code-gauntlet/references/crash-recovery.md` | Pre-dispatch checkpoint refusal when replay state lacks a valid embedded producer checksum. Recovery copies the original whole object once, then stops headless or offers a fresh run interactively. |
 | `checkpoint-shape:` | `workflows/src/checkpoints.js`, `workflows/pipeline.js` | `—` | Issues #248/#250: prefixes every violation `checkpointShapeErrors` returns when a REPLAYED checkpoint phase value (from `args.checkpoints`, resolved by `readCheckpoints`) fails the shape gate `runWith` runs after checksum verification, pre-dispatch — a dedicated refusal envelope (`failingPhase`/`phaseReached: 'checkpoints'`), not a degrade-and-disclose like `replay-filter:` above. Deliberately does not contain `no write proof` or `partial-artifacts` (case-insensitive), for the same G3 `_DEGRADE_RE` (`bench/runner/check.py`) reason as the `replay-filter:` row. No component parses these bytes yet; the operator reads `error`/`gaps` directly |
-| `review_md:` | `workflows/src/args.js`, `workflows/pipeline.js` | `—` | Discloses missing collector checksums, text mismatches, or omitted, extra or reordered REVIEW.md entries; settings apply as stamped |
 | `checkpoint-discarded:` | `workflows/src/checkpoints.js`, `workflows/pipeline.js` | `—` | Discloses unusable containers, compact/truncated returns, maps with no recognized phases, or ignored top-level phases beside an empty `.phases` map. These inputs replay nothing and retain their discard gaps without requiring a checksum. Absent/null and legitimately empty maps stay silent. Inputs with recognized phase outputs must pass checksum verification before shape validation and replay. Caller-controlled keys are never echoed. |

@@ -37,6 +37,18 @@ class Finding(FindingMetadata, total=False):
     consolidation_primary: object
 
 
+class SummaryBullet(TypedDict):
+    lead_id: str | int
+    bullet: str
+
+
+class ReviewSummary(TypedDict):
+    counts: str
+    index: list[SummaryBullet]
+    omitted: int
+    reasons: list[str]
+
+
 class _RequiredReviewInput(TypedDict):
     owner: str
     repo: str
@@ -49,6 +61,7 @@ class ReviewInput(_RequiredReviewInput, total=False):
     web_origin: str
     sha: object
     review_body: object
+    review_summary: ReviewSummary
 
 
 def validate_review_input(data: dict[str, object]) -> ReviewInput:

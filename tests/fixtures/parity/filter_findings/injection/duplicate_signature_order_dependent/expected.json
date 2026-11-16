@@ -7,11 +7,11 @@
       "elimination_reason": "duplicate of finding \"I6a\"",
       "file": "src/util.py",
       "id": "I6b",
-      "line_start": 20,
-      "severity": "medium",
-      "title": "NULL CHECK MISSING",
       "line_end": 20,
-      "location_status": "confirmed"
+      "line_start": 20,
+      "location_status": "confirmed",
+      "severity": "medium",
+      "title": "NULL CHECK MISSING"
     }
   ],
   "kept": [
@@ -20,11 +20,11 @@
       "description": "The function does not validate the pointer before dereferencing it in this code branch today.",
       "file": "src/util.py",
       "id": "I6a",
-      "line_start": 20,
-      "severity": "medium",
-      "title": "Null check missing",
       "line_end": 20,
-      "location_status": "confirmed"
+      "line_start": 20,
+      "location_status": "confirmed",
+      "severity": "medium",
+      "title": "Null check missing"
     }
   ]
 }

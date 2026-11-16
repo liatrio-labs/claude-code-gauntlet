@@ -304,10 +304,6 @@ The workflow derives these waist fields from the copied `configEcho` receipt. Do
 - `delivery.tier` (headless and interactive runs): from `configEcho.delivery_tier`. Leave `tier` out of any stamped `delivery`.
 - `reviewScope.requested` (headless runs, when `reviewScope.detector` is an object): from `configEcho.reviewed_policy`; `skip` derives as `full`. Stamp `reviewScope` and leave `requested` out of it.
 - `scopeAnswer` (headless runs, when every changed file is low risk and fewer than 50 lines changed): from `configEcho.trivial_scope`. Leave it out.
-
-The workflow fills these receipt entries itself; never stamp them.
-
-- `configEcho.review_md` (interactive runs): `present` when the `reviewMd` array is nonempty, else `absent`; without `reviewMd`, `present` when `reviewConfigPath` is set, else `absent`.
 <!-- /generated-from-registry-identity:derived_waist_fields -->
 
 ---
@@ -316,7 +312,7 @@ The workflow fills these receipt entries itself; never stamp them.
 
 > **Note:** This template is triggered during Phase 2e (risk classification). It lives here because it is a pre-flight UX decision — the user's answer affects what review dimensions run, so it is collected alongside the other pre-flight gates.
 
-> The answer is stamped verbatim into `args.scopeAnswer` (`"light"` or `"full"`) — the workflow computes the dimension flags itself from `scopeAnswer` plus the Phase 2e `riskTable`/`changedLines` (`deriveAgentFlags`, `workflows/src/discover.js`): `light` dispatches only the two core agents (`bug-detector`, `security-reviewer`); `full` runs all seven discovery agents covering nine dimensions. Announce the actual dimensions that will run.
+> The answer is stamped verbatim into `args.scopeAnswer` (`"light"` or `"full"`) — the workflow computes the dimension flags itself from `scopeAnswer` plus the Phase 2e `riskTable`/`changedLines` (`deriveAgentFlags`, `workflows/src/discover.js`): `light` dispatches only the two core agents (`bug-detector`, `security-reviewer`); `full` runs seven primary reviewers covering nine dimensions, then a budgeted gap hunter when regions remain uncited. Announce the dimensions and the optional gap hunter.
 
 Used when ALL files are low-risk AND total lines <50:
 
@@ -330,10 +326,10 @@ AskUserQuestion(
     multiSelect: false,
     options: [
       { label: "Light review (Recommended)", description: "Bugs + security only (faster, 2 agents)" },
-      { label: "Full review", description: "All nine dimensions (7 agents)" }
+      { label: "Full review", description: "Nine dimensions plus a budgeted gap hunter (up to 8 reviewers)" }
     ]
   }]
 )
 ```
 
-There is no REVIEW.md key that skips this question — dimension selection is not REVIEW.md-configurable (`references/review-md-spec.md` → "Rules and other prose"). In light mode, triage announcement shows `Review dimensions: bugs, security (light review mode)`.
+Project rule files do not configure dimension selection. In light mode, triage announcement shows `Review dimensions: bugs, security (light review mode)`.

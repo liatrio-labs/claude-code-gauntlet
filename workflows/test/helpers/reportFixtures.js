@@ -7,7 +7,10 @@ export function corpus(name) {
 }
 
 export function finding(id, overrides = {}) {
-  return makeFinding(id, { disposition: 'deliver', evidence: '', ...overrides });
+  const raw = makeFinding(id);
+  delete raw.verdict;
+  delete raw.verdict_route;
+  return { ...raw, disposition: 'deliver', evidence: '', ...overrides };
 }
 
 export function reportInput(overrides = {}) {
@@ -22,7 +25,7 @@ export function reportInput(overrides = {}) {
     mode: 'interactive',
     configEcho: {
       model_tier: { value: 'optimized', source: 'fixed' }, delivery_tier: { value: 'all', source: 'default' },
-      pr_comment_cap: { value: 'null', source: 'default' }, review_md: { value: 'absent', source: 'discovery' },
+      pr_comment_cap: { value: 'null', source: 'default' },
     },
     pluginRoot: '/absolute/plugin', pipelineVersion: '3.26.0',
     reviewScope: { requested: 'full', kind: 'full', since: null, commits: null, detector: null },

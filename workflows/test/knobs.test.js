@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { KNOB_REGISTRY, DERIVE_WHEN, DERIVED_FROM, matchesRule, computeLightEligible } from '../src/knobs.js';
+import { KNOB_REGISTRY, DERIVE_WHEN, matchesRule, computeLightEligible } from '../src/knobs.js';
 import { receiptEntryForKey, deriveConfigWaist, configEchoValue, validateConfigEcho } from '../src/knobs.js';
 import { interactiveArgs, headlessArgs, validArgs, knobRows, priorReviewDetector } from './helpers/argsFixtures.js';
 
@@ -49,7 +49,7 @@ const RECEIPT_ROWS = [
     expected: ['configEcho.model_tier.value is invalid for interactive'] },
   { name: 'headless model', mode: 'headless', key: 'model_tier', entry: { value: 'standard', source: 'env' },
     expected: ['configEcho.model_tier.value is invalid for headless'] },
-  { name: 'delivery', mode: 'headless', key: 'delivery', entry: { value: 'chat,chat', source: 'review_md' },
+  { name: 'delivery', mode: 'headless', key: 'delivery', entry: { value: 'chat,chat', source: 'env' },
     expected: ['configEcho.delivery.value is invalid for headless'] },
   { name: 'post mode', mode: 'headless', key: 'post_mode', entry: { value: 'later', source: 'default' },
     expected: ['configEcho.post_mode.value is invalid for headless'] },
@@ -83,8 +83,6 @@ const RECEIPT_ROWS = [
     entry: { value: 'null', source: 'fixed' }, expected: ['configEcho.pr_comment_cap.source is invalid for interactive'] },
   { name: 'interactive delivery_tier source', mode: 'interactive', key: 'delivery_tier',
     entry: { value: 'all', source: 'fixed' }, expected: ['configEcho.delivery_tier.source is invalid for interactive'] },
-  { name: 'interactive review_md source', mode: 'interactive', key: 'review_md',
-    entry: { value: 'absent', source: 'fixed' }, expected: ['configEcho.review_md.source is invalid for interactive'] },
   { name: 'entry shape', mode: 'interactive', key: 'model_tier', entry: [],
     expected: ['configEcho.model_tier must be { value, source }'] },
   { name: 'null entry', mode: 'interactive', key: 'model_tier', entry: null,
@@ -115,8 +113,7 @@ const RECEIPT_SHAPE_ROWS = [
   { name: 'missing and extra', input: {
     model_tier: { value: 'optimized', source: 'fixed' }, pr_comment_cap: { value: 'null', source: 'default' },
     delivery_tier: { value: 'all', source: 'default' }, unexpected: { value: 'x', source: 'default' },
-  }, expected: ['configEcho has unexpected key(s): unexpected', 'configEcho is missing key(s): review_md',
-    'configEcho.review_md must be { value, source }'] },
+  }, expected: ['configEcho has unexpected key(s): unexpected'] },
 ];
 for (const { name, input, expected } of RECEIPT_SHAPE_ROWS) {
   test(`receipt shape: ${name}`, () => {
@@ -195,39 +192,23 @@ for (const mode of ['headless', 'interactive']) {
   });
 }
 
-for (const row of KNOB_REGISTRY) {
-  test(`descriptor: ${row.key}`, () => {
-    assert.deepEqual(Object.keys(row), [
-      'key', 'modes', 'allowedSources', 'rule', 'env', 'reviewMdKey', 'defaults', 'type', 'waistPath', 'waistMap',
-      'derivedFrom', 'deriveWhen', 'nullReceipt', 'resolvedKey',
-    ]);
-    assert.ok(Object.isFrozen(row));
-    assert.ok(Object.isFrozen(row.rule));
-    assert.ok(Object.isFrozen(row.defaults));
-  });
-}
 
 const KNOB_DATA_ROWS = [
   { name: 'complete order', input: KNOB_REGISTRY.map((row) => row.key), expected: [
     'model_tier', 'delivery', 'post_mode', 'pr_comment_cap', 'delivery_tier', 'draft_policy',
-    'reviewed_policy', 'pr_not_found_policy', 'trivial_scope', 'review_md',
+    'reviewed_policy', 'pr_not_found_policy', 'trivial_scope',
   ] },
   { name: 'headless order', input: KNOB_REGISTRY.filter((d) => d.modes.includes('headless')).map((d) => d.key), expected: [
     'model_tier', 'delivery', 'post_mode', 'pr_comment_cap', 'delivery_tier', 'draft_policy',
     'reviewed_policy', 'pr_not_found_policy', 'trivial_scope',
   ] },
   { name: 'interactive order', input: KNOB_REGISTRY.filter((d) => d.modes.includes('interactive')).map((d) => d.key),
-    expected: ['model_tier', 'pr_comment_cap', 'delivery_tier', 'review_md'] },
+    expected: ['model_tier', 'pr_comment_cap', 'delivery_tier'] },
   { name: 'gate descriptions', input: Object.entries(DERIVE_WHEN).map(([name, row]) => [name, typeof row.holds, row.describe]),
     expected: [
       ['lightEligible', 'function', 'every changed file is low risk and fewer than 50 lines changed'],
       ['priorReviewDetector', 'function', '`reviewScope.detector` is an object'],
     ] },
-  { name: 'source descriptions', input: Object.entries(DERIVED_FROM).map(([name, row]) =>
-    [name, typeof row.fill, row.source, row.describe]), expected: [
-    ['reviewMd', 'function', 'discovery', '`present` when the `reviewMd` array is nonempty, else `absent`; without `reviewMd`, ' +
-      '`present` when `reviewConfigPath` is set, else `absent`'],
-  ] },
 ];
 for (const { name, input, expected } of KNOB_DATA_ROWS) {
   test(`knob data: ${name}`, () => assert.deepEqual(input, expected));

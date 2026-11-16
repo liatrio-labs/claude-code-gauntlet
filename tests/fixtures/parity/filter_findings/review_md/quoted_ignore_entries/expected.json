@@ -1,9 +1,0 @@
-{
-  "config": {
-    "ignore": [
-      "console.log in development mode",
-      "unquoted pattern",
-      "single quoted pattern"
-    ]
-  }
-}

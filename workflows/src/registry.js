@@ -3,6 +3,11 @@ import { deepFreeze } from './wire.js';
 // Scope gating is opt-out so absent flags preserve full review; null flags keep core agents ungateable.
 const DEEP = 'deep';
 
+// The writer and workflow must accept the same bounded receipt size.
+export const READ_PLAN_MAX_CHUNKS = 2000;
+export const DISCOVERY_TRANSPORT_LIMITS = deepFreeze({requestChars:1000,receiptChars:2048,maxParts:4});
+export const CONTEXT_RECEIPT_FIELDS = deepFreeze(['contextLines', 'contextChars', 'contextMaxLineChars', 'contextReadPlanVersion', 'contextReadChunks', 'removedTests', 'discoveryPlanRef']);
+
 export const AGENT_TYPE_TEST_ANALYZER = 'code-gauntlet:test-analyzer';
 
 // Share ordered identity checks with validation, rendering, and generated references so their contracts cannot drift.
@@ -59,6 +64,15 @@ export const PR_IDENTITY_FIELDS = deepFreeze([
     describe: 'a non-empty string when present' },
 ]);
 
+export const PUBLIC_SUMMARY = deepFreeze({
+  counts: 'Found {count} {issues} in this change{breakdown}.',
+  improvement: ' {count} is a suggested improvement rather than a defect.',
+  improvements: ' {count} are suggested improvements rather than defects.',
+  index: '- {mark} [{severity}] {location}{suggestion}: {title}',
+  suggestion: ' (improvement suggestion)',
+  remainder: '{count} more {issues} not listed here ({reasons}).',
+});
+
 export const CODE_OWNED_HEADINGS = deepFreeze([
   '## Summary',
   '## Change Context',
@@ -88,8 +102,7 @@ export const DISPOSITION_RIGHTS = deepFreeze({
   eliminate: { inline: false, body: false, report: 'eliminated', fixTask: false, patch: false, fence: false, sourceLink: false },
 });
 export const DISPOSITIONS = deepFreeze(Object.keys(DISPOSITION_RIGHTS));
-export const RIGHT_ELIGIBILITY = deepFreeze({ body: { fixTask: ['current_defect', 'current_reachability', 'confirmed_location'] } });
-export const STAGE_COSTS = deepFreeze({ verify: { attempts: 2, singletonRetries: 3 }, validate: { retryBatchDivisor: 5 }, writer: { attempts: 2 } });
+export const STAGE_COSTS = deepFreeze({ verify: { attempts: 2, singletonRetries: 3 }, validate: { retryBatchDivisor: 5 }, grouping: { attempts: 1 }, writer: { attempts: 2 }, discoveryPlan: { attempts: 2 * DISCOVERY_TRANSPORT_LIMITS.maxParts } });
 
 const SOURCE_REFERENCE = {
   type: 'object', $comment: 'source-reference', properties: {
@@ -104,7 +117,7 @@ export const SEVERITY_ORDER = deepFreeze(['critical', 'high', 'medium', 'low']);
 // Use full schema fragments for arrays because the host requires items; scalar fields can use type shorthand.
 // Verification stamps origin, so discovery does not require it.
 export const FINDING_PROP_TYPES = deepFreeze({
-  // Numeric confidence prevents consensus boosts from concatenating strings; resumed findings still need coercion.
+  // Discovery confidence is retained for older artifact consumers, never for routing or ranking.
   id: 'string', file: 'string', line_start: 'number', line_end: 'number',
   title: 'string', description: 'string', severity: 'string', confidence: 'number',
   dimension: 'string', origin: 'string', evidence: 'string',
@@ -177,7 +190,7 @@ const QUALITY_ADMISSION = {
     duplication: { description: 'Duplicated behavior identified by duplicate_of.', required: ['duplicate_of'], predicates: ['resolved_duplicate', 'confirmed_duplication'], phase: 'semantic', tier: 'suggestion' },
     simpler_equivalent: { description: 'Simpler replacement preserving observable behavior.', required: ['behavior_preserved'], anyOf: ['suggestion', 'suggested_fix_code'], predicates: ['concrete_equivalent', 'behavior_preserved'], phase: 'semantic', tier: 'suggestion' },
     stack_idiom: { description: 'Behavior-preserving replacement grounded in existing repository precedent.', required: ['precedent'], predicates: ['resolved_precedent', 'precedent_not_added', 'applicable'], phase: 'semantic', tier: 'suggestion' },
-    other: { description: 'No demonstrated defect, duplication, simpler equivalent or applicable precedent.', required: [], predicates: [], phase: 'deterministic', defaultDisposition: 'report_only', tier: 'suggestion' },
+    other: { description: 'No demonstrated defect, duplication, simpler equivalent or applicable precedent.', required: [], predicates: [], phase: 'semantic', tier: 'suggestion' },
   },
 };
 
@@ -197,7 +210,7 @@ export const DIMENSIONS = deepFreeze([
       production_defect: { required: [], predicates: ['present_defect'], phase: 'semantic', dimension: 'bug', core: true, tier: 'main' },
       additional_case: { required: [], predicates: [], phase: 'deterministic', defaultDisposition: 'report_only', tier: 'suggestion' },
     } },
-    // Bound the impact scale at dispatch; confidence remains unbounded here because runtime validators adjust it.
+    // Bound the impact scale at dispatch.
     schemaExtra: {
       criticality: { type: 'number', minimum: 1, maximum: 10, description: 'Impact of the untested behavior on a 1 to 10 scale.' },
       failure_scenario: { type: 'string', description: 'Concrete input or condition and the failure it exposes.' },
@@ -244,6 +257,34 @@ export const DIMENSIONS = deepFreeze([
   requiredWhenDimension: [...row.requiredWhenDimension, ...(row.admission ? [row.admission.field] : [])],
 })));
 
+
+export const DISCOVERY_DISPATCHES = deepFreeze(['parallel', 'uncovered']);
+const DISCOVERY_REVIEWER_KEYS = ['agentType', 'dimension', 'dispatch', 'conditionalFlag', 'label', 'objective', 'tools', 'effort', 'color', 'modelOverride'];
+export function discoveryReviewer(row) {
+  if (!row || Object.keys(row).length !== DISCOVERY_REVIEWER_KEYS.length
+    || DISCOVERY_REVIEWER_KEYS.some((key) => !Object.hasOwn(row, key))
+    || !/^code-gauntlet:[a-z][a-z0-9-]*$/.test(row.agentType)
+    || !DIMENSIONS.some((d) => d.dimension === row.dimension)
+    || !DISCOVERY_DISPATCHES.includes(row.dispatch)
+    || ![null, DEEP].includes(row.conditionalFlag)
+    || !['label', 'objective'].every((key) => typeof row[key] === 'string' && row[key].trim())
+    || !Array.isArray(row.tools) || !row.tools.length || row.tools.some((t) => !['Read', 'Grep', 'Glob', 'LSP'].includes(t))
+    || !['low', 'medium', 'high'].includes(row.effort)
+    || !['red', 'blue', 'green', 'yellow', 'purple', 'cyan', 'magenta'].includes(row.color)
+    || !(row.modelOverride === null || (typeof row.modelOverride === 'string' && row.modelOverride.trim()))) {
+    throw new Error('Invalid discovery reviewer registry row');
+  }
+  return row;
+}
+
+// One row owns a supplemental role's scheduling, contract, tools and presentation.
+export const DISCOVERY_REVIEWERS = deepFreeze([
+  { agentType: 'code-gauntlet:gap-hunter', dimension: 'bug', dispatch: 'uncovered', conditionalFlag: DEEP, label: 'Gap Hunter',
+    objective: 'Focus on the supplied uncovered regions and fact cards; report any defect you find, including findings anchored outside the assignment.',
+    tools: ['Read'], effort: 'high', color: 'cyan', modelOverride: 'sonnet' },
+].map(discoveryReviewer));
+export const DISCOVERY_AGENT_TYPES = deepFreeze([...new Set([...DIMENSIONS, ...DISCOVERY_REVIEWERS].map(row => row.agentType))]);
+
 export const VERIFY_REFERENCE_FIELDS = deepFreeze(Object.keys(SOURCE_REFERENCE.properties));
 export const VERIFY_REFERENCE_DESCRIPTORS = deepFreeze(Object.fromEntries(Object.entries(Object.assign({}, ...DIMENSIONS.map((row) => row.schemaExtra)))
   .filter(([, schema]) => schema.$comment === 'source-reference' || schema.items?.$comment === 'source-reference' || schema.$comment === 'search-paths')
@@ -274,7 +315,7 @@ export const ADMISSION_PREDICATES = deepFreeze({
   confirmed_test_defect: { references: ['primary'], description: 'Actual incorrect assertion, ineffective mock, missing wait, isolation failure or other broken/noisy changed test.' },
   test_diff_site_for_inline: { placement: true },
   criticality_at_least_8: { fact: 'criticality' },
-  resolved_production_element: { references: ['production_element'], description: 'The resolved element is production behavior; directory names do not establish this.' },
+  resolved_production_element: { fact: 'production_element', references: ['production_element'], description: 'The resolved element is production behavior; directory names do not establish this.' },
   complete_searches: { fact: 'searches', references: ['searched_paths', 'candidate_tests'], description: 'Completed coverage investigation inspecting inputs, assertions, helpers and indirect integration coverage, including searches with no candidates.' },
   complete_behavioral_absence: { references: ['production_element', 'searched_paths', 'candidate_tests'], description: 'The entire named behavior has no effective coverage; an extra branch/case or indirect surviving coverage rejects absence.' },
   present_defect: { references: ['primary'], description: 'A present production correctness failure.' },
@@ -285,9 +326,6 @@ export const ADMISSION_PREDICATES = deepFreeze({
   resolved_precedent: { fact: 'precedent' },
   precedent_not_added: { fact: 'precedent_not_added' },
   applicable: { references: ['primary', 'precedent'], description: 'The existing repository precedent applies here.' },
-  current_defect: { references: ['primary'], description: 'A current code defect, independently of coverage absence or quality preference.' },
-  current_reachability: { fact: 'reachability' },
-  confirmed_location: { fact: 'location' },
 });
 export const ASSESSED_PREDICATES = deepFreeze(Object.keys(ADMISSION_PREDICATES).filter((key) => ADMISSION_PREDICATES[key].references));
 const ASSESSMENT = { type: 'object', properties: {
@@ -295,13 +333,95 @@ const ASSESSMENT = { type: 'object', properties: {
   status: { type: 'string', enum: ['confirmed', 'rejected', 'unresolved'] },
   references: { type: 'array', items: { type: 'string' } },
 }, required: ['predicate', 'status', 'references'], additionalProperties: false };
-export const VALIDATION_RETURN_PROPERTIES = deepFreeze({ ...RECURRENCE_RETURN_PROPERTIES,
+// Confirmed rows run from most to least serious so disagreement has one declared order.
+// Only code-checked counter-evidence refutes.
+export const VERDICT_ROUTES = deepFreeze({
+  confirmed: {
+    present_failure: { route: 'posted', status: 'admitted', tier: 'main' },
+    latent: { route: 'posted-latent', status: 'admitted', tier: 'suggestion', severity: 'low' },
+    artifact_defect: { route: 'posted-artifact', status: 'admitted', tier: 'suggestion', severity: 'low' },
+    comment_defect: { route: 'report-only', status: 'report_only', tier: 'suggestion', severity: 'low', challenge: true },
+    no_practical_effect: { route: 'report-only', status: 'report_only', tier: 'suggestion', challenge: true },
+  },
+  overrides: [
+    { when: { dimension: 'security', phase: 'validation', claim: 'refuted' }, route: 'not-established', status: 'held_back', tier: 'main', challenge: true },
+    { when: { dimension: 'security', phase: 'challenge', claim: 'refuted', verified: true, validatorRefuted: true, validatorVerified: true, challengerRefuted: true, challengerVerified: true }, route: 'eliminated', status: 'report_only', tier: 'suggestion' },
+    { when: { dimension: 'security', phase: 'challenge', anyVerifiedRefutation: true }, route: 'report-only', status: 'report_only', tier: 'main' },
+  ],
+  refuted: { verified: { route: 'eliminated', status: 'report_only', tier: 'suggestion' },
+    unverified: { route: 'not-established', status: 'held_back', tier: 'main', challenge: true } },
+  not_established: { route: 'not-established', status: 'held_back', tier: 'main', challenge: true },
+});
+// Every reader pair selects an established answer or preserves uncertainty.
+export const VERDICT_RESOLUTIONS = deepFreeze({
+  confirmed: { confirmed: 'more_serious', refuted_verified: 'challenger', refuted_unverified: 'validator', not_established: 'validator' },
+  refuted_verified: { confirmed: 'validator', refuted_verified: 'challenger', refuted_unverified: 'validator', not_established: 'validator' },
+  refuted_unverified: { confirmed: 'challenger', refuted_verified: 'challenger', refuted_unverified: 'challenger', not_established: 'challenger' },
+  not_established: { confirmed: 'challenger', refuted_verified: 'challenger', refuted_unverified: 'challenger', not_established: 'challenger' },
+});
+export const CONSEQUENCE_ORDER = deepFreeze(Object.keys(VERDICT_ROUTES.confirmed));
+// Length and blank checks stay local so prose quality cannot retry a whole reader answer.
+export const CONFIRMED_COMMENT_SCHEMA = deepFreeze({
+  type: 'object', properties: {
+    title: { type: 'string', minLength: 1, maxLength: 100, pattern: '^[^\\r\\n]*\\S[^\\r\\n]*$',
+      description: 'One line for the PR author: one confirmed issue, narrowed to what you verified; no trailing period needed, ceiling 100 characters.' },
+    body: { type: 'string', minLength: 1, maxLength: 400, pattern: '\\S',
+      description: 'One or two sentences for the PR author: one confirmed issue, what is wrong and what happens, narrowed to what you verified; ceiling 400 characters.' },
+    fix: { type: 'string', maxLength: 200,
+      description: 'One sentence for the PR author naming the correction you verified, ceiling 200 characters; empty if no correction can be confirmed.' },
+  }, required: ['title', 'body'], additionalProperties: false,
+});
+const READER_COMMENT_SCHEMA = { type: 'object',
+  properties: Object.fromEntries(Object.entries(CONFIRMED_COMMENT_SCHEMA.properties)
+    .map(([key, { type, description }]) => [key, { type, description }])),
+  required: Object.keys(CONFIRMED_COMMENT_SCHEMA.properties), additionalProperties: false };
+export const VERDICT_PROPERTIES = deepFreeze({
+  claim: { type: 'string', enum: ['confirmed', 'refuted', 'not_established'] },
+  consequence: { type: 'string', enum: CONSEQUENCE_ORDER },
+  comment: {},
+  justification: { type: 'string', minLength: 1, pattern: '\\S' },
+  refutation_kind: { type: 'string', enum: ['premise_false', 'guard_exists', 'no_reachable_caller'] },
+  refutation: { ...SOURCE_REFERENCE, description: `Executable counter-evidence: at most ${ANCHOR_LIMITS.lines} inclusive source lines.`,
+    properties: { ...SOURCE_REFERENCE.properties, anchor: { type: 'string', minLength: 1, maxLength: ANCHOR_LIMITS.chars, pattern: `^(?:[^\\n]*\\n){0,${ANCHOR_LIMITS.lines - 1}}[^\\n]*$` },
+      line_end: { type: 'integer', minimum: 1, description: `Inclusive end, no more than ${ANCHOR_LIMITS.lines - 1} after line_start.` } } },
+  missing_fact: { type: 'string', minLength: 1, pattern: '\\S' },
+  latent_condition: { type: 'string', minLength: 1, pattern: '\\S' },
+});
+export const VERDICT_CASES = deepFreeze({
+  confirmed: ['consequence', 'latent_condition', 'comment'],
+  refuted: ['refutation_kind', 'refutation'],
+  not_established: ['missing_fact'],
+});
+function verdictSchema(extra = {}, requiredExtra = [], reader = false) {
+  const properties = { ...VERDICT_PROPERTIES, ...(reader ? { comment: READER_COMMENT_SCHEMA } : {}), ...extra };
+  return { type: 'object', properties,
+    required: ['claim', 'justification', ...requiredExtra], additionalProperties: false,
+    oneOf: Object.entries(VERDICT_CASES).map(([claim, fields]) => ({ type: 'object',
+      properties: { claim: { type: 'string', const: claim }, justification: VERDICT_PROPERTIES.justification,
+        ...Object.fromEntries(fields.map((key) => [key, properties[key]])), ...extra },
+      required: ['claim', 'justification', ...fields.filter((key) => key !== 'latent_condition' && (key !== 'comment' || reader)), ...requiredExtra],
+      additionalProperties: false,
+      ...(claim === 'confirmed' ? { allOf: [{ if: { properties: { consequence: { const: 'latent' } }, required: ['consequence'] }, then: { required: ['latent_condition'] } }] } : {}),
+    })),
+  };
+}
+// Stored verdicts may lack reader prose; dispatch alone requires its structure.
+export const VERDICT_SCHEMA = deepFreeze(verdictSchema());
+export const READER_VERDICT_SCHEMA = deepFreeze(verdictSchema({}, [], true));
+const VALIDATION_IDENTITY = {
+  finding_id: { type: 'string' }, site_confirmations: RECURRENCE_RETURN_PROPERTIES.site_confirmations,
+};
+export const VALIDATION_VERDICT_SCHEMA = deepFreeze(verdictSchema(VALIDATION_IDENTITY, ['finding_id']));
+export const READER_VALIDATION_VERDICT_SCHEMA = deepFreeze(verdictSchema(VALIDATION_IDENTITY, ['finding_id'], true));
+// Stage-owned identities and code-check receipts are not model verdict fields.
+export const VERDICT_ENTRY_SCHEMA = deepFreeze(verdictSchema({
+  id: { type: 'string' }, finding_id: { type: 'string' }, site_confirmations: RECURRENCE_RETURN_PROPERTIES.site_confirmations,
+  refutation_check: { type: 'object', properties: { verified: { type: 'boolean' }, reason: { type: 'string' } }, required: ['verified'], additionalProperties: false },
+}, ['id']));
+export const VALIDATION_RETURN_PROPERTIES = deepFreeze({ ...RECURRENCE_RETURN_PROPERTIES, ...VERDICT_PROPERTIES, comment: CONFIRMED_COMMENT_SCHEMA });
+export const ADMISSION_STAMP_PROPERTIES = deepFreeze({
   policy_subject: { type: 'string', enum: Object.keys(POLICY_SUBJECTS) },
   admission_assessments: { type: 'array', items: ASSESSMENT },
-});
-export const ADMISSION_STAMP_PROPERTIES = deepFreeze({
-  policy_subject: VALIDATION_RETURN_PROPERTIES.policy_subject,
-  admission_assessments: VALIDATION_RETURN_PROPERTIES.admission_assessments,
   admission: { type: 'object', properties: {
     version: { type: 'integer', enum: [1] }, input_proof: { type: 'string' },
     input_fields: { type: 'array', items: { type: 'string' } },
@@ -378,24 +498,6 @@ export function findingPolicy(finding, effective = true) {
     tier: kind?.tier ?? selected?.defaultTier, defaultDisposition: kind?.defaultDisposition ?? selected?.defaultDisposition };
 }
 
-// Both the return schema and runtime acceptance derive semantic requirements from the same rows.
-export function admissionPolicy(finding, policySubject, promoted = false) {
-  const original = findingPolicy({ ...finding, policy_subject: undefined }, false);
-  const promotion = original.row?.admission?.promotion;
-  const terminal = !promoted && original.kind?.defaultDisposition === 'report_only';
-  const policyFinding = promoted && promotion
-    ? { ...finding, policy_subject: 'ordinary', [original.row.admission.field]: promotion.kind }
-    : { ...finding, policy_subject: policySubject };
-  return { original, promotion, terminal, policyFinding,
-    ...(terminal ? original : findingPolicy(policyFinding, false)) };
-}
-
-export function requiredAssessments(finding, policySubject, promoted = false) {
-  const { promotion, kind } = admissionPolicy(finding, policySubject, promoted);
-  return [...new Set([promotion?.predicate, ...(kind?.predicates || [])])]
-    .filter((predicate) => ASSESSED_PREDICATES.includes(predicate));
-}
-
 export function normalizePipelineStamps(finding) {
   const { row } = findingPolicy({ ...finding, policy_subject: undefined });
   if (finding.origin_dimension !== row?.dimension) delete finding.origin_dimension;
@@ -427,10 +529,11 @@ export const PIPELINE_FINDING_FIELDS = deepFreeze([
   'location_status', 'claimed_line_start', 'claimed_line_end',
   'agent', 'body', 'line', 'end_line', 'verified', 'validation', 'challenge',
   'validation_justification', 'challenge_justification', 'elimination_reason',
-  'original_confidence', 'validator_confidence', 'reachability', 'challenge_score',
-  'challenge_contested', 'severity_downgraded', 'original_severity',
+  'reachability',
+  'verdict', 'validator_verdict', 'challenge_verdict', 'verdict_route', 'refutation_check', 'validator_refutation_check', 'challenge_refutation_check',
+  'severity_downgraded', 'original_severity',
   'report_destination', 'report_tag', 'eliminated_by', 'replay_belt',
-  'contested', 'contestation_drop', 'contestation_reason', 'demoted_by', 'demotion_reason',
+  'demoted_by', 'demotion_reason',
   'consensus_count', 'consensus_boost', 'corroborated_by', 'corroborations',
   'singleton_penalty', 'contradiction', 'security_escalation', 'escalation_note',
   'consolidation_key', 'consolidation_primary', 'routed_by', 'promoted_from', 'promotion_reason',
@@ -444,7 +547,7 @@ export const FINDING_TEXT_FIELD_NAMES = deepFreeze([...new Set([
   ...PIPELINE_FINDING_FIELDS,
 ])]);
 
-export const AGENTS = deepFreeze([...new Set(DIMENSIONS.map((d) => d.agentType))]);
+export const AGENTS = deepFreeze([...new Set([...DIMENSIONS, ...DISCOVERY_REVIEWERS].map((d) => d.agentType))]);
 
 // Key display labels by agent because a shared dispatch contributes one aggregate row, not one row per dimension.
 export const AGENT_LABELS = deepFreeze({
@@ -455,6 +558,7 @@ export const AGENT_LABELS = deepFreeze({
   'code-gauntlet:conventions-and-intent': 'Conventions & Intent',
   'code-gauntlet:type-design-analyzer': 'Type Design',
   'code-gauntlet:code-simplifier': 'Code Simplification',
+  ...Object.fromEntries(DISCOVERY_REVIEWERS.map((r) => [r.agentType, r.label])),
 });
 
 // Presentation branding is separate from the machine-parsed product slug, so changing display text cannot rename the wire protocol.
@@ -474,7 +578,7 @@ export const RULE_SOURCE_LABELS = deepFreeze({
 export const RULE_SOURCE_LABEL_FALLBACK = 'Cited rule';
 
 export const STAGE_DEFAULTS = deepFreeze({
-  validator: 'sonnet', challenger: 'sonnet', executor: 'sonnet',
+  validator: 'sonnet', challenger: 'sonnet', grouper: 'sonnet', executor: 'sonnet',
   'artifact-writer': 'sonnet',
 });
 
@@ -498,7 +602,7 @@ export function resolvePolicy(agentType, opts = {}, dimensions = DIMENSIONS) {
     // Preserve explicit third-party deployment IDs so the override remains an escape hatch from alias mapping.
     return { model: toModelId(opts.subagentModelEnv, opts.provider, opts.mappedAliases) };
   }
-  const dim = dimensions.find((d) => d.agentType === agentType);
+  const dim = dimensions.find((d) => d.agentType === agentType) || DISCOVERY_REVIEWERS.find((r) => r.agentType === agentType);
   const model = toModelId(dim?.modelOverride || STAGE_DEFAULTS[agentType.split(':').pop()] || 'sonnet', opts.provider, opts.mappedAliases);
   return { model };
 }
@@ -526,11 +630,10 @@ export const POLICY_PROVIDERS = deepFreeze(['firstParty', 'bedrock', 'vertex', '
 
 export const CONTROL_RE = /[\u0000-\u001F\u007F]/;
 
-// Absent delivery and discovery caps mean no ceiling; defaulting them would silently narrow a review.
+// Absent caps mean no ceiling; defaulting one would silently narrow a review.
 export const LIMIT_DEFAULTS = deepFreeze({
   summarizeBucketSize: 20,
   validateBatch: 25,
-  challengeCap: 40,
   // Small verify slices limit the blast radius of a bad inline transcription.
   verifySliceSize: 25,
   maxLineSpan: 100,
@@ -539,17 +642,13 @@ export const LIMIT_DEFAULTS = deepFreeze({
 export const LIGHT_SCOPE_MAX_CHANGED_LINES = 50;
 
 export const TRUSTED_SCRIPT_BASENAMES = deepFreeze({
+  discovery: 'plan_discovery.py',
   assemble: 'assemble_artifacts.py',
   verify: 'verify_findings.py',
+  refutations: 'check_refutations.py',
 });
 
 export const FIELD_RENAMES = deepFreeze({ body: 'description', line: 'line_start', blame_tag: 'origin' });
-
-export const REVIEW_SETTING_KEYS = deepFreeze([
-  'confidence_threshold',
-  'security_min_confidence',
-  'severity_threshold',
-]);
 
 export const INJECTION_STRIPPED_PROSE_FIELDS = deepFreeze(['suggestion', 'claude_md_rule', 'spec_text']);
 
@@ -577,7 +676,6 @@ export const KNOB_VOCAB = deepFreeze({
   interactive: ['interactive'],
   envDefault: ['env', 'default'],
   fixed: ['fixed'],
-  envReviewMdDefault: ['env', 'review_md', 'default'],
   discovery: ['discovery'],
   modelTiers: ['optimized'],
   deliveryChannels: ['chat', 'pr_comments', 'markdown'],
@@ -585,7 +683,6 @@ export const KNOB_VOCAB = deepFreeze({
   draftPolicies: ['review', 'skip'],
   reviewedPolicies: ['incremental', 'full', 'skip'],
   prNotFoundPolicies: ['local', 'error'],
-  reviewMdValues: ['present', 'absent'],
   receiptEntryKeys: ['value', 'source'],
 });
 
@@ -597,6 +694,6 @@ export function identityCheck(identity, name, fields = PR_IDENTITY_FIELDS) {
 export const REPORT_PLACED_FIELDS = deepFreeze([
   'sites',
   'id', 'file', 'line_start', 'line_end', 'title', 'description', 'severity',
-  'confidence', 'dimension', 'origin', 'evidence', 'suggestion',
+  'confidence', 'dimension', 'origin', 'change_origin', 'change_relevance', 'evidence', 'suggestion',
   'claude_md_rule', 'rule_source', 'spec_text', 'cross_file_refs',
 ]);

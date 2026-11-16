@@ -23,6 +23,9 @@ PREFLIGHT = "skills/code-gauntlet/references/phase1-preflight.md"
 HEADLESS = "skills/code-gauntlet/references/headless-mode.md"
 DELIVER_PHASE = "skills/code-gauntlet/references/phase8-delivery.md"
 TARGETS = (
+    ".claude-plugin/plugin.json",
+    "skills/code-gauntlet/references/complete-read-contract.md",
+    "agents/gap-hunter.md",
     "agents/bug-detector.md",
     "agents/type-design-analyzer.md",
     "agents/security-reviewer.md",
@@ -169,7 +172,7 @@ assert.equal(findingPolicy(good).core,true);
             [],
             [],
             [],
-            "report_only",
+            "held_back",
         ),
     ],
     ids=["correctness", "duplication", "equivalent", "idiom", "unsupported"],
@@ -196,7 +199,7 @@ def test_quality_basis_contract(
         assert rule["predicates"] == predicates
         assert rule.get("anyOf", []) == any_of
         assert rule.get("defaultDisposition", "held_back") == disposition
-        assert rule["phase"] == ("deterministic" if basis == "other" else "semantic")
+        assert rule["phase"] == "semantic"
         assert rule["tier"] == (
             "main" if basis == "current_correctness" else "suggestion"
         )
@@ -317,9 +320,11 @@ def test_site_descriptor_gates_discovery_consumers(
             "-e",
             """
 import { normalizePhaseFindings } from './workflows/src/checkpoints.js';
-import { discover } from './workflows/src/discover.js';
+import { discover as rawDiscover } from './workflows/src/discover.js';
+import { withPreparedPlan } from './workflows/test/helpers/diskDiscovery.js';
+const discover=(ctx,input)=>withPreparedPlan(ctx,input,rawDiscover);
 const schemas = {};
-await discover({agent: async (_, o) => { schemas[o.label] = o.schema; return {findings:[], complete:true, total_seen:0, removed_test_audit:[]}; }, parallel: async ts => Promise.all(ts.map(t=>t()))}, {});
+await discover({agent: async (_, o) => { schemas[o.label] = o.schema; return {findings:[], complete:true, total_seen:0, removed_test_audit:[]}; }, parallel: async ts => Promise.all(ts.map(t=>t()))}, {contextPath:'/context',contextLines:10,discoveryPlan:{version:2,status:'available',fact_packets:[],regions:[{id:'gap',file:'source',line_start:1,line_end:2,reads:[{offset:3,limit:2,bytes:100}]}]}});
 const out = { findings: [{file:'main.txt', related:[{path:'/repo/ok.txt',active:true},{path:'../escape',active:false}], sites:[{file:'../escape',line_start:1,line_end:1,anchor:'q'}]}] };
 normalizePhaseFindings('discover', out, false, {repoRoot:'/repo'});
 console.log(JSON.stringify({out, schemas}, (key, value) => key === '$comment' ? undefined : value));
@@ -381,12 +386,14 @@ def test_anchor_descriptor_generates_all_consumers(registry_tree, invoke):
             "node",
             "--input-type=module",
             "-e",
-            "import { discover } from './workflows/src/discover.js';"
+            "import { discover as rawDiscover } from './workflows/src/discover.js';"
+            "import { withPreparedPlan } from './workflows/test/helpers/diskDiscovery.js';"
+            "const discover=(ctx,input)=>withPreparedPlan(ctx,input,rawDiscover);"
             + "const schemas = {};"
             + "await discover({agent: async (_, options) => {"
             + "schemas[options.label] = options.schema;"
             + "return {findings: [], complete: true, total_seen: 0, removed_test_audit: []};"
-            + "}, parallel: async tasks => Promise.all(tasks.map(task => task()))}, {});"
+            + "}, parallel: async tasks => Promise.all(tasks.map(task => task()))}, {contextPath:'/context',contextLines:10,discoveryPlan:{version:2,status:'available',fact_packets:[],regions:[{id:'gap',file:'source',line_start:1,line_end:2,reads:[{offset:3,limit:2,bytes:100}]}]}});"
             + "console.log(JSON.stringify(schemas, (key, value) => key === '$comment' ? undefined : value));",
         ],
         cwd=str(registry_tree),
@@ -555,12 +562,6 @@ KNOB_CASES: list[tuple[str, dict[str, list[str]], dict[str, Any], dict[str, Any]
         {"kind": "csv_subset", "values": ["a", "b"]},
         {"type": "csv_list", "waistPath": "delivery.items"},
     ),
-    (
-        "delta",
-        {"interactive": ["present", "discovery"]},
-        {"kind": "enum", "values": ["present"]},
-        {"derivedFrom": "delta"},
-    ),
 ]
 
 IDENTITY = {
@@ -574,7 +575,6 @@ IDENTITY = {
     },
     "ruleSourceLabelFallback": "RF",
     "deriveWhen": {"gamma": "the gamma condition holds"},
-    "derivedFrom": {"delta": "the delta source is present"},
     "waistRequired": ["nested", "limits"],
     "prIdentityFields": [
         {"name": name, "required": required, "describe": describe}
@@ -616,11 +616,9 @@ IDENTITY = {
             "defaults": defaults,
             "rule": rule,
             "env": None,
-            "reviewMdKey": None,
             "type": "string",
             "waistPath": None,
             "waistMap": None,
-            "derivedFrom": None,
             "deriveWhen": None,
             "nullReceipt": [],
             "resolvedKey": False,
@@ -757,12 +755,16 @@ def test_shared_guidance_updates_agent_contracts(monkeypatch, symbol):
 
 @pytest.mark.parametrize("symbol", gen.VERIFICATION_SHARED)
 def test_verification_guidance_updates_all_consumers(monkeypatch, symbol):
+    registry = gen.load_registry(str(ROOT))
     original = gen.VERIFICATION_SHARED[symbol]
+    if symbol == "confidence":
+        original = original.format(**registry["anchorLimits"])
     replacement = "Updated verification evidence contract."
     monkeypatch.setitem(gen.VERIFICATION_SHARED, symbol, replacement)
-    targets = gen.rendered_targets(str(ROOT), gen.load_registry(str(ROOT)), "")
+    targets = gen.rendered_targets(str(ROOT), registry, "")
     for rel in gen.VERIFICATION_TARGETS:
         text = (ROOT / rel).read_text(encoding="utf-8")
+        assert original in text
         rendered = targets[rel](text)
         assert original not in rendered
         assert rendered.count(replacement) == 1
@@ -981,8 +983,8 @@ def test_added_knob(registry_tree, invoke):
         "  { key: 'added', modes: ['headless'], allowedSources: { "
         "headless: ['default'] }, "
         "rule: { kind: 'enum', values: ['value'] }, env: null, "
-        "reviewMdKey: null, defaults: { headless: ['value', 'default'] }, "
-        "type: 'string', waistPath: 'nested.added', waistMap: null, derivedFrom: null, "
+        "defaults: { headless: ['value', 'default'] }, "
+        "type: 'string', waistPath: 'nested.added', waistMap: null, "
         "deriveWhen: null, nullReceipt: [], resolvedKey: false },\n"
     )
     path.write_text(source.replace("\n]);", "\n" + row + "]);", 1), encoding="utf-8")
@@ -1226,3 +1228,104 @@ def test_registry_source_projection(registry_tree, invoke):
         namespace,
     )
     assert namespace["FIX_MAX_LINES"] == 101
+
+
+def test_supplemental_reviewer_registration_generates_agent_manifest_and_dispatch(
+    registry_tree, invoke
+):
+    source = registry_tree / "workflows/src/registry.js"
+    original = source.read_text(encoding="utf-8")
+    row = "  { agentType: 'code-gauntlet:probe-reader', dimension: 'bug', dispatch: 'uncovered', conditionalFlag: 'deep', label: 'Probe', objective: 'Inspect assigned regions.', tools: ['Read'], effort: 'high', color: 'cyan', modelOverride: 'sonnet' },\n"
+    source.write_text(
+        original.replace(
+            "export const DISCOVERY_REVIEWERS = deepFreeze([\n",
+            "export const DISCOVERY_REVIEWERS = deepFreeze([\n" + row,
+        ),
+        encoding="utf-8",
+        newline="",
+    )
+    result = invoke(
+        "generate_contract_requirements",
+        ["--repo-root", str(registry_tree)],
+        registry_tree,
+    )
+    assert result.returncode == 0, result.stderr
+    contract = (registry_tree / "agents/probe-reader.md").read_text(encoding="utf-8")
+    assert 'tools: "Read"' in contract and "Inspect assigned regions." in contract
+    manifest = json.loads(
+        (registry_tree / ".claude-plugin/plugin.json").read_text(encoding="utf-8")
+    )
+    assert "./agents/probe-reader.md" in manifest["agents"]
+    result = gen.proc.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            """
+import { discover as rawDiscover } from './workflows/src/discover.js';
+import { withPreparedPlan } from './workflows/test/helpers/diskDiscovery.js';
+const discover=(ctx,input)=>withPreparedPlan(ctx,input,rawDiscover);
+const labels = [];
+await discover({agent: async (_, opts) => {labels.push(opts.agentType); return {findings:[],complete:true,total_seen:0,read_regions:[],removed_test_audit:[]};},parallel:async ts=>Promise.all(ts.map(t=>t()))},
+{contextPath:'/prepared', contextLines:10, discoveryPlan:{version:2,status:'available',fact_packets:[],regions:[{id:'unread',file:'source',line_start:1,line_end:2,reads:[{offset:3,limit:2,bytes:100}]}]}});
+console.log(JSON.stringify(labels));
+""",
+        ],
+        cwd=str(registry_tree),
+        check=True,
+    )
+    assert "code-gauntlet:probe-reader" in json.loads(result.stdout)
+
+
+def test_supplemental_role_frontmatter_and_read_contract_have_single_owners(
+    registry_tree, invoke
+):
+    source = registry_tree / "workflows/src/registry.js"
+    original = source.read_text(encoding="utf-8")
+    objective = 'Quoted: "value"\nname: shadow'
+    changed, replacements = re.subn(
+        r"(agentType: 'code-gauntlet:gap-hunter'.*?objective: )'(?:\\.|[^'\\])*'",
+        lambda match: match[1] + json.dumps(objective),
+        original,
+        count=1,
+        flags=re.S,
+    )
+    assert replacements == 1
+    changed = changed.replace(
+        "tools: ['Read'], effort: 'high', color: 'cyan', modelOverride: 'sonnet'",
+        "tools: ['Read', 'Grep'], effort: 'medium', color: 'purple', modelOverride: 'haiku'",
+    )
+    assert changed != original
+    source.write_text(changed, encoding="utf-8", newline="")
+    canonical = (
+        registry_tree / "skills/code-gauntlet/references/complete-read-contract.md"
+    )
+    text = canonical.read_text(encoding="utf-8").replace(
+        "check that you reached the measured end or exhaust the file.",
+        "CANONICAL_READ_SENTINEL.",
+    )
+    canonical.write_text(text, encoding="utf-8", newline="")
+    result = invoke(
+        "generate_contract_requirements",
+        ["--repo-root", str(registry_tree)],
+        registry_tree,
+    )
+    assert result.returncode == 0, result.stderr
+    generated = (registry_tree / "agents/gap-hunter.md").read_text(encoding="utf-8")
+    header = generated.split("---\n", 2)[1]
+    fields = {
+        key: json.loads(value)
+        for key, value in (line.split(": ", 1) for line in header.split("\n") if line)
+    }
+    assert fields["description"] == objective
+    assert fields["effort"] == "medium" and fields["color"] == "purple"
+    assert fields["model"] == "haiku" and fields["tools"] == "Read, Grep"
+    assert fields["name"] == "gap-hunter"
+    assert "CANONICAL_READ_SENTINEL" in generated
+
+
+def test_reader_contracts_name_every_confirmed_consequence():
+    registry = gen.load_registry(str(ROOT))
+    for rel in gen.VERIFICATION_TARGETS:
+        tokens = set(re.findall(r"\b\w+\b", (ROOT / rel).read_text(encoding="utf-8")))
+        assert set(registry["confirmedVerdictRoutes"]) <= tokens

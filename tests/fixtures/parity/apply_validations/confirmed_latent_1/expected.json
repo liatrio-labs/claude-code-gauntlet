@@ -1,0 +1,32 @@
+{
+  "adjusted_count": 1,
+  "findings": [
+    {
+      "confidence": 90,
+      "demoted_by": "consequence",
+      "demotion_reason": "Add a caller",
+      "file": "src",
+      "id": "f",
+      "line_start": 10,
+      "original_severity": "high",
+      "report_destination": "suggestion",
+      "report_tag": "suggestion",
+      "severity": "low",
+      "validation_justification": "Caller inspected",
+      "validator_verdict": {
+        "claim": "confirmed",
+        "consequence": "latent",
+        "justification": "Caller inspected",
+        "latent_condition": "Add a caller"
+      },
+      "verdict": {
+        "claim": "confirmed",
+        "consequence": "latent",
+        "justification": "Caller inspected",
+        "latent_condition": "Add a caller"
+      },
+      "verdict_route": "posted-latent"
+    }
+  ],
+  "unmatched_ids": []
+}

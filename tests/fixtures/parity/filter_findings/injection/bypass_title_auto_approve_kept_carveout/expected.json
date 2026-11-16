@@ -6,11 +6,11 @@
       "description": "This toggle lets a trusted release branch skip the manual approval step under narrow conditions.",
       "file": "src/ci/toggle.py",
       "id": "T-carve-bypass-1",
-      "line_start": 80,
-      "severity": "low",
-      "title": "Add an auto-approve toggle for trusted release branches in CI",
       "line_end": 80,
-      "location_status": "confirmed"
+      "line_start": 80,
+      "location_status": "confirmed",
+      "severity": "low",
+      "title": "Add an auto-approve toggle for trusted release branches in CI"
     }
   ]
 }

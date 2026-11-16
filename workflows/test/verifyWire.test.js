@@ -1,8 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { joinVerifyDeltas, deltaContentProof, encodeInlineString, encodeSliceInline, recordProof, sliceInputChecksum, sliceTokenChecksum, projectVerifySliceFinding } from '../src/verifyWire.js';
-import { fnv1a32, normalizeReviewText } from '../src/wire.js';
-import { reviewMdSetChecksum } from '../src/args.js';
+import { fnv1a32 } from '../src/wire.js';
 import { loadCases } from './helpers/goldenCases.js';
 
 // Python-produced fixtures pin the join and content proof independently of the mock.
@@ -101,26 +100,6 @@ test('fact joins require membership in the matched proof set', () => {
     assert.equal(Object.hasOwn(joinVerifyDeltas(held, deltas)[0], key), false);
   }
 });
-
-for (const c of loadCases('review_text_checksum')) {
-  test(`review_text_checksum parity: ${c.name}`, () => {
-    const normalized = normalizeReviewText(c.input.text);
-    assert.deepEqual({ normalized, checksum: fnv1a32(normalized) }, c.expected);
-  });
-}
-
-test('normalizeReviewText is linear on long space and newline runs', () => {
-  const text = `${' '.repeat(100_000)}x\n${'\n'.repeat(100_000)}`;
-  const started = Date.now();
-  assert.equal(normalizeReviewText(text), `${' '.repeat(100_000)}x`);
-  assert.ok(Date.now() - started < 1000);
-});
-
-for (const c of loadCases('review_md_set_checksum')) {
-  test(`review_md_set_checksum parity: ${c.name}`, () => {
-    assert.deepEqual({ checksum: reviewMdSetChecksum(c.input.entries) }, c.expected);
-  });
-}
 
 test('proven locations replace held coordinates and aliases', () => {
   const held = { id: 'f', line_start: 800, line_end: 804, line: 2, end_line: 7,

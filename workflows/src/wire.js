@@ -11,18 +11,6 @@ export function fnv1a32(s) {
   return `fnv1a32:0x${h.toString(16).padStart(8, '0')}`;
 }
 
-// Read presentation changes must not alter either parsed settings or their proof.
-// Trim by scanning, not by an end-anchored regex, which backtracks quadratically on long space runs.
-export function normalizeReviewText(s) {
-  const lines = s.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n').map((line) => {
-    let end = line.length;
-    while (end > 0 && (line.charCodeAt(end - 1) === 0x20 || line.charCodeAt(end - 1) === 0x09)) end--;
-    return line.slice(0, end);
-  });
-  while (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
-  return lines.join('\n');
-}
-
 // The Write tool may add a BOM or one newline; tolerate those without hiding additional trailing newlines.
 export function normalizeForChecksum(s) {
   let out = typeof s === 'string' ? s : '';
@@ -105,7 +93,8 @@ export function coerceInt(value, policy) {
   return Number.isInteger(n) ? n : null;
 }
 
-// Bound pathological return payloads so persistence can fall back to the artifact writer and a smaller resume state.
+// Soft ceiling for optional telemetry and failure replay state, not completed artifacts.
+// The host writes full JSON results to disk; shedding review bytes here would lose work.
 export const RETURN_CHAR_BUDGET = 1000000;
 
 export function dottedValue(object, path) {
@@ -131,12 +120,6 @@ export const stripPythonWhitespace = (value) => value.replace(PYTHON_STRIP_RE, '
 
 export function asText(value) {
   return typeof value === 'string' ? value : '';
-}
-
-// Keep infinities as numeric filter inputs; the report's finite-only policy is deliberately separate.
-// Non-numbers and NaN need the numeric fallback so arithmetic cannot concatenate text or propagate NaN.
-export function asConfidence(value) {
-  return typeof value === 'number' && !Number.isNaN(value) ? value : 0;
 }
 
 // Freeze nested row data too, since freezing a table alone still permits rule changes.
@@ -176,4 +159,26 @@ export const PYTHON_COMMAND_ARGV = deepFreeze({ python3: ['python3'], python: ['
 export function pythonArgv(python = 'python3') {
   if (!Object.hasOwn(PYTHON_COMMAND_ARGV, python)) throw new Error('invalid python command');
   return PYTHON_COMMAND_ARGV[python];
+}
+
+// Escaping every opener keeps repository text from forging either trusted or untrusted blocks.
+export function untrustedJson(value, kind) {
+  const body = JSON.stringify(value).replace(/[<>&\u2028\u2029]/g,
+    (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  const id = fnv1a32(body).slice('fnv1a32:0x'.length);
+  return `<untrusted-code-content kind="${kind}" id="${id}">\n${body}\n</untrusted-code-content id="${id}">`;
+}
+
+// Match standard UTF-8 encoding, including replacement of isolated surrogates.
+export function utf8Encode(text) {
+  const bytes = [];
+  for (const char of text) {
+    let code = char.codePointAt(0);
+    if (code >= 0xd800 && code <= 0xdfff) code = 0xfffd;
+    if (code < 0x80) bytes.push(code);
+    else if (code < 0x800) bytes.push(0xc0 | (code >> 6), 0x80 | (code & 63));
+    else if (code < 0x10000) bytes.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 63), 0x80 | (code & 63));
+    else bytes.push(0xf0 | (code >> 18), 0x80 | ((code >> 12) & 63), 0x80 | ((code >> 6) & 63), 0x80 | (code & 63));
+  }
+  return bytes;
 }

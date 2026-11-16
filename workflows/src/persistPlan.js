@@ -20,7 +20,7 @@ function toV2Aliased(f) {
   return out;
 }
 
-export function postReviewWrapper(id, reviewBody) {
+export function postReviewWrapper(id, reviewBody, reviewSummary) {
   return {
     owner: id.owner,
     repo: id.repo,
@@ -29,6 +29,7 @@ export function postReviewWrapper(id, reviewBody) {
     platform: id.platform,
     web_origin: id.web_origin,
     review_body: typeof reviewBody === 'string' ? reviewBody : '',
+    ...(reviewSummary ? { review_summary: reviewSummary } : {}),
   };
 }
 
@@ -41,14 +42,14 @@ export function writerPayload(inp) {
     findings: (inp.findings || []).map(toV2Aliased),
     // The envelope carries the reviewed commit and resolved platform without remote inference.
     postReview: id
-      ? { ...postReviewWrapper(id, inp.reviewBody), findings: postReviewSet }
+      ? { ...postReviewWrapper(id, inp.reviewBody, inp.reviewSummary), findings: postReviewSet }
       : postReviewSet,
     report: inp.report || '',
     checkpoints: inp.checkpoints || {},
   };
 }
 
-// Stripping appended aliases restores canonical values and key order for checkpoint derivation.
+// Compare delivery selections without compatibility location aliases.
 const PERSIST_ALIAS_FIELDS = PERSIST_ALIASES.map(([alias]) => alias);
 
 function stripPersistAliases(f, fields = PERSIST_ALIAS_FIELDS) {
@@ -100,7 +101,7 @@ export function persistPlan(inp, paths) {
       path: paths.postReview,
       source: paths.findings,
       ids: (inp.postReview || []).map((f) => f && f.id),
-      wrapper: id ? postReviewWrapper(id, inp.reviewBody) : null,
+      wrapper: id ? postReviewWrapper(id, inp.reviewBody, inp.reviewSummary) : null,
     },
     checkpoint: {
       path: paths.checkpoints,
@@ -114,8 +115,36 @@ export function persistPlan(inp, paths) {
   return plan;
 }
 
+// Delivery can change a finding after challenge. Reuse only equal fields, preserving
+// the checkpoint's original keys, order and differing values (including forensic prose).
+export function returnPersistPlan(inp, paths) {
+  const plan = persistPlan(inp, paths);
+  const byId = new Map((inp.findings || []).map((f) => [f.id, toV2Aliased(f)]));
+  const projections = [];
+  const visit = (value, at) => {
+    if (!value || typeof value !== 'object') return value;
+    const source = !Array.isArray(value) && byId.get(value.id);
+    if (source) {
+      const keys = Object.keys(value);
+      const overrides = Object.fromEntries(keys
+        .filter((key) => !Object.hasOwn(source, key) || JSON.stringify(source[key]) !== JSON.stringify(value[key]))
+        .map((key) => [key, value[key]]));
+      projections.push({ at, id: value.id, keys, overrides });
+      return null;
+    }
+    return Array.isArray(value) ? value.map((child, index) => visit(child, [...at, index]))
+      : Object.fromEntries(Object.entries(value).map(([key, child]) => [key, visit(child, [...at, key])]));
+  };
+  plan.planVersion = 4;
+  plan.checkpoint = { path: paths.checkpoints, source: paths.findings,
+    skeleton: visit(plan.checkpoint.skeleton, []), projections };
+  delete plan.planChecksum;
+  plan.planChecksum = fnv1a32(JSON.stringify(plan, null, 2));
+  return plan;
+}
+
 // Returns { ok: true } or { ok: false, reason } for faithful id-based derivation.
-// Alias stripping must preserve values and key order; refusal lets writeArtifacts use the by-value writer.
+// Unsupported derivation uses exact returned strings or an explicitly selected by-value writer.
 export function persistDerivable(inp) {
   // The Python serializer accepts only safe integers for byte-identical derivation.
   for (const [label, value] of [

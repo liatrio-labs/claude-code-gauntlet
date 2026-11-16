@@ -1,7 +1,7 @@
 import { normalizeLocation } from './location.js';
 import { normalizeFindingPaths } from './mergeFindings.js';
 import { fnv1a32, isPlainObject, RETURN_CHAR_BUDGET } from './wire.js';
-import { applyInjectedProseStrip, applyReplayInjectionScan } from './injection.js';
+import { applyInjectedProseStrip, applyInjectionFilter } from './injection.js';
 import { normalizeFieldNames } from './filterFindings.js';
 import { normalizePipelineStamps } from './registry.js';
 
@@ -303,7 +303,7 @@ export function beltPartitionList(list) {
   const objectElements = list.map((el, idx) => ({ ...el, [REPLAY_BELT_INDEX_KEY]: idx }));
 
   normalizeFieldNames(objectElements);
-  const { kept, eliminated } = applyReplayInjectionScan(objectElements);
+  const { kept, eliminated } = applyInjectionFilter(objectElements);
 
   const survivorByIdx = new Map();
   for (const f of kept) {
