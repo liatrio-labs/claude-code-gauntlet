@@ -10,7 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
 
-TAG_PATTERN = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+$")
+TAG = r"v[0-9]+\.[0-9]+\.[0-9]+"
+TAG_PATTERN = re.compile(f"^{TAG}$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,16 +66,21 @@ def run_command(
     return result.stdout
 
 
+def describe(failure: CommandFailure) -> str:
+    detail = [line.strip() for line in failure.stderr.splitlines() if line.strip()]
+    suffix = f": {detail[-1]}" if detail else ""
+    return f"command failed ({failure.returncode}): {' '.join(failure.argv)}{suffix}"
+
+
 def exit_code(operation: Callable[[], int]) -> int:
     """Run a command body, turning each expected failure into stderr lines and exit 2."""
     try:
         return operation()
     except InputError as error:
-        lines = error.report()
+        # A failure without a message still has to say something.
+        lines = error.report() or [type(error).__name__]
     except CommandFailure as error:
-        detail = [line.strip() for line in error.stderr.splitlines() if line.strip()]
-        suffix = f": {detail[-1]}" if detail else ""
-        lines = [f"command failed ({error.returncode}): {' '.join(error.argv)}{suffix}"]
+        lines = [describe(error)]
     except OSError as error:
         lines = [f"file operation failed: {''.join(str(error).splitlines()[:1])}"]
     for line in lines:

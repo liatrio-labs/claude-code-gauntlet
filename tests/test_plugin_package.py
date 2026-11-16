@@ -64,7 +64,7 @@ def _source_files() -> dict[str, str]:
         **_package_files(),
         ".claude-plugin/marketplace.json": "{}\n",
         "agents/AGENTS.md": "# agents\n",
-        "scripts/gauntlet/measurement.py": "",
+        **dict.fromkeys(MODULE.DEV_ONLY, ""),
         "workflows/build.js": "",
         "README.md": "# Demo\n\n<picture>\n"
         '  <img alt="Overview" src="docs/assets/pipeline-overview-light.svg">\n'
@@ -111,7 +111,9 @@ def test_real_tree_ships_runtime_files_with_resolvable_links(tmp_path, capsys):
     assert not any(
         path.startswith("workflows/") for path in shipped - {"workflows/pipeline.js"}
     )
-    # Claude Code loads these locations without a manifest entry, so each must ship.
+    # The standard-layout table of the plugin manifest reference
+    # (code.claude.com/docs/en/plugins/manifest-reference) lists these default locations,
+    # which load without a manifest entry, so each one the repository has must ship.
     for location in COMPONENT_LOCATIONS:
         if (ROOT / location).exists():
             assert any(path.split("/")[0] == location for path in shipped), location
@@ -204,16 +206,13 @@ def test_markdown_rewrite_fails_on_links_that_would_break(text, problem):
     assert any(problem in line for line in raised.value.problems)
 
 
-def _symlink(target: Path, link: Path) -> None:
+def _link(root: Path) -> Path:
+    link = root / "skills/s/link.md"
     try:
-        link.symlink_to(target)
+        link.symlink_to(root / "LICENSE")
     except OSError as error:
         pytest.skip(f"symlinks unavailable: {error}")
-
-
-def _track_symlink(root: Path, out: Path) -> None:
-    _symlink(root / "LICENSE", root / "skills/s/link.md")
-    git(root, "add", "--all")
+    return link
 
 
 @pytest.mark.parametrize(
@@ -239,7 +238,7 @@ def _track_symlink(root: Path, out: Path) -> None:
             "docs/research/a.md: development path in the package",
         ),
         (
-            lambda root: _symlink(root / "LICENSE", root / "skills/s/link.md"),
+            _link,
             "skills/s/link.md: symlinks are not allowed",
         ),
         (
@@ -319,17 +318,26 @@ def test_check_enforces_directory_limits(tmp_path, capsys, mutate, problem):
     ("mutate", "problem"),
     [
         (lambda root, out: _write(out, {"stale": ""}), "output must be a new or empty"),
-        (_track_symlink, "skills/s/link.md: symlinks are not shipped"),
+        (
+            lambda root, out: (_link(root), git(root, "add", "--all")),
+            "skills/s/link.md: symlinks are not shipped",
+        ),
         (
             lambda root, out: git(root, "rm", "-q", "--cached", "PRIVACY.md"),
             "PRIVACY.md: shipped but not tracked",
+        ),
+        (
+            lambda root, out: git(
+                root, "rm", "-q", "--cached", "scripts/gauntlet/style.py"
+            ),
+            "scripts/gauntlet/style.py: in DEV_ONLY but not tracked",
         ),
         (
             lambda root, out: _write(root, {"SECURITY.md": "[x](missing.md)\n"}),
             "SECURITY.md: link missing.md points at no tracked file",
         ),
     ],
-    ids=["reused-output", "symlink", "untracked", "dangling"],
+    ids=["reused-output", "symlink", "untracked", "stale-dev-only", "dangling"],
 )
 def test_build_refuses_what_it_cannot_ship(tmp_path, source, capsys, mutate, problem):
     out = tmp_path / "package"
@@ -366,6 +374,11 @@ def test_cli_reports_failures_on_stderr_with_exit_2(
     out = tmp_path / "package"
     assert MODULE.main(["build", "--source", str(source), "--out", str(out)]) == 2
     assert capsys.readouterr().err == message + "\n"
+
+
+def test_a_failure_without_a_message_still_prints(capsys):
+    assert MODULE.exit_code(_raise(MODULE.InputError())) == 2
+    assert capsys.readouterr().err == "InputError\n"
 
 
 def test_build_ships_the_allowlist_from_a_source_tree(tmp_path, source):
@@ -405,7 +418,6 @@ def test_build_links_left_out_files_to_the_given_ref(tmp_path, source):
 
 def _land_on_main(source: Path) -> None:
     git(source, "push", "-q", "origin", "HEAD:refs/heads/main")
-    git(source, "fetch", "-q", "origin")
 
 
 def _release(source: Path, version: str) -> None:
@@ -415,13 +427,53 @@ def _release(source: Path, version: str) -> None:
     _land_on_main(source)
 
 
-def test_publish_builds_each_tag_into_one_linear_commit(tmp_path: Path, source: Path):
+@pytest.fixture
+def remote(tmp_path: Path, source: Path) -> Path:
     remote = tmp_path / "remote.git"
     git(tmp_path, "init", "-q", "--bare", str(remote))
     git(source, "remote", "add", "origin", str(remote))
+    # With no tracking refspec, only publish's own fetch can set origin/main.
+    git(source, "config", "--unset-all", "remote.origin.fetch")
     git(source, "tag", "v1.0.0")
-    git(source, "tag", "v9.0.0")
     _land_on_main(source)
+    return remote
+
+
+def _failing_git(monkeypatch: pytest.MonkeyPatch, prefix: list[str], code: int) -> None:
+    real = MODULE.run_command
+
+    def run(argv, cwd=None, env=None):
+        if argv[: len(prefix)] == prefix:
+            raise MODULE.CommandFailure(tuple(argv), code, "fatal: injected")
+        return real(argv, cwd, env)
+
+    monkeypatch.setattr(MODULE, "run_command", run)
+
+
+def test_publish_shows_a_git_error_instead_of_an_ancestry_verdict(
+    source, remote, monkeypatch
+):
+    _failing_git(monkeypatch, ["git", "merge-base"], 128)
+    with pytest.raises(MODULE.CommandFailure) as raised:
+        MODULE.publish("v1.0.0", source)
+    assert raised.value.returncode == 128
+
+
+def test_publish_keeps_the_build_error_when_cleanup_also_fails(
+    source, remote, monkeypatch, capsys
+):
+    monkeypatch.setattr(MODULE, "build", _raise(MODULE.PackageError(["boom"])))
+    _failing_git(monkeypatch, ["git", "worktree", "remove"], 1)
+    with pytest.raises(MODULE.PackageError, match="boom"):
+        MODULE.publish("v1.0.0", source)
+    assert capsys.readouterr().err.startswith(
+        "also failed to remove the build worktree: "
+        "command failed (1): git worktree remove --force"
+    )
+
+
+def test_publish_builds_each_tag_into_one_linear_commit(source: Path, remote: Path):
+    git(source, "tag", "v9.0.0")
     with pytest.raises(MODULE.InputError, match="malformed release tag"):
         MODULE.publish("1.0.0", source)
     assert MODULE.publish("v1.0.0", source)[-1].startswith("published v1.0.0")
@@ -467,5 +519,8 @@ def test_publish_builds_each_tag_into_one_linear_commit(tmp_path: Path, source: 
     hand = git(remote, "commit-tree", tree, "-p", "plugin-release", "-m", "hotfix")
     git(remote, "update-ref", "refs/heads/plugin-release", hand)
     _release(source, "1.2.0")
-    with pytest.raises(MODULE.InputError, match="is not a release commit: 'hotfix'"):
+    with pytest.raises(
+        MODULE.InputError,
+        match=r"is not a release commit: 'hotfix'\. Reset plugin-release to its last",
+    ):
         MODULE.publish("v1.2.0", source)

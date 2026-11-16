@@ -28,9 +28,11 @@ from urllib.parse import quote, unquote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from release_cli import (
+    TAG,
     ArgumentParser,
     CommandFailure,
     InputError,
+    describe,
     entry,
     exit_code,
     run_command,
@@ -42,7 +44,8 @@ RELEASE_BRANCH = "plugin-release"
 # A manual retry names its own tag, so publish ships only commits that reached main.
 MAIN_REF = "refs/remotes/origin/main"
 MANIFEST = ".claude-plugin/plugin.json"
-RELEASE_SUBJECT = re.compile(r"release: v([0-9]+)\.([0-9]+)\.([0-9]+)")
+SUBJECT_PREFIX = "release: "
+RELEASE_SUBJECT = re.compile(re.escape(SUBJECT_PREFIX) + f"({TAG})")
 
 # Everything the package ships besides the agent files plugin.json lists. A directory ships
 # whole, so a new runtime module or reference needs no edit here.
@@ -151,7 +154,13 @@ class Link:
 class ReleaseHead:
     commit: str
     tree: str
-    version: tuple[int, ...]
+    tag: str
+
+
+def _version(tag: str) -> tuple[int, int, int]:
+    """Read a vX.Y.Z tag as a comparable version; the one parser of the release format."""
+    major, minor, patch = (int(part) for part in validate_tag(tag)[1:].split("."))
+    return major, minor, patch
 
 
 def _manifest(path: Path) -> dict[str, object]:
@@ -200,7 +209,12 @@ def _text(path: Path, relative: str, problems: list[str]) -> str | None:
 
 
 def select_paths(tracked: Iterable[str], agents: Iterable[str]) -> list[str]:
-    """Return the tracked files the package ships, failing on an entry that matches none."""
+    """Return the tracked files the package ships, failing on an entry that matches none.
+
+    A DEV_ONLY path that is no longer tracked fails too: a renamed dev script would
+    otherwise start shipping under its new name.
+    """
+    files = frozenset(tracked)
     entries = (*SHIPPED, *agents)
 
     def under(path: str, entry: str) -> bool:
@@ -208,14 +222,16 @@ def select_paths(tracked: Iterable[str], agents: Iterable[str]) -> list[str]:
 
     chosen = sorted(
         path
-        for path in tracked
+        for path in files
         if path not in DEV_ONLY and any(under(path, entry) for entry in entries)
     )
-    missing = [
-        entry for entry in entries if not any(under(path, entry) for path in chosen)
-    ]
-    if missing:
-        raise PackageError(f"{entry}: shipped but not tracked" for entry in missing)
+    problems = [
+        f"{entry}: shipped but not tracked"
+        for entry in entries
+        if not any(under(path, entry) for path in chosen)
+    ] + [f"{path}: in DEV_ONLY but not tracked" for path in sorted(DEV_ONLY - files)]
+    if problems:
+        raise PackageError(problems)
     return chosen
 
 
@@ -558,9 +574,23 @@ def _release_head(repo: Path) -> ReleaseHead | None:
     match = RELEASE_SUBJECT.fullmatch(subject)
     if not match:
         raise InputError(
-            f"{RELEASE_BRANCH} head {commit[:12]} is not a release commit: {subject!r}"
+            f"{RELEASE_BRANCH} head {commit[:12]} is not a release commit: {subject!r}."
+            f" Reset {RELEASE_BRANCH} to its last {SUBJECT_PREFIX!r} commit or delete"
+            " it, then rerun the manual publish."
         )
-    return ReleaseHead(commit, tree, tuple(int(part) for part in match.groups()))
+    return ReleaseHead(commit, tree, match[1])
+
+
+def _remove_worktree(argv: list[str], repo: Path) -> None:
+    # Runs while a build error propagates, so it reports its own failure instead of
+    # replacing that error.
+    try:
+        run_command(argv, repo)
+    except CommandFailure as failure:
+        print(
+            f"also failed to remove the build worktree: {describe(failure)}",
+            file=sys.stderr,
+        )
 
 
 def _package_tree(package: Path, repo: Path) -> str:
@@ -579,22 +609,29 @@ def publish(tag: str, repo: Path) -> list[str]:
     tagged = run_command(
         ["git", "rev-parse", "--verify", f"refs/tags/{tag}^{{commit}}"], repo
     ).strip()
-    # Fetch first: the release commit was pushed moments ago by semantic-release.
-    run_command(["git", "fetch", "--quiet", "origin", "main"], repo)
+    # Fetch first: the release commit was pushed moments ago by semantic-release. The
+    # explicit refspec sets MAIN_REF even in a clone that does not track main.
+    fetch_main = f"+refs/heads/main:{MAIN_REF}"
+    run_command(["git", "fetch", "--quiet", "--no-tags", "origin", fetch_main], repo)
     try:
         run_command(["git", "merge-base", "--is-ancestor", tagged, MAIN_REF], repo)
     except CommandFailure as error:
+        # Exit 1 is the verdict; any other code is a git error worth showing as is.
+        if error.returncode != 1:
+            raise
         raise InputError(
             f"{tag} is not on main; only released commits publish"
         ) from error
     with tempfile.TemporaryDirectory(prefix="plugin-package-") as scratch:
         source, package = Path(scratch, "source"), Path(scratch, "package")
-        worktree = ["git", "worktree"]
-        run_command([*worktree, "add", "--detach", str(source), tagged], repo)
+        remove = ["git", "worktree", "remove", "--force", str(source)]
+        run_command(["git", "worktree", "add", "--detach", str(source), tagged], repo)
         try:
             report = build(source, package, tag)
-        finally:
-            run_command([*worktree, "remove", "--force", str(source)], repo)
+        except BaseException:
+            _remove_worktree(remove, repo)
+            raise
+        run_command(remove, repo)
         version = _manifest(package / MANIFEST).get("version")
         if version != tag[1:]:
             raise PackageError([f"package version {version!r} does not match {tag}"])
@@ -602,14 +639,15 @@ def publish(tag: str, repo: Path) -> list[str]:
         tree = _package_tree(package, repo)
     if head and head.tree == tree:
         return [*report.lines(), f"{RELEASE_BRANCH} already holds the {tag} package"]
-    if head and head.version >= tuple(int(part) for part in tag[1:].split(".")):
-        held = ".".join(map(str, head.version))
-        raise InputError(f"{RELEASE_BRANCH} already holds v{held}; publish a newer tag")
+    if head and _version(head.tag) >= _version(tag):
+        raise InputError(
+            f"{RELEASE_BRANCH} already holds {head.tag}; publish a newer tag"
+        )
     commit = run_command(
         [
             *("git", "commit-tree", tree),
             *(["-p", head.commit] if head else []),
-            *("-m", f"release: {tag}"),
+            *("-m", SUBJECT_PREFIX + tag),
         ],
         repo,
     ).strip()
