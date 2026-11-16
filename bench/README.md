@@ -380,8 +380,9 @@ credentials is prohibited by the usage policy.
 
 ## Measurement history
 
-The [release table](../README.md#benchmark-results) records the v3.0 gate subset and holdout, plus the v2 baseline and upstream anchors.
-Later paired minis use the same six PRs as the v3.1 baseline.
+The [release table](../README.md#benchmark-results) reports the current v4.0 benchmark.
+The paired minis below use the same six PRs as the v3.1 baseline.
+The v4.0.0 row is the Full test set (15 PRs, 66 bugs), pooled across three lanes, not a mini.
 The [committed ledger](experiments.jsonl) records these runs:
 
 | Release | Date | Run identifiers | Recall | Noise |
@@ -391,15 +392,20 @@ The [committed ledger](experiments.jsonl) records these runs:
 | v3.24 | 2026-09-01 | `mini-20260901-170531-2cb9104` | 0.633 | 0.179 |
 | v3.26 | 2026-09-03 | `mini-20260903-204424-e8b3af7` | 0.667 | 0.138 |
 | v3.42.49 baseline | 2026-10-20 | `mini-20261020-030509-839b1886` | 0.633 | 0.065 |
+| v4.0.0 (Full test set) | 2026-11-16 | Lane 1: `subset-20261115-230910-3bab948e` + `custom-20261116-034129-3911db9e`; Lane 2: `subset-20261115-231648-3bab948e` + `custom-20261116-034135-3911db9e`; Lane 3: `subset-20261115-231656-3bab948e` + `custom-20261116-034141-3911db9e` | 0.788 (156/198) | — |
+
+Each v4.0 lane pools the four PRs from its custom run at 3911db9e with the other eleven PRs from its subset run at 3bab948e.
+Session: Sonnet at effort low; judge: `claude-opus-4-5-20251101`.
+Pooled noise is not reported.
 
 The v3.12 row combines a five-PR mini and its one-PR completion leg.
 The v3.26 mini met the pre-registered 0.24 noise ceiling.
-At six PRs, one reference finding moves recall by 3.3 percentage points.
+For the six-PR minis, one reference finding moves recall by 3.3 percentage points.
 Treat the gain over v3.1 as a consistency check.
 Noise in the v3.24 and v3.26 minis is below the v3.1 baseline.
 That matches what we would expect from v3.24's wider injection filtering.
 That change only adds eliminations.
-These runs do not establish causation.
+These mini runs do not establish causation.
 
 `report.py` renders release summaries, run-level recall and noise, tokens, cost, and anchor comparisons from the ledger and baselines.
 Active scores and the read-only historical release dashboard appear in separate epoch sections.
