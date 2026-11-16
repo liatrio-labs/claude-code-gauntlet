@@ -9,7 +9,7 @@ pipeline: a generated JavaScript workflow bundle (`workflows/pipeline.js`) plus 
 scripts (`scripts/`) for verification, posting, and parity. Contributions generally fall into one of these areas:
 
 - Review pipeline stages in the workflow bundle source (`workflows/src/`) — see
-  [The v3 workflow pipeline](#the-v3-workflow-pipeline-js)
+  [The workflow pipeline](#the-workflow-pipeline-js)
 - Bug fixes in the retained Python scripts (`scripts/`)
 - New or improved review agents (`agents/`)
 - Skill orchestration improvements (`skills/`)
@@ -106,12 +106,14 @@ Use these phase names when reporting a failure:
 
 1. Pre-flight: the session checks eligibility and resolves configuration.
 2. Target & triage: the session gathers the diff, risk classification, and project rules.
-3. Summarize & discover: agents summarize the changes and propose findings in parallel.
+3. Summarize & discover: agents summarize the changes and propose findings in parallel,
+   then the gap hunter reads changed code that no finding pointed at.
 4. Merge & verify: the pipeline combines candidates and checks source facts and git blame.
 5. Validate: an independent agent tries to disprove each finding.
-6. Filter: the pipeline routes typed verdicts and rejects injection.
-7. Blind challenge: a fresh agent checks each claim without the original reasoning or evidence;
-   then the grouper groups deliverable survivors.
+6. Filter: the pipeline routes typed verdicts and strips known injection patterns.
+7. Admission & blind challenge: code checks each finding kind's required evidence, then a fresh
+   agent checks each claim without the original reasoning or evidence; the grouper then joins
+   findings that one change would fix.
 8. Report & deliver: the workflow renders results; the session saves artifacts and handles delivery.
 
 The workflow renders and ranks results but has no filesystem access.
@@ -141,7 +143,7 @@ claude-code-gauntlet/
 `-- docs/research/           # Design evidence
 ```
 
-## The v3 workflow pipeline (JS)
+## The workflow pipeline (JS)
 
 The review pipeline runs inside Claude Code's workflow runtime, so it carries constraints the Python side does not.
 

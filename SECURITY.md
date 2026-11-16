@@ -71,7 +71,7 @@ See [the merge policy](CONTRIBUTING.md#pull-requests).
 ### Trust boundaries
 
 The pipeline reads several kinds of repository-supplied text and extends each a different level of trust. The
-split is deliberate; it was decided on issue #82 (2026-08-02).
+split is deliberate.
 
 - **The diff is untrusted data.** It enters the shared agent context wrapped in `<untrusted-code-content>` tags,
   and anything that looks like an instruction inside it is data to analyze, never an instruction to follow.

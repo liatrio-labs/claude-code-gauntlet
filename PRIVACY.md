@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Last updated:** October 5, 2026
+**Last updated:** November 16, 2026
 
 ## Overview
 
@@ -15,16 +15,18 @@ Nothing.
 - The plugin loads markdown skill and agent contracts, a generated JavaScript workflow bundle, and Python 3.10 or newer scripts locally. The shipped pipeline scripts use only the Python standard library; the benchmark harness's vendored scorer has separate dependencies.
 - Review output files (`.code-gauntlet/`) are stored in your project directory on your machine
 - Review agents analyze code through the model access configured in your Claude Code session
+- PR and MR reviews read the existing review comments to find the plugin's own earlier review
 - Interactive runs ask before posting findings to an open PR or MR; headless posting defaults to dry-run. See [delivery options](README.md#what-it-posts).
+- If you accept the offer, the plugin creates one Claude Code task per delivered finding in your session
 - No telemetry, no tracking, no cookies
 
 ## Third-Party Services
 
-The plugin uses your configured Claude Code model access and the authenticated `gh` or `glab` CLI to read review targets and post findings. These services receive the code or review content needed for those operations. Their data handling follows their own policies. The plugin has no separate analytics service. The benchmark harness under `bench/` is developer tooling that a review never runs; when you run it yourself, it calls an LLM judge API with your own key.
+The plugin uses your configured Claude Code model access and the authenticated `gh` or `glab` CLI to read review targets and post findings. These services receive the code or review content needed for those operations. Their data handling follows their own policies. The plugin has no separate analytics service. The benchmark harness under `bench/` is developer tooling that a review never runs. When you run it yourself, it calls an LLM judge API with your own key.
 
 ## Data Storage
 
-Review files are saved within the output directory (`.code-gauntlet/` by default, configurable via `$CODE_GAUNTLET_OUTPUT_DIR`). These include review context, findings, a markdown report, and resume checkpoints. On the default path, the session materializes the result artifacts after the workflow returns. You can read, edit, delete, or ignore these files. When the output directory is inside the repo, it is ignored by default via `.git/info/exclude` (never by editing the tracked `.gitignore`). Outside that directory the plugin appends one ignore entry to `.git/info/exclude`, which does not appear in `git status`. Interactive runs check out the PR or MR branch when your working tree is not already on it. Posting writes a short-lived temp file that holds the comment payload.
+Review files are saved within the output directory (`.code-gauntlet/` by default, configurable via `$CODE_GAUNTLET_OUTPUT_DIR`). These include review context, findings, a markdown report, and resume checkpoints. On the default path, the session materializes the result artifacts after the workflow returns. You can read, edit, delete, or ignore these files. They stay until you delete them, and a rerun replaces only the files for the same commit. When the output directory is inside the repository and not already ignored, the plugin adds one entry to `.git/info/exclude`. That entry does not appear in `git status`. It never edits the tracked `.gitignore`, and an output directory outside the repository gets no entry. Interactive runs check out the PR or MR branch when your working tree is not already on it. Posting writes a short-lived temp file that holds the comment payload.
 
 ## Contact
 
