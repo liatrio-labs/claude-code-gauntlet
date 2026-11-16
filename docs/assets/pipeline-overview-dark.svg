@@ -124,7 +124,7 @@
   <text class="stage-title" x="916" y="688">Filter</text>
   <text class="detail" x="916" y="724">Routes by verdict</text>
   <text class="detail" x="916" y="750">Strips injection patterns</text>
-  <text class="detail" x="916" y="776">Drops verified refutations</text>
+  <text class="detail" x="916" y="776">Drops refuted, not security</text>
 
   <path class="flow" d="M1029 798 V826 H171 V840" marker-end="url(#arrow)"/>
   <text class="detail" x="560" y="818">Surviving findings</text>
@@ -168,7 +168,7 @@
   <text x="432" y="1100">Asks before posting</text>
   <text class="detail" x="432" y="1126">Inline comments only on yes</text>
   <text class="detail" x="432" y="1152">Optional task board</text>
-  <text class="detail" x="432" y="1178">Mentions contained, tokens redacted</text>
+  <text class="detail" x="432" y="1178">Mentions contained, known tokens redacted</text>
   <rect class="unverified-panel" x="888" y="1070" width="272" height="120" rx="10"/>
   <text class="section" x="908" y="1103">Unverified findings</text>
   <text class="detail" x="908" y="1136">Incomplete checks</text>

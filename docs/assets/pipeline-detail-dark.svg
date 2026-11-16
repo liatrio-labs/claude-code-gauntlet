@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 3006" role="img" aria-labelledby="pipeline-title pipeline-desc">
   <title id="pipeline-title">Code Gauntlet review pipeline in detail</title>
-  <desc id="pipeline-desc">A GitHub pull request, GitLab merge request or local change is prepared in your session, then reviewed inside one Workflow call. On a full review seven specialist agents discover candidate findings in parallel; a light review, offered when every changed file is low risk and the change is under 50 lines, runs only the bug and security reviewers. A gap hunter agent then reads changed regions no specialist cited, within a fixed read budget, and the report lists what the budget left out; light reviews and fully cited changes skip it. Code merges and deduplicates the findings and verifies each cited file, line and symbol against the source. An independent validator agent tries to disprove each finding and returns a fixed verdict, and on a confirmation writes the title, body and fix that would be posted. Code filters by verdict and removes prompt-injection patterns, then admission requires each finding kind to carry the evidence it needs. A blind challenge by a fresh agent sees only the claim and its location. The two readers' verdicts are resolved into one final verdict and the confirming reader writes the posted comment. A confirmed present failure posts at its severity, a confirmed latent defect posts at low severity, comment wording or no practical effect stays in the local report, a refutation with a verified code citation drops the finding, and a finding not established is held back and listed as unverified. A security finding is dropped only when both readers refute it with verified citations. A group agent joins findings that one change would fix. Code ranks and selects the delivery set and renders the report, with incomplete checks in a separate unverified section, then hands the results back to your session. On an interactive run the session always saves a Markdown report, asks before posting inline comments to an open pull or merge request, and offers an optional task board. A headless run asks nothing, delivers to chat, Markdown or PR comments as configured, and defaults posting to dry-run.</desc>
+  <desc id="pipeline-desc">A GitHub pull request, GitLab merge request or local change is prepared in your session, then reviewed inside one Workflow call. On a full review seven specialist agents discover candidate findings in parallel; a light review, offered when every changed file is low risk and the change is under 50 lines, runs only the bug and security reviewers. A gap hunter agent then reads changed regions no specialist cited, within a fixed read budget, and the report lists what the budget left out; light reviews and fully cited changes skip it. Code merges and deduplicates the findings and verifies each cited file, line and symbol against the source. An independent validator agent tries to disprove each finding and returns a fixed verdict, and on a confirmation writes the title, body and fix that would be posted. Code filters by verdict and removes prompt-injection patterns, then admission requires each finding kind to carry the evidence it needs. A blind challenge by a fresh agent sees only the claim and its location. The two readers' verdicts are resolved into one final verdict and the confirming reader writes the posted comment. A confirmed present failure posts at its severity, a confirmed latent defect, or a defect in a test or standalone documentation, posts at low severity, comment wording or no practical effect stays in the local report, a refutation with a verified code citation drops the finding, and a finding not established is held back and listed as unverified. A security finding is dropped only when both readers refute it with verified citations. A group agent joins findings that one change would fix. Code ranks and selects the delivery set and renders the report, with incomplete checks in a separate unverified section, then hands the results back to your session. On an interactive run the session always saves a Markdown report, asks before posting inline comments to an open pull or merge request, and offers an optional task board. A headless run asks nothing, delivers to chat, Markdown or PR comments as configured, and defaults posting to dry-run.</desc>
   <defs>
     <style>
       text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 18px; fill: #e6edf3; }
@@ -145,7 +145,7 @@
   <text class="detail" x="92" y="1566">Routes each finding by its verdict</text>
   <text class="detail" x="92" y="1591">Removes known prompt-injection patterns</text>
   <line class="divider" x1="780" y1="1496" x2="780" y2="1593"/>
-  <text class="effect" x="802" y="1537.5"><tspan class="cut">Cut</tspan>  verified refutations</text>
+  <text class="effect" x="802" y="1537.5"><tspan class="cut">Cut</tspan>  verified refutations, not security</text>
   <text class="effect" x="802" y="1563.5"><tspan class="cut">Cut</tspan>  known prompt-injection patterns</text>
   <path class="flow" d="M128 1615 V1643" marker-end="url(#arrow)"/>
   <rect class="panel" x="64" y="1645" width="1072" height="141" rx="10"/>
@@ -168,7 +168,7 @@
   <text class="agent-kind" x="662" y="1854">FINAL VERDICT ROUTES</text>
   <text class="detail" x="662" y="1886">Confirmed failure</text>
   <text class="effect" x="900" y="1886">Posts at its severity</text>
-  <text class="detail" x="662" y="1912">Confirmed latent defect</text>
+  <text class="detail" x="662" y="1912">Latent, test or doc defect</text>
   <text class="effect" x="900" y="1912">Posts at low severity</text>
   <text class="detail" x="662" y="1938">Wording or no real effect</text>
   <text class="effect" x="900" y="1938">Local report only</text>
@@ -200,7 +200,7 @@
   <line class="divider" x1="780" y1="2303" x2="780" y2="2400"/>
   <text class="effect" x="802" y="2318.5">Unfinished checks: unverified section</text>
   <text class="effect" x="802" y="2344.5">Discovery prose stays in report</text>
-  <text class="effect" x="802" y="2370.5">Headless: at most 25 inline comments</text>
+  <text class="effect" x="802" y="2370.5">Headless default: 25 inline comments</text>
   <text class="effect" x="802" y="2396.5">Selection made by code</text>
   <text class="kind" x="64" y="2466">DESIGN PRINCIPLES</text>
   <rect class="panel" x="64" y="2480" width="1072" height="84" rx="10"/>

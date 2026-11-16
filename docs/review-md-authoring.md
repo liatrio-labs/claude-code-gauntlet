@@ -15,7 +15,8 @@ The plugin collects rules from the changed files' directories and their parents,
 Markdown imports in these files are followed within the same limits as the other rule files.
 
 `REVIEW.md` holds rules only.
-A settings block in it does not change filtering or posting, and the local report notes that it was ignored.
+A settings block in it does not change filtering or posting.
+When the plugin recognizes an old settings block, the local report notes that it was ignored.
 Delivery settings are environment variables, listed in
 [headless configuration](../skills/code-gauntlet/references/headless-mode.md).
 The [format reference](../skills/code-gauntlet/references/review-md-spec.md) has the details.

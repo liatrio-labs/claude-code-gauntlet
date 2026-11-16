@@ -123,6 +123,7 @@ Their two answers settle the final verdict.
 A confirmed failure posts at its severity, and a latent defect posts at low severity.
 A reader can refute a finding only by citing code, and the plugin checks that citation.
 A security finding is dropped only when both readers refute it.
+If only one reader refutes it, it stays in the report but is not posted.
 Preferences, unverified findings, and complaints about comment wording stay in the local report.
 If verification or validation itself breaks, the report records the gap.
 
