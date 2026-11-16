@@ -46,7 +46,6 @@ def run_command(
     env: Mapping[str, str] | None = None,
 ) -> str:
     """Run the only subprocess boundary and return stdout as text."""
-    extra = {"env": {**os.environ, **env}} if env else {}
     try:
         result = subprocess.run(
             argv,
@@ -55,7 +54,7 @@ def run_command(
             text=True,
             encoding="utf-8",
             check=False,
-            **extra,
+            env={**os.environ, **env} if env else None,
         )
     except UnicodeDecodeError:
         raise InputError("command output is not valid UTF-8") from None

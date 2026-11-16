@@ -428,6 +428,7 @@ def test_runner_smoke_and_failure(failed, monkeypatch, capsys):
                 "text": True,
                 "encoding": "utf-8",
                 "check": False,
+                "env": None,
             },
         )
         for argv in ([RELEASE_ARGV] if failed else [RELEASE_ARGV, ISSUE_LIST_ARGV])
