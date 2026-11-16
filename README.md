@@ -4,13 +4,29 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/liatrio-labs/claude-code-gauntlet/badge)](https://securityscorecards.dev/viewer/?uri=github.com/liatrio-labs/claude-code-gauntlet)
 
-Code review for Claude Code where every finding has to survive a fight before it reaches your PR.
+![Code Gauntlet: adversarial code review for Claude Code. Seven specialist reviewers; verify, validate, challenge; findings that hold up.](docs/assets/code-gauntlet-banner.jpg)
 
-In a full review, seven specialist agents check a GitHub PR, GitLab MR, or local change for bugs, security, tests, and cross-file impact.
+**Code review for Claude Code where every finding has to survive a fight before it reaches your PR.**
+
+Code Gauntlet sends a team of specialist agents over your change, then tries hard to knock down everything they report.
+What survives is a short list of real defects, each with one clear comment.
+
+```bash
+claude plugin marketplace add https://github.com/liatrio-labs/claude-code-gauntlet.git
+claude plugin install code-gauntlet@code-gauntlet
+```
+
+## Why Code Gauntlet
+
+- **It catches real bugs.** On a public benchmark of 15 real PRs with 66 known bugs, it caught 79% of them over three runs.
+- **Its findings hold up.** Each one is checked against the source, attacked by a skeptical validator, and re-examined by a blind challenger before it can post.
+- **It keeps your PR readable.** When several agents report the same defect, you get one short comment, with a suggested fix when there is one.
+- **It reviews where you work.** It handles GitHub PRs, GitLab MRs, and local changes, in your session or headless in CI.
+- **It stays on your machine.** It runs inside your Claude Code session, with no server and no telemetry, under the Apache 2.0 license.
+
+In a full review, seven specialist agents check the change for bugs, security, tests, and cross-file impact.
 An eighth agent then reads changed code that none of their findings pointed at, within a fixed budget.
-A finding is posted only after it is checked against the source, attacked by a skeptical validator, and re-examined by a blind challenger.
-
-On a public benchmark of 15 real PRs with 66 known bugs, it caught 79% of them over three runs ([benchmark results](#benchmark-results)).
+The [benchmark results](#benchmark-results) and [how it reviews](#how-it-reviews) give the detail.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/pipeline-overview-dark.svg">
@@ -37,12 +53,8 @@ A review also gives you a summary of every reported issue and a full markdown re
 
 ## Quick start
 
-```bash
-claude plugin marketplace add https://github.com/liatrio-labs/claude-code-gauntlet.git
-claude plugin install code-gauntlet@code-gauntlet
-```
-
-Open Claude Code in your repository and enter `/code-gauntlet 42` to review PR #42.
+Install with the two commands at the top of this page.
+Then open Claude Code in your repository and enter `/code-gauntlet 42` to review PR #42.
 PR and MR reviews need the `gh` or `glab` CLI logged in first, and interactive runs review open PRs and MRs only.
 A PR review checks out the PR branch and leaves you on it, so commit your work first.
 Plain words work too, because the plugin triggers on code review requests:
