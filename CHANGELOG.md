@@ -2,6 +2,41 @@
 
 <!-- version list -->
 
+## v4.0.1 (2026-11-16)
+
+### Bug Fixes
+
+- Correct the README, diagrams and public docs against v4
+  ([#599](https://github.com/liatrio-labs/claude-code-gauntlet/pull/599),
+  [`8086af6`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8086af60129578fd9808d05204d5aaaf9dd793f8))
+
+### Documentation
+
+- Address the gauntlet review of the v4 README pass
+  ([#598](https://github.com/liatrio-labs/claude-code-gauntlet/pull/598),
+  [`330470c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/330470c2a2884f515b6143548f09d19cc4f164ac))
+
+- Address the second audit and the gauntlet review of the README
+  ([#599](https://github.com/liatrio-labs/claude-code-gauntlet/pull/599),
+  [`8086af6`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8086af60129578fd9808d05204d5aaaf9dd793f8))
+
+- Bring the README and diagrams up to the v4 design
+  ([#598](https://github.com/liatrio-labs/claude-code-gauntlet/pull/598),
+  [`330470c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/330470c2a2884f515b6143548f09d19cc4f164ac))
+
+- List the gap hunter in the README agent table
+  ([#599](https://github.com/liatrio-labs/claude-code-gauntlet/pull/599),
+  [`8086af6`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8086af60129578fd9808d05204d5aaaf9dd793f8))
+
+- Rewrite the README for v4 and publish its benchmark (#46)
+  ([#585](https://github.com/liatrio-labs/claude-code-gauntlet/pull/585),
+  [`f2abf95`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f2abf95bc079b9ba6037f43ae3fddd6691ccdad0))
+
+- **bench**: Add the v4.0 release to the dashboard and measurement history (#46)
+  ([#597](https://github.com/liatrio-labs/claude-code-gauntlet/pull/597),
+  [`e852c61`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e852c612d37d29caea7bcb8937dee0686a8b0120))
+
+
 ## v4.0.0 (2026-11-16)
 
 ### Features
