@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 2403" role="img" aria-labelledby="pipeline-title pipeline-desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 3006" role="img" aria-labelledby="pipeline-title pipeline-desc">
   <title id="pipeline-title">Code Gauntlet review pipeline in detail</title>
-  <desc id="pipeline-desc">A GitHub pull request, GitLab merge request or local change is prepared in your session, then reviewed inside one Workflow call. On a full review seven specialist agents discover candidate findings in parallel; a light review, offered when every changed file is low risk and the change is under 50 lines, runs only the bug and security reviewers. Each candidate passes through merge, verify, validate, filter and a blind challenge that sees only the claim and its location. An unresolved validation can recover through independent confirmation by the challenger; unproven verification stays held back. Readers supply short confirmed statements, and code comment or docstring wording defects stay in the report. Code ranks and selects the delivery set and renders the report, then hands the results back to your session. On an interactive run the session always saves a Markdown report, asks before posting inline comments to an open pull or merge request, and offers an optional task board. A headless run asks nothing, delivers to chat, Markdown or PR comments as configured, and defaults posting to dry-run.</desc>
+  <desc id="pipeline-desc">A GitHub pull request, GitLab merge request or local change is prepared in your session, then reviewed inside one Workflow call. On a full review seven specialist agents discover candidate findings in parallel; a light review, offered when every changed file is low risk and the change is under 50 lines, runs only the bug and security reviewers. A gap hunter agent then reads changed regions no specialist cited, within a fixed read budget, and the report lists what the budget left out; light reviews and fully cited changes skip it. Code merges and deduplicates the findings and verifies each cited file, line and symbol against the source. An independent validator agent tries to disprove each finding and returns a fixed verdict, and on a confirmation writes the title, body and fix that would be posted. Code filters by verdict and removes prompt-injection patterns, then admission requires each finding kind to carry the evidence it needs. A blind challenge by a fresh agent sees only the claim and its location. The two readers' verdicts are resolved into one final verdict and the confirming reader writes the posted comment. A confirmed present failure posts at its severity, a confirmed latent defect posts at low severity, comment wording or no practical effect stays in the local report, a refutation with a verified code citation drops the finding, and a finding not established is held back and listed as unverified. A security finding is dropped only when both readers refute it with verified citations. A group agent joins findings that one change would fix. Code ranks and selects the delivery set and renders the report, with incomplete checks in a separate unverified section, then hands the results back to your session. On an interactive run the session always saves a Markdown report, asks before posting inline comments to an open pull or merge request, and offers an optional task board. A headless run asks nothing, delivers to chat, Markdown or PR comments as configured, and defaults posting to dry-run.</desc>
   <defs>
     <style>
       text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 18px; fill: #e6edf3; }
@@ -38,7 +38,7 @@
     </marker>
   </defs>
 
-  <rect class="page" width="1200" height="2403"/>
+  <rect class="page" width="1200" height="3006"/>
   <text class="title" x="40" y="50">How a finding survives the gauntlet</text>
   <text class="muted" x="40" y="76">Code Gauntlet, stage by stage</text>
   <rect class="panel" x="828" y="35" width="18" height="18" rx="4"/>
@@ -59,7 +59,7 @@
   <text class="effect" x="802" y="252">Platform detected from the remote</text>
   <text class="effect" x="802" y="278">Re-review: delta since last run</text>
   <path class="flow" d="M128 329 V357" marker-end="url(#arrow)"/>
-  <rect class="frame" x="40" y="359" width="1120" height="1630" rx="12"/>
+  <rect class="frame" x="40" y="359" width="1120" height="2233" rx="12"/>
   <text class="section" x="68" y="399">One Workflow call</text>
   <text class="detail end" x="1132" y="399">pipeline.js  ·  generated, dependency-free bundle</text>
   <rect class="agent-stage" x="64" y="421" width="1072" height="298" rx="10"/>
@@ -98,109 +98,146 @@
   <path class="flow" d="M128 719 V763" marker-end="url(#arrow)"/>
   <text class="detail" x="152" y="748">Candidate findings</text>
   <text class="kind" x="802" y="748">EFFECT ON FINDINGS</text>
-  <rect class="panel" x="64" y="765" width="1072" height="141" rx="10"/>
-  <text class="kind" x="92" y="796">CODE</text>
-  <text class="section" x="92" y="827">Merge</text>
-  <text class="detail" x="92" y="857">Deduplicate by finding ID across output channels</text>
-  <text class="detail" x="92" y="882">Validate against the schema, attribute each finding to its agent</text>
+  <rect class="agent-stage" x="64" y="765" width="1072" height="141" rx="10"/>
+  <text class="agent-kind" x="92" y="796">AGENT</text>
+  <text class="section" x="92" y="827">Gap hunter</text>
+  <text class="detail" x="236" y="827">Sonnet</text>
+  <text class="detail" x="92" y="857">Runs after the specialists return</text>
+  <text class="detail" x="92" y="882">Reads changed regions none of them cited, within a fixed read budget</text>
   <line class="divider" x1="780" y1="787" x2="780" y2="884"/>
-  <text class="effect" x="802" y="828"><tspan class="cut">Cut</tspan>  duplicates</text>
-  <text class="effect" x="802" y="854"><tspan class="cut">Cut</tspan>  malformed findings</text>
+  <text class="effect" x="802" y="815.5">Skipped on light reviews</text>
+  <text class="effect" x="802" y="841.5">Skipped when every change is cited</text>
+  <text class="effect" x="802" y="867.5">Report lists what the budget left out</text>
   <path class="flow" d="M128 906 V934" marker-end="url(#arrow)"/>
-  <rect class="panel" x="64" y="936" width="1072" height="166" rx="10"/>
+  <rect class="panel" x="64" y="936" width="1072" height="141" rx="10"/>
   <text class="kind" x="92" y="967">CODE</text>
-  <text class="section" x="92" y="998">Verify</text>
-  <text class="detail" x="92" y="1028">Git blame separates new code from old code the change surfaced</text>
-  <text class="detail" x="92" y="1053">A script checks each cited file, line and symbol against the source</text>
-  <text class="detail" x="92" y="1078">Its receipt ties the result to these exact findings</text>
-  <line class="divider" x1="780" y1="958" x2="780" y2="1080"/>
-  <text class="effect" x="802" y="999">Bad file or line: cut</text>
-  <text class="effect" x="802" y="1025">Surfaced: severity down one level</text>
-  <text class="effect" x="802" y="1051">Check failed: kept, gap recorded</text>
-  <path class="flow" d="M128 1102 V1130" marker-end="url(#arrow)"/>
-  <rect class="agent-stage" x="64" y="1132" width="1072" height="141" rx="10"/>
-  <text class="agent-kind" x="92" y="1163">AGENT</text>
-  <text class="section" x="92" y="1194">Validate</text>
-  <text class="detail" x="92" y="1224">An independent validator tries to disprove each finding</text>
-  <text class="detail" x="92" y="1249">Fresh context, the full finding and its evidence, codebase access</text>
-  <line class="divider" x1="780" y1="1154" x2="780" y2="1251"/>
-  <text class="effect" x="802" y="1182">Verdict + statement + fix</text>
-  <text class="effect" x="802" y="1208">Refutation citations checked by code</text>
-  <text class="effect" x="802" y="1234">Unresolved: sent to blind challenge</text>
+  <text class="section" x="92" y="998">Merge</text>
+  <text class="detail" x="92" y="1028">Deduplicate by finding ID across output channels</text>
+  <text class="detail" x="92" y="1053">Validate against the schema, attribute each finding to its agent</text>
+  <line class="divider" x1="780" y1="958" x2="780" y2="1055"/>
+  <text class="effect" x="802" y="999.5"><tspan class="cut">Cut</tspan>  duplicates</text>
+  <text class="effect" x="802" y="1025.5"><tspan class="cut">Cut</tspan>  malformed findings</text>
+  <path class="flow" d="M128 1077 V1105" marker-end="url(#arrow)"/>
+  <rect class="panel" x="64" y="1107" width="1072" height="166" rx="10"/>
+  <text class="kind" x="92" y="1138">CODE</text>
+  <text class="section" x="92" y="1169">Verify</text>
+  <text class="detail" x="92" y="1199">Git blame separates new code from old code the change surfaced</text>
+  <text class="detail" x="92" y="1224">A script checks each cited file, line and symbol against the source</text>
+  <text class="detail" x="92" y="1249">Its receipt ties the result to these exact findings</text>
+  <line class="divider" x1="780" y1="1129" x2="780" y2="1251"/>
+  <text class="effect" x="802" y="1170">Bad file or line: cut</text>
+  <text class="effect" x="802" y="1196">Surfaced: severity down one level</text>
+  <text class="effect" x="802" y="1222">Check failed: kept, gap recorded</text>
   <path class="flow" d="M128 1273 V1301" marker-end="url(#arrow)"/>
-  <rect class="panel" x="64" y="1303" width="1072" height="141" rx="10"/>
-  <text class="kind" x="92" y="1334">CODE</text>
-  <text class="section" x="92" y="1365">Filter</text>
-  <text class="detail" x="92" y="1395">Typed routes, kind gates, injection checks</text>
-  <text class="detail" x="92" y="1420">Present failures post; latent findings become low suggestions</text>
+  <rect class="agent-stage" x="64" y="1303" width="1072" height="141" rx="10"/>
+  <text class="agent-kind" x="92" y="1334">AGENT</text>
+  <text class="section" x="92" y="1365">Validate</text>
+  <text class="detail" x="92" y="1395">An independent validator tries to disprove each finding</text>
+  <text class="detail" x="92" y="1420">Fresh context, the full finding and its evidence, codebase access</text>
   <line class="divider" x1="780" y1="1325" x2="780" y2="1422"/>
-  <text class="effect" x="802" y="1340"><tspan class="cut">Cut</tspan>  verified refutations</text>
-  <text class="note" x="802" y="1366">Non-posting claims also reach challenge</text>
-  <text class="effect" x="802" y="1392"><tspan class="cut">Cut</tspan>  known prompt-injection patterns</text>
-  <text class="effect" x="802" y="1418">Confirmations retain established evidence</text>
+  <text class="effect" x="802" y="1353.5">A fixed verdict, not a confidence score</text>
+  <text class="effect" x="802" y="1379.5">Confirmed: writes the title, body and fix</text>
+  <text class="effect" x="802" y="1405.5">Refutation citations checked by code</text>
   <path class="flow" d="M128 1444 V1472" marker-end="url(#arrow)"/>
-  <rect class="agent-stage hero" x="64" y="1474" width="1072" height="174" rx="10"/>
-  <text class="agent-kind" x="92" y="1505">FRESH AGENT</text>
-  <text class="section" x="92" y="1536">Blind challenge</text>
-  <text class="detail" x="92" y="1566">A fresh challenger gets only the claim and its location</text>
-  <text class="detail" x="92" y="1591">Reasoning and evidence are withheld by a field allowlist</text>
-  <text class="detail" x="92" y="1616">Resolved reader writes the short comment</text>
-  <line class="divider" x1="780" y1="1496" x2="780" y2="1626"/>
-  <text class="agent-kind" x="802" y="1512">CLOSED VERDICT</text>
-  <text class="detail" x="802" y="1544">Present</text>
-  <text class="effect" x="894" y="1544">Posts at severity</text>
-  <text class="detail" x="802" y="1571">Latent</text>
-  <text class="effect" x="894" y="1571">Low / suggestion</text>
-  <text class="detail" x="802" y="1598">Comment / style</text>
-  <text class="effect" x="936" y="1598">Report only</text>
-  <text class="detail" x="802" y="1625">Unknown</text>
-  <text class="effect strong" x="894" y="1625">Held for evidence</text>
-  <path class="flow" d="M128 1648 V1676" marker-end="url(#arrow)"/>
-  <rect class="panel" x="64" y="1678" width="1072" height="141" rx="10"/>
-  <text class="kind" x="92" y="1709">CODE</text>
-  <text class="section" x="92" y="1740">Report</text>
-  <text class="detail" x="92" y="1770">Rank, cap and select the delivery set, render the report</text>
-  <text class="detail" x="92" y="1795">Hand the findings, report and delivery selection back to your session</text>
-  <line class="divider" x1="780" y1="1700" x2="780" y2="1797"/>
-  <text class="effect" x="802" y="1728">Incomplete checks: report only</text>
-  <text class="effect" x="802" y="1754">Discovery prose stays in report</text>
-  <text class="effect" x="802" y="1780">Selection made by code</text>
-  <text class="kind" x="64" y="1863">DESIGN PRINCIPLES</text>
-  <rect class="panel" x="64" y="1877" width="1072" height="84" rx="10"/>
-  <text class="strong" x="92" y="1913">Pure functions</text>
-  <text class="detail" x="92" y="1939">Merge, filter, rank and render are code</text>
-  <line class="divider" x1="421.333" y1="1893" x2="421.333" y2="1945"/>
-  <text class="strong" x="449" y="1913">Failures recorded as gaps</text>
-  <text class="detail" x="449" y="1939">The report counts them, chat lists each</text>
-  <line class="divider" x1="778.667" y1="1893" x2="778.667" y2="1945"/>
-  <text class="strong" x="807" y="1913">Untrusted input</text>
-  <text class="detail" x="807" y="1939">Fenced going in, escaped coming out</text>
-  <path class="flow" d="M128 1989 V2017" marker-end="url(#arrow)"/>
-  <rect class="panel" x="40" y="2019" width="1120" height="344" rx="10"/>
-  <text class="kind" x="68" y="2050">YOUR SESSION</text>
-  <text class="section" x="68" y="2081">Delivery</text>
-  <text class="detail" x="68" y="2111">Writes the findings, report and ready-to-post payload once the Workflow call returns</text>
-  <text class="detail" x="68" y="2136">Posts the set the pipeline selected, never re-filtered or re-ranked</text>
-  <line class="divider" x1="780" y1="2041" x2="780" y2="2151"/>
-  <text class="effect" x="802" y="2076">HTML and mentions contained</text>
-  <text class="effect" x="802" y="2102">Known token prefixes redacted</text>
-  <text class="effect" x="802" y="2128">One-click fixes apply-checked</text>
-  <text class="kind" x="68" y="2187">INTERACTIVE RUN</text>
-  <rect class="node" x="68" y="2201" width="242" height="76" rx="7"/>
-  <text class="reviewer" x="189" y="2234">Markdown report</text>
-  <text class="detail mid" x="189" y="2258">Saved first</text>
-  <path class="flow" d="M310 2239 H340" marker-end="url(#arrow)"/>
-  <rect class="ask-node" x="342" y="2201" width="242" height="76" rx="7"/>
-  <text class="reviewer" x="463" y="2234">Asks before posting</text>
-  <text class="detail mid" x="463" y="2258">When the PR or MR is open</text>
-  <path class="flow" d="M584 2239 H614" marker-end="url(#arrow)"/>
-  <rect class="node" x="616" y="2201" width="242" height="76" rx="7"/>
-  <text class="reviewer" x="737" y="2234">Inline PR / MR comments</text>
-  <text class="detail mid" x="737" y="2258">Only if you say yes</text>
-  <path class="flow" d="M858 2239 H888" marker-end="url(#arrow)"/>
-  <rect class="node" x="890" y="2201" width="242" height="76" rx="7"/>
-  <text class="reviewer" x="1011" y="2234">Task board</text>
-  <text class="detail mid" x="1011" y="2258">Optional, offered last</text>
-  <text class="kind" x="68" y="2313">HEADLESS RUN</text>
-  <text class="detail" x="68" y="2339">Asks nothing. Delivers to chat, Markdown or PR comments as configured, and posting defaults to dry-run.</text>
+  <rect class="panel" x="64" y="1474" width="1072" height="141" rx="10"/>
+  <text class="kind" x="92" y="1505">CODE</text>
+  <text class="section" x="92" y="1536">Filter</text>
+  <text class="detail" x="92" y="1566">Routes each finding by its verdict</text>
+  <text class="detail" x="92" y="1591">Removes known prompt-injection patterns</text>
+  <line class="divider" x1="780" y1="1496" x2="780" y2="1593"/>
+  <text class="effect" x="802" y="1537.5"><tspan class="cut">Cut</tspan>  verified refutations</text>
+  <text class="effect" x="802" y="1563.5"><tspan class="cut">Cut</tspan>  known prompt-injection patterns</text>
+  <path class="flow" d="M128 1615 V1643" marker-end="url(#arrow)"/>
+  <rect class="panel" x="64" y="1645" width="1072" height="141" rx="10"/>
+  <text class="kind" x="92" y="1676">CODE</text>
+  <text class="section" x="92" y="1707">Admission</text>
+  <text class="detail" x="92" y="1737">Each finding kind lists the evidence it needs</text>
+  <text class="detail" x="92" y="1762">Example: a missing-test finding names the production code and a test</text>
+  <line class="divider" x1="780" y1="1667" x2="780" y2="1764"/>
+  <text class="effect" x="802" y="1708.5">Missing evidence: report or held back</text>
+  <text class="note" x="802" y="1734.5">Checked before the blind challenge</text>
+  <path class="flow" d="M128 1786 V1814" marker-end="url(#arrow)"/>
+  <rect class="agent-stage hero" x="64" y="1816" width="1072" height="264" rx="10"/>
+  <text class="agent-kind" x="92" y="1847">FRESH AGENT</text>
+  <text class="section" x="92" y="1878">Blind challenge</text>
+  <text class="detail" x="92" y="1908">A fresh challenger sees only the claim and its location</text>
+  <text class="detail" x="92" y="1933">Reasoning and evidence withheld by a field allowlist</text>
+  <text class="detail" x="92" y="1958">Both readers' verdicts resolve into one final verdict</text>
+  <text class="detail" x="92" y="1983">The confirming reader writes the posted comment</text>
+  <line class="divider" x1="640" y1="1838" x2="640" y2="1998"/>
+  <text class="agent-kind" x="662" y="1854">FINAL VERDICT ROUTES</text>
+  <text class="detail" x="662" y="1886">Confirmed failure</text>
+  <text class="effect" x="900" y="1886">Posts at its severity</text>
+  <text class="detail" x="662" y="1912">Confirmed latent defect</text>
+  <text class="effect" x="900" y="1912">Posts at low severity</text>
+  <text class="detail" x="662" y="1938">Wording or no real effect</text>
+  <text class="effect" x="900" y="1938">Local report only</text>
+  <text class="detail" x="662" y="1964">Refuted, citation verified</text>
+  <text class="effect" x="900" y="1964">Dropped</text>
+  <text class="detail" x="662" y="1990">Not established</text>
+  <text class="effect strong" x="900" y="1990">Held back, listed unverified</text>
+  <line class="divider" x1="92" y1="2010" x2="1108" y2="2010"/>
+  <text class="strong" x="92" y="2040">Security rule</text>
+  <text class="detail" x="244" y="2040">A security finding is dropped only when both readers refute it with verified citations.</text>
+  <text class="detail" x="244" y="2065">One refutation keeps it in the report, not posted.</text>
+  <path class="flow" d="M128 2080 V2108" marker-end="url(#arrow)"/>
+  <rect class="agent-stage" x="64" y="2110" width="1072" height="141" rx="10"/>
+  <text class="agent-kind" x="92" y="2141">AGENT</text>
+  <text class="section" x="92" y="2172">Group</text>
+  <text class="detail" x="176" y="2172">Sonnet</text>
+  <text class="detail" x="92" y="2202">An agent joins findings that one change would fix</text>
+  <text class="detail" x="92" y="2227">Delivery posts one comment per defect, listing the other sites in it</text>
+  <line class="divider" x1="780" y1="2132" x2="780" y2="2229"/>
+  <text class="effect" x="802" y="2160.5">One comment per defect</text>
+  <text class="effect" x="802" y="2186.5">Other sites listed in the comment</text>
+  <text class="effect" x="802" y="2212.5">Cannot change which findings survived</text>
+  <path class="flow" d="M128 2251 V2279" marker-end="url(#arrow)"/>
+  <rect class="panel" x="64" y="2281" width="1072" height="141" rx="10"/>
+  <text class="kind" x="92" y="2312">CODE</text>
+  <text class="section" x="92" y="2343">Report</text>
+  <text class="detail" x="92" y="2373">Rank, cap and select the delivery set, render the report</text>
+  <text class="detail" x="92" y="2398">Hand the findings, report and delivery selection back to your session</text>
+  <line class="divider" x1="780" y1="2303" x2="780" y2="2400"/>
+  <text class="effect" x="802" y="2318.5">Unfinished checks: unverified section</text>
+  <text class="effect" x="802" y="2344.5">Discovery prose stays in report</text>
+  <text class="effect" x="802" y="2370.5">Headless: at most 25 inline comments</text>
+  <text class="effect" x="802" y="2396.5">Selection made by code</text>
+  <text class="kind" x="64" y="2466">DESIGN PRINCIPLES</text>
+  <rect class="panel" x="64" y="2480" width="1072" height="84" rx="10"/>
+  <text class="strong" x="92" y="2516">Pure functions</text>
+  <text class="detail" x="92" y="2542">Merge, filter, rank and render are code</text>
+  <text class="strong" x="449" y="2516">Failures recorded as gaps</text>
+  <text class="detail" x="449" y="2542">The report counts them, chat lists each</text>
+  <text class="strong" x="807" y="2516">Untrusted input</text>
+  <text class="detail" x="807" y="2542">Fenced going in, escaped coming out</text>
+  <line class="divider" x1="421.333" y1="2496" x2="421.333" y2="2548"/>
+  <line class="divider" x1="778.667" y1="2496" x2="778.667" y2="2548"/>
+  <path class="flow" d="M128 2592 V2620" marker-end="url(#arrow)"/>
+  <rect class="panel" x="40" y="2622" width="1120" height="344" rx="10"/>
+  <text class="kind" x="68" y="2653">YOUR SESSION</text>
+  <text class="section" x="68" y="2684">Delivery</text>
+  <text class="detail" x="68" y="2714">Writes the findings, report and ready-to-post payload once the Workflow call returns</text>
+  <text class="detail" x="68" y="2739">Posts the set the pipeline selected, never re-filtered or re-ranked</text>
+  <line class="divider" x1="780" y1="2644" x2="780" y2="2754"/>
+  <text class="effect" x="802" y="2679">HTML and mentions contained</text>
+  <text class="effect" x="802" y="2705">Known token prefixes redacted</text>
+  <text class="effect" x="802" y="2731">One-click fixes apply-checked</text>
+  <text class="kind" x="68" y="2790">INTERACTIVE RUN</text>
+  <rect class="node" x="68" y="2804" width="242" height="76" rx="7"/>
+  <text class="reviewer" x="189" y="2837">Markdown report</text>
+  <text class="detail mid" x="189" y="2861">Saved first</text>
+  <path class="flow" d="M310 2842 H340" marker-end="url(#arrow)"/>
+  <rect class="ask-node" x="342" y="2804" width="242" height="76" rx="7"/>
+  <text class="reviewer" x="463" y="2837">Asks before posting</text>
+  <text class="detail mid" x="463" y="2861">When the PR or MR is open</text>
+  <path class="flow" d="M584 2842 H614" marker-end="url(#arrow)"/>
+  <rect class="node" x="616" y="2804" width="242" height="76" rx="7"/>
+  <text class="reviewer" x="737" y="2837">Inline PR / MR comments</text>
+  <text class="detail mid" x="737" y="2861">Only if you say yes</text>
+  <path class="flow" d="M858 2842 H888" marker-end="url(#arrow)"/>
+  <rect class="node" x="890" y="2804" width="242" height="76" rx="7"/>
+  <text class="reviewer" x="1011" y="2837">Task board</text>
+  <text class="detail mid" x="1011" y="2861">Optional, offered last</text>
+  <text class="kind" x="68" y="2916">HEADLESS RUN</text>
+  <text class="detail" x="68" y="2942">Asks nothing. Delivers to chat, Markdown or PR comments as configured, and posting defaults to dry-run.</text>
 </svg>

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="872" viewBox="0 0 1200 872" role="img" aria-labelledby="pipeline-title pipeline-desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1230" viewBox="0 0 1200 1230" role="img" aria-labelledby="pipeline-title pipeline-desc">
   <title id="pipeline-title">Code Gauntlet pipeline overview</title>
-  <desc id="pipeline-desc">The review pipeline for GitHub pull requests, GitLab merge requests, and local changes. Preparation supplies the diff, project rules, risk triage, review scope, and related tests. Full review runs seven concern-specialized reviewers in parallel across the diff and codebase. Light review is offered when every changed file is low risk and fewer than 50 lines changed; it runs only the marked Bugs and Security reviewers. Candidates pass through deterministic merge and verification, independent validation, deterministic filtering, and a blind challenge that receives only the claim and location. Verification checks source evidence with a deterministic script and trusts its results only with a valid receipt. The selected reader supplies the short posted statement; code comment and docstring wording defects stay in the report. The report includes discovery descriptions, confirmed statements, ranked findings, improvement suggestions, methodology, and explicit gaps. Delivery supports PR or MR comments, Markdown, and a task board. Skipped checks and capped or failed challenges appear only in the unverified report section.</desc>
+  <desc id="pipeline-desc">The review pipeline for GitHub pull requests, GitLab merge requests, and local changes. Your session prepares the shared context: diff, project rules, risk triage, review scope, and related tests. Full review runs seven specialist reviewers in parallel: Bugs, Security, Cross-file impact, Tests, Conventions and intent, Type design, and Simplification. A light review, offered when every changed file is low risk and under 50 changed lines, runs only Bugs and Security. A gap hunter agent then reads changed regions no specialist cited, within a fixed read budget, and the report lists what the budget left out; light reviews and fully cited changes skip it. Findings pass through code that merges and removes duplicates, code that verifies each cited file, line and symbol against the source, an independent validator agent that tries to disprove each finding and returns a fixed verdict, and code that routes findings by verdict and removes prompt-injection patterns. Admission then requires each finding kind to carry the evidence it needs. A blind challenge by a fresh agent sees only the claim and its location, the two readers' verdicts are resolved into one, and the confirming reader writes the posted comment. A group agent joins findings that one change would fix without changing which findings survived. Code ranks and selects the delivery set and renders the report, and findings whose checks did not complete go to a separate unverified section. Your session then delivers: it saves the report first, asks before posting inline comments, and offers an optional task board; headless runs ask nothing and default to dry-run.</desc>
   <defs>
     <style>
       text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 18px; fill: #e6edf3; }
@@ -38,12 +38,11 @@
     </marker>
   </defs>
 
-  <rect class="page" width="1200" height="872"/>
+  <rect class="page" width="1200" height="1230"/>
   <text class="title" x="40" y="50">Code Gauntlet</text>
   <text class="muted" x="40" y="76">Adversarial code review</text>
   <text class="detail" x="1160" y="50" text-anchor="end">Full review shown</text>
 
-  <!-- Shared context is prepared before dispatch; the semantic summary runs alongside discovery. -->
   <rect class="panel" x="40" y="94" width="242" height="114" rx="10"/>
   <text class="section" x="60" y="128">Review target</text>
   <text class="detail" x="60" y="163">GitHub PR / GitLab MR</text>
@@ -52,6 +51,7 @@
 
   <rect class="panel" x="318" y="94" width="842" height="114" rx="10"/>
   <text class="section" x="338" y="128">Prepare shared context</text>
+  <text class="detail" x="1140" y="128" text-anchor="end">Your session</text>
   <text x="338" y="163">Diff + project rules</text>
   <text class="detail" x="338" y="188">Risk triage</text>
   <text x="626" y="163">Full / incremental scope</text>
@@ -87,64 +87,90 @@
   <text class="reviewer" x="1068" y="370">Simplification</text>
   <path class="fan" d="M132 398 V430 H1068 V398 M288 398 V430 M444 398 V430 M600 398 V430 M756 398 V430 M912 398 V430"/>
 
-  <path class="flow" d="M140 430 V500" marker-end="url(#arrow)"/>
-  <text class="detail" x="164" y="484">Candidate findings</text>
+  <path class="flow" d="M140 430 V488" marker-end="url(#arrow)"/>
+  <text class="detail" x="164" y="472">Candidate findings</text>
 
-  <!-- Agent and code labels distinguish judgment from deterministic transforms. -->
-  <rect class="panel" x="40" y="502" width="200" height="176" rx="10"/>
-  <text class="kind" x="58" y="531">CODE</text>
-  <text class="stage-title" x="58" y="568">Merge</text>
-  <text class="detail" x="58" y="604">Schema + ID dedup</text>
-  <text class="detail" x="58" y="630">Agent attribution</text>
-  <path class="flow" d="M240 590 H268" marker-end="url(#arrow)"/>
+  <rect class="agent-stage" x="40" y="490" width="1120" height="90" rx="10"/>
+  <text class="agent-kind" x="60" y="516">AGENT</text>
+  <text class="stage-title" x="60" y="550">Gap hunter</text>
+  <text class="detail" x="300" y="520">Reads changed regions no specialist cited, within a fixed read budget</text>
+  <text class="detail" x="300" y="545">The report lists what the budget left out</text>
+  <text class="light-note" x="300" y="568">Skipped for light reviews and when every change is already cited</text>
+  <path class="flow" d="M171 580 V620" marker-end="url(#arrow)"/>
 
-  <rect class="panel" x="270" y="502" width="200" height="176" rx="10"/>
-  <text class="kind" x="288" y="531">CODE</text>
-  <text class="stage-title" x="288" y="568">Verify</text>
-  <text class="detail" x="288" y="604">Source + diff checks</text>
-  <text class="detail" x="288" y="630">New / surfaced</text>
-  <text class="detail" x="288" y="656">Script output checks</text>
-  <path class="flow" d="M470 590 H498" marker-end="url(#arrow)"/>
+  <rect class="panel" x="40" y="622" width="262" height="176" rx="10"/>
+  <text class="kind" x="58" y="651">CODE</text>
+  <text class="stage-title" x="58" y="688">Merge</text>
+  <text class="detail" x="58" y="724">Remove duplicates</text>
+  <text class="detail" x="58" y="750">Check the schema</text>
+  <text class="detail" x="58" y="776">Credit each agent</text>
+  <path class="flow" d="M302 710 H324" marker-end="url(#arrow)"/>
+  <rect class="panel" x="326" y="622" width="262" height="176" rx="10"/>
+  <text class="kind" x="344" y="651">CODE</text>
+  <text class="stage-title" x="344" y="688">Verify</text>
+  <text class="detail" x="344" y="724">Script checks the source</text>
+  <text class="detail" x="344" y="750">Blame: new vs surfaced</text>
+  <text class="detail" x="344" y="776">Failed check: kept, noted</text>
+  <path class="flow" d="M588 710 H610" marker-end="url(#arrow)"/>
+  <rect class="agent-stage" x="612" y="622" width="262" height="176" rx="10"/>
+  <text class="agent-kind" x="630" y="651">AGENT</text>
+  <text class="stage-title" x="630" y="688">Validate</text>
+  <text class="detail" x="630" y="724">Tries to disprove each</text>
+  <text class="detail" x="630" y="750">Verdict, not a score</text>
+  <text class="detail" x="630" y="776">Writes title, body, fix</text>
+  <path class="flow" d="M874 710 H896" marker-end="url(#arrow)"/>
+  <rect class="panel" x="898" y="622" width="262" height="176" rx="10"/>
+  <text class="kind" x="916" y="651">CODE</text>
+  <text class="stage-title" x="916" y="688">Filter</text>
+  <text class="detail" x="916" y="724">Routes by verdict</text>
+  <text class="detail" x="916" y="750">Strips injection patterns</text>
+  <text class="detail" x="916" y="776">Drops verified refutations</text>
 
-  <rect class="agent-stage" x="500" y="502" width="200" height="176" rx="10"/>
-  <text class="agent-kind" x="518" y="531">AGENT</text>
-  <text class="stage-title" x="518" y="568">Validate</text>
-  <text class="detail" x="518" y="604">Claim + consequence</text>
-  <text class="detail" x="518" y="630">Statement + fix</text>
-  <text class="detail" x="518" y="656">Try to disprove</text>
-  <path class="flow" d="M700 590 H728" marker-end="url(#arrow)"/>
+  <path class="flow" d="M1029 798 V826 H171 V840" marker-end="url(#arrow)"/>
+  <text class="detail" x="560" y="818">Surviving findings</text>
+  <rect class="panel" x="40" y="842" width="262" height="176" rx="10"/>
+  <text class="kind" x="58" y="871">CODE</text>
+  <text class="stage-title" x="58" y="908">Admission</text>
+  <text class="detail" x="58" y="944">Each finding kind lists</text>
+  <text class="detail" x="58" y="970">the evidence it needs</text>
+  <text class="detail" x="58" y="996">Missing: report or held</text>
+  <path class="flow" d="M302 930 H324" marker-end="url(#arrow)"/>
+  <rect class="agent-stage" x="326" y="842" width="262" height="176" rx="10"/>
+  <text class="agent-kind" x="344" y="871">FRESH AGENT</text>
+  <text class="challenge-title" x="344" y="908">Blind challenge</text>
+  <text class="detail" x="344" y="944">Sees claim + location only</text>
+  <text class="detail" x="344" y="970">Verdicts merged into one</text>
+  <text class="detail" x="344" y="996">Confirmer writes comment</text>
+  <path class="flow" d="M588 930 H610" marker-end="url(#arrow)"/>
+  <rect class="agent-stage" x="612" y="842" width="262" height="176" rx="10"/>
+  <text class="agent-kind" x="630" y="871">AGENT</text>
+  <text class="stage-title" x="630" y="908">Group</text>
+  <text class="detail" x="630" y="944">Joins findings one fix solves</text>
+  <text class="detail" x="630" y="970">One comment per defect</text>
+  <text class="detail" x="630" y="996">Never changes survivors</text>
+  <path class="flow" d="M874 930 H896" marker-end="url(#arrow)"/>
+  <rect class="panel" x="898" y="842" width="262" height="176" rx="10"/>
+  <text class="kind" x="916" y="871">CODE</text>
+  <text class="stage-title" x="916" y="908">Report</text>
+  <text class="detail" x="916" y="944">Ranks and selects the set</text>
+  <text class="detail" x="916" y="970">Renders the full report</text>
+  <text class="detail" x="916" y="996">Unverified listed apart</text>
 
-  <rect class="panel" x="730" y="502" width="200" height="176" rx="10"/>
-  <text class="kind" x="748" y="531">CODE</text>
-  <text class="stage-title" x="748" y="568">Filter</text>
-  <text class="detail" x="748" y="604">Typed routes</text>
-  <text class="detail" x="748" y="630">Injection filtering</text>
-  <text class="detail" x="748" y="656">Admission gates</text>
-  <path class="flow" d="M930 590 H958" marker-end="url(#arrow)"/>
-
-  <rect class="agent-stage" x="960" y="502" width="200" height="176" rx="10"/>
-  <text class="agent-kind" x="978" y="531">FRESH AGENT</text>
-  <text class="challenge-title" x="978" y="568">Blind challenge</text>
-  <text class="detail" x="978" y="604">Claim + location only</text>
-  <text class="detail" x="978" y="630">Inspect + disprove</text>
-  <text class="detail" x="978" y="656">Resolve both readers</text>
-
-  <!-- Unchallenged findings do not enter the ranked delivery set. -->
-  <path class="flow" d="M1030 678 V709 H420 V746" marker-end="url(#arrow)"/>
-  <text class="detail" x="590" y="700">Ranked survivors</text>
-  <path class="skipped" d="M1110 678 V746" marker-end="url(#skip-arrow)"/>
-
-  <rect class="panel" x="40" y="748" width="816" height="100" rx="10"/>
-  <text class="section" x="60" y="781">Report + delivery</text>
-  <text class="detail" x="60" y="810">Main findings + suggestions</text>
-  <text class="detail" x="60" y="833">Methodology + explicit gaps</text>
-  <line class="divider" x1="405" y1="770" x2="405" y2="828"/>
-  <text class="detail" x="432" y="781">Deterministic rank + selection</text>
-  <text x="432" y="810">PR / MR comments</text>
-  <text x="432" y="833">Markdown / task board</text>
-
-  <rect class="unverified-panel" x="888" y="748" width="272" height="100" rx="10"/>
-  <text class="section" x="908" y="781">Unverified findings</text>
-  <text class="detail" x="908" y="810">Incomplete checks / challenges</text>
-  <text class="detail" x="908" y="833">Separate report section</text>
+  <path class="flow" d="M960 1018 V1050 H700 V1068" marker-end="url(#arrow)"/>
+  <text class="detail" x="720" y="1042">Ranked set</text>
+  <path class="skipped" d="M1100 1018 V1068" marker-end="url(#skip-arrow)"/>
+  <rect class="panel" x="40" y="1070" width="816" height="120" rx="10"/>
+  <text class="section" x="60" y="1103">Delivery</text>
+  <text class="detail" x="165" y="1103">Your session</text>
+  <text class="detail" x="60" y="1136">Saves the report first</text>
+  <text class="detail" x="60" y="1162">Headless: no asks, dry-run</text>
+  <line class="divider" x1="405" x2="405" y1="1090" y2="1170"/>
+  <text x="432" y="1100">Asks before posting</text>
+  <text class="detail" x="432" y="1126">Inline comments only on yes</text>
+  <text class="detail" x="432" y="1152">Optional task board</text>
+  <text class="detail" x="432" y="1178">Mentions contained, tokens redacted</text>
+  <rect class="unverified-panel" x="888" y="1070" width="272" height="120" rx="10"/>
+  <text class="section" x="908" y="1103">Unverified findings</text>
+  <text class="detail" x="908" y="1136">Incomplete checks</text>
+  <text class="detail" x="908" y="1162">Separate report section</text>
 </svg>

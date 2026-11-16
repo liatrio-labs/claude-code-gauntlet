@@ -15,7 +15,7 @@ On a public benchmark of real PRs with known bugs, it catches nearly four in fiv
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/pipeline-overview-dark.svg">
-  <img alt="Code Gauntlet pipeline overview: seven specialist reviewers and an optional gap hunter feed verification and delivery" src="docs/assets/pipeline-overview-light.svg">
+  <img alt="Code Gauntlet pipeline overview: seven specialist reviewers and a gap hunter feed merge, verify, validate, filter, admission, blind challenge and grouping, then the report and delivery" src="docs/assets/pipeline-overview-light.svg">
 </picture>
 
 ## What a finding looks like
@@ -80,9 +80,9 @@ The pipeline pins each review agent's model, so your session's model and effort 
 Setting `CLAUDE_CODE_SUBAGENT_MODEL` is the exception, because it overrides every agent.
 The session only prepares the review and delivers the result, so we recommend Sonnet at low effort for it.
 
-In benchmark runs from an Opus session, a full review took a median of 9 minutes per PR, from 3 to 17.
-Each review used a median of $5.32 at API prices, and 80% fell between $2.57 and $7.86.
-We have not measured the cost from a Sonnet session.
+The v4.0 benchmark ran from a Sonnet session at low effort.
+There, a full review took a median of 12 minutes per PR, from 4 to 22.
+Each review used a median of $4.97 at API prices, and 80% fell between $2.49 and $8.55.
 
 ## How it reviews
 
@@ -109,16 +109,20 @@ Agents see the full diff and follow callers, dependencies, and tests across file
 Discovery produces candidates, and each one then runs the gauntlet:
 
 1. Merge combines duplicate findings and checks their structure.
-2. Verify checks source facts in code and separates new issues from older ones.
-3. Validate asks an independent skeptic to disprove each finding.
-4. Filter routes each finding by its typed verdict and rejects prompt injection.
+2. Verify checks the cited files, lines, and symbols against the source.
+3. Validate asks an independent skeptic to disprove each finding and return a verdict.
+4. Filter routes each finding by that verdict and removes prompt-injection attempts.
 5. Admission is plain code that checks each finding has the evidence its kind requires.
 6. Blind challenge asks a fresh agent to check the claim without the original reasoning or evidence.
-7. Deliver gives each finding one final decision, ranks the survivors, and prepares comments and a report.
+7. Group joins findings that one change would fix, so each defect gets one comment.
+8. Deliver ranks the survivors and prepares comments and a report.
 
-Validators and challengers return typed verdicts, not confidence scores.
+The validator and challenger are the two readers of each finding.
+They answer with a fixed verdict, such as confirmed failure, latent defect, or refuted, never a confidence score.
+Their two answers settle the final verdict.
 A confirmed failure posts at its severity, and a latent defect posts at low severity.
-A refutation needs a verified code citation, and a security finding needs refutations from both independent readers.
+A reader can refute a finding only by citing code, and the plugin checks that citation.
+A security finding is dropped only when both readers refute it.
 Preferences, unverified findings, and complaints about comment wording stay in the local report.
 If verification or validation itself breaks, the report records the gap.
 
@@ -134,6 +138,7 @@ The plugin saves a markdown report locally.
 For an open PR or MR, it then asks whether to post the selected findings as inline comments.
 GitHub receives them as one review, and GitLab receives a summary note plus one discussion per finding.
 Each defect gets one short comment, and a defect found at several places lists the other sites in that comment.
+The reader that confirmed the defect writes the comment: a title, one or two sentences, and a fix when it verified one.
 A finding whose location cannot be confirmed stays in the review summary and gets no inline comment.
 
 In interactive runs you can also create a task board for the selected findings.
@@ -175,7 +180,7 @@ v4.0 reviewed the same 15 PRs three times from a Sonnet session at low effort, a
 |---|---|
 | Known bugs caught, all 15 PRs (66 bugs) | 78.8% |
 | Known bugs caught, 13 PRs with no overlap with our prompts (50 bugs) | 80.0% |
-| Known bugs caught, PRs outside our development subset (21 bugs) | 73.0% |
+| Known bugs caught, PRs we did not tune against (21 bugs) | 73.0% |
 | Comments that match a known bug, 13 PRs | 38.9% |
 | Inline comments per PR | 9.3 |
 
