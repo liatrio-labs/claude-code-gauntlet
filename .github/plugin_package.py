@@ -29,6 +29,7 @@ from urllib.parse import quote, unquote
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from release_cli import (
     ArgumentParser,
+    CommandFailure,
     InputError,
     entry,
     exit_code,
@@ -38,6 +39,8 @@ from release_cli import (
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_BRANCH = "plugin-release"
+# A manual retry names its own tag, so publish ships only commits that reached main.
+MAIN_REF = "refs/remotes/origin/main"
 MANIFEST = ".claude-plugin/plugin.json"
 RELEASE_SUBJECT = re.compile(r"release: v([0-9]+)\.([0-9]+)\.([0-9]+)")
 
@@ -572,12 +575,21 @@ def _package_tree(package: Path, repo: Path) -> str:
 def publish(tag: str, repo: Path) -> list[str]:
     """Build the package from `tag` and append it to the package branch as one commit."""
     validate_tag(tag)
+    tagged = run_command(
+        ["git", "rev-parse", "--verify", f"refs/tags/{tag}^{{commit}}"], repo
+    ).strip()
+    # Fetch first: the release commit was pushed moments ago by semantic-release.
+    run_command(["git", "fetch", "--quiet", "origin", "main"], repo)
+    try:
+        run_command(["git", "merge-base", "--is-ancestor", tagged, MAIN_REF], repo)
+    except CommandFailure as error:
+        raise InputError(
+            f"{tag} is not on main; only released commits publish"
+        ) from error
     with tempfile.TemporaryDirectory(prefix="plugin-package-") as scratch:
         source, package = Path(scratch, "source"), Path(scratch, "package")
         worktree = ["git", "worktree"]
-        run_command(
-            [*worktree, "add", "--detach", str(source), f"{tag}^{{commit}}"], repo
-        )
+        run_command([*worktree, "add", "--detach", str(source), tagged], repo)
         try:
             report = build(source, package, tag)
         finally:

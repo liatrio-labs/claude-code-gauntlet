@@ -401,10 +401,16 @@ def test_build_links_left_out_files_to_the_given_ref(tmp_path, source):
     assert "/blob/main/" not in readme
 
 
+def _land_on_main(source: Path) -> None:
+    git(source, "push", "-q", "origin", "HEAD:refs/heads/main")
+    git(source, "fetch", "-q", "origin")
+
+
 def _release(source: Path, version: str) -> None:
     _write(source, {".claude-plugin/plugin.json": _manifest(version)})
     git(source, "commit", "-q", "--all", "-m", f"release {version}")
     git(source, "tag", f"v{version}")
+    _land_on_main(source)
 
 
 def test_publish_builds_each_tag_into_one_linear_commit(tmp_path: Path, source: Path):
@@ -413,6 +419,7 @@ def test_publish_builds_each_tag_into_one_linear_commit(tmp_path: Path, source: 
     git(source, "remote", "add", "origin", str(remote))
     git(source, "tag", "v1.0.0")
     git(source, "tag", "v9.0.0")
+    _land_on_main(source)
     with pytest.raises(MODULE.InputError, match="malformed release tag"):
         MODULE.publish("1.0.0", source)
     assert MODULE.publish("v1.0.0", source)[-1].startswith("published v1.0.0")
@@ -421,6 +428,14 @@ def test_publish_builds_each_tag_into_one_linear_commit(tmp_path: Path, source: 
     )
     with pytest.raises(MODULE.PackageError, match=r"does not match v9\.0\.0"):
         MODULE.publish("v9.0.0", source)
+    # A tag on a commit that never reached main does not publish, even by hand.
+    git(source, "checkout", "-q", "-b", "side")
+    _write(source, {".claude-plugin/plugin.json": _manifest("2.0.0")})
+    git(source, "commit", "-q", "--all", "-m", "side")
+    git(source, "tag", "v2.0.0")
+    git(source, "checkout", "-q", "-")
+    with pytest.raises(MODULE.InputError, match=r"v2\.0\.0 is not on main"):
+        MODULE.publish("v2.0.0", source)
     _release(source, "1.1.0")
     MODULE.publish("v1.1.0", source)
     with pytest.raises(MODULE.InputError, match=r"already holds v1\.1\.0"):
@@ -440,10 +455,10 @@ def test_publish_builds_each_tag_into_one_linear_commit(tmp_path: Path, source: 
     # Worktrees and the private index leave the checkout and its refs as they were.
     assert git(source, "status", "--porcelain") == ""
     assert git(source, "worktree", "list", "--porcelain").count("worktree ") == 1
-    assert (
-        git(remote, "for-each-ref", "--format=%(refname)")
-        == "refs/heads/plugin-release"
-    )
+    assert git(remote, "for-each-ref", "--format=%(refname)").splitlines() == [
+        "refs/heads/main",
+        "refs/heads/plugin-release",
+    ]
 
     # Only publish writes the branch, so a hand-pushed head stops the next release.
     tree = git(remote, "rev-parse", "plugin-release^{tree}")
