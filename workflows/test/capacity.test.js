@@ -100,7 +100,7 @@ const COUNT_ROWS = [
   { name: 'explicit all cap', limits: { ...COUNT_GOLDEN, challengeCap: 1000 }, files: 0, findings: 1000, count: 1285 },
   { name: 'zero cap is real', limits: { ...COUNT_GOLDEN, challengeCap: 0 }, files: 0, findings: 1000, count: 285 },
   { name: 'all sizes absent', limits: {}, files: 20000, findings: 1000, count: 2031 },
-  { name: 'explicit default sizes', limits: { verifySliceSize: 100, validateBatch: 100, challengeCap: 40 },
+  { name: 'explicit batch sizes and challenge cap', limits: { verifySliceSize: 100, validateBatch: 100, challengeCap: 40 },
     files: 200, findings: 100, count: 81 },
   { name: 'numeric estimate ignores wire split', limits: COUNT_GOLDEN, files: 0, findings: 2, count: 29 },
   { name: 'array wire split includes its retry', limits: COUNT_GOLDEN, files: 0,

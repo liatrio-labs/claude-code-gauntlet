@@ -146,8 +146,10 @@ source-verification safeguards. It does not make a second posting-value judgment
 
 ## Challenge stage (`challengeStage`)
 
-The existing blind challenger checks admitted findings and unresolved validation findings within
-`limits.challengeCap`. Its allowlist supplies only title, description and location (and the saved
+The blind challenger checks every admitted finding and unresolved validation finding by default.
+An explicit `limits.challengeCap` still applies; the platform agent-count capacity guard can also
+lower coverage to keep the run below its dispatch ceiling. Either cap discloses its overflow as
+`challenge=capped`. The host bounds concurrent agents without reducing coverage. Its allowlist supplies only title, description and location (and the saved
 diff for deleted tests), withholding upstream verdicts and reasoning. It returns the same typed
 schema and uses the same code citation check and routing table. A successful independent check
 can establish an unresolved finding, including one skipped after validator dispatch failure.

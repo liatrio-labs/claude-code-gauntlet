@@ -683,7 +683,6 @@ const CONTROL_RE = /[\u0000-\u001F\u007F]/;
 const LIMIT_DEFAULTS = deepFreeze({
   summarizeBucketSize: 20,
   validateBatch: 25,
-  challengeCap: 40,
   verifySliceSize: 25,
   maxLineSpan: 100,
 });

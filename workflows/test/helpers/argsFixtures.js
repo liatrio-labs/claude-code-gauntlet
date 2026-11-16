@@ -35,7 +35,7 @@ export function validArgs(over = {}) {
     changedLines: 1,
     riskTable: changedFiles.map((path) => ({ path, risk: 'medium' })),
     policy: {},
-    limits: { validateBatch: 25, verifySliceSize: 100, challengeCap: 40, summarizeBucketSize: 20, deliveryCap: Number(headlessCapValue) },
+    limits: { validateBatch: 25, verifySliceSize: 100, summarizeBucketSize: 20, deliveryCap: Number(headlessCapValue) },
     configEcho: {
       model_tier: { value: 'optimized', source: 'default' },
       delivery: { value: 'markdown', source: 'default' },
@@ -80,7 +80,7 @@ export function interactiveArgs(over = {}) {
     pluginRoot: '/plugin',
     verify: { targetKind: 'branch' },
     reviewScope: { requested: 'full', kind: 'full', since: null, commits: null, detector: null },
-    limits: { summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 25, maxLineSpan: 100 },
+    limits: { summarizeBucketSize: 20, validateBatch: 25, verifySliceSize: 25, maxLineSpan: 100 },
     ...over,
     ...(Object.hasOwn(over, 'checkpoints') ? checkpointArgs(over.checkpoints) : {}),
   });

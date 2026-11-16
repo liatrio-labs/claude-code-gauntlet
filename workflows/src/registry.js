@@ -630,11 +630,10 @@ export const POLICY_PROVIDERS = deepFreeze(['firstParty', 'bedrock', 'vertex', '
 
 export const CONTROL_RE = /[\u0000-\u001F\u007F]/;
 
-// Absent delivery and discovery caps mean no ceiling; defaulting them would silently narrow a review.
+// Absent caps mean no ceiling; defaulting one would silently narrow a review.
 export const LIMIT_DEFAULTS = deepFreeze({
   summarizeBucketSize: 20,
   validateBatch: 25,
-  challengeCap: 40,
   // Small verify slices limit the blast radius of a bad inline transcription.
   verifySliceSize: 25,
   maxLineSpan: 100,
