@@ -13,17 +13,25 @@ runs `open-pr` with their own `gh` login and a local release tag; `remind` is th
 part Actions can run.
 """
 
-import argparse
 import copy
 import json
 import re
-import subprocess
 import sys
 import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypedDict, cast
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from release_cli import (
+    ArgumentParser,
+    CommandFailure,
+    InputError,
+    entry,
+    exit_code,
+    run_command,
+    validate_tag,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MARKETPLACE_REPO = "liatrio-labs/claude-plugins"
@@ -31,7 +39,6 @@ DEFAULT_SOURCE_REPO = "liatrio-labs/claude-code-gauntlet"
 SOURCE_URL = f"https://github.com/{DEFAULT_SOURCE_REPO}.git"
 MARKETPLACE_PATH = ".claude-plugin/marketplace.json"
 MANIFEST_PATH = ".claude-plugin/plugin.json"
-TAG_PATTERN = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+$")
 REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 SHA_PATTERN = re.compile(r"^[0-9a-fA-F]{40}$")
 ISSUE_TITLE_PATTERN = re.compile(r"^Marketplace bump due: (v[0-9]+\.[0-9]+\.[0-9]+)$")
@@ -69,42 +76,6 @@ class ReminderIssue(TypedDict):
     state: IssueState
 
 
-@dataclass(frozen=True, slots=True)
-class CommandFailure(Exception):
-    argv: tuple[str, ...]
-    returncode: int
-    stderr: str
-
-
-class InputError(Exception):
-    """An input or external response cannot safely describe a marketplace update."""
-
-
-class ArgumentParser(argparse.ArgumentParser):
-    def error(self, message):
-        raise InputError(message)
-
-
-def run_command(argv: list[str], cwd: str | None = None) -> str:
-    """Run the only subprocess boundary and return stdout as text."""
-    try:
-        result = subprocess.run(
-            argv,
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            check=False,
-        )
-    except UnicodeDecodeError:
-        raise InputError("command output is not valid UTF-8") from None
-    except OSError as error:
-        raise CommandFailure(tuple(argv), 127, str(error)) from None
-    if result.returncode:
-        raise CommandFailure(tuple(argv), result.returncode, result.stderr.strip())
-    return result.stdout
-
-
 def _json_object(text: str, label: str) -> dict[str, object]:
     try:
         value = json.loads(text)
@@ -135,12 +106,6 @@ def _load_manifest(text: str) -> PluginManifest:
     return cast(PluginManifest, document)
 
 
-def _validate_tag(tag: str) -> str:
-    if not TAG_PATTERN.fullmatch(tag):
-        raise InputError(f"malformed release tag: {tag!r}; expected vX.Y.Z")
-    return tag
-
-
 def _validate_repo(repo: str, label: str) -> str:
     if not REPO_PATTERN.fullmatch(repo):
         raise InputError(f"malformed {label}: {repo!r}; expected owner/repo")
@@ -148,7 +113,7 @@ def _validate_repo(repo: str, label: str) -> str:
 
 
 def _read_release(tag: str, run: CommandRunner) -> tuple[PluginManifest, str]:
-    _validate_tag(tag)
+    validate_tag(tag)
     sha_text = run(["git", "rev-parse", f"{tag}^{{commit}}"], str(ROOT)).strip()
     if not SHA_PATTERN.fullmatch(sha_text):
         raise InputError(f"git returned a malformed commit sha for {tag}")
@@ -363,7 +328,7 @@ def remind(repo: str, run: CommandRunner) -> int:
     tag = release.get("tagName")
     if not isinstance(tag, str):
         raise InputError("latest release response is missing tagName")
-    _validate_tag(tag)
+    validate_tag(tag)
 
     issue_text = run(
         [
@@ -434,31 +399,15 @@ def _parser() -> ArgumentParser:
 
 
 def main(argv: list[str] | None = None, *, run: CommandRunner = run_command) -> int:
-    try:
+    def operation() -> int:
         args = _parser().parse_args(argv)
         if args.command == "remind":
             return remind(args.repo, run)
-        operation = open_pr if args.command == "open-pr" else check
-        return operation(args.tag, run)
-    except InputError as error:
-        print(str(error).splitlines()[0], file=sys.stderr)
-        return 2
-    except CommandFailure as error:
-        command = " ".join(error.argv)
-        lines = [line.strip() for line in error.stderr.splitlines() if line.strip()]
-        detail = f": {lines[-1]}" if lines else ""
-        print(
-            f"command failed ({error.returncode}): {command}{detail}", file=sys.stderr
-        )
-        return 2
-    except OSError as error:
-        print(f"file operation failed: {str(error).splitlines()[0]}", file=sys.stderr)
-        return 2
+        command = open_pr if args.command == "open-pr" else check
+        return command(args.tag, run)
+
+    return exit_code(operation)
 
 
 if __name__ == "__main__":
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-    from gauntlet.cli import utf8_stdio
-
-    utf8_stdio()
-    raise SystemExit(main())
+    entry(main)

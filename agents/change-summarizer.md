@@ -1,7 +1,7 @@
 ---
 name: change-summarizer
 description: Produces a concise semantic summary of PR/MR changes for report change context
-tools: Read  # reads supplied shared context without semantic code navigation
+tools: Read
 effort: medium
 model: sonnet
 color: blue

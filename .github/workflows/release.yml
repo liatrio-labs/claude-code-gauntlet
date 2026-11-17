@@ -3,6 +3,14 @@ name: Semantic Release
 on:
   push:
     branches: [main]
+  # Retries the directory publish for a release that is already tagged. The token's trust
+  # policy accepts only this workflow on main, so run it from main.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag (vX.Y.Z) to publish to plugin-release
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -58,6 +66,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install python-semantic-release
+        if: github.event_name == 'push'
         # GitPython is pinned because 3.1.60 (2026-08-25) removed
         # Actor.name_email_regex, which python-semantic-release 10.6.1 reads
         # (#245). Bump both together after verifying compatibility.
@@ -65,6 +74,7 @@ jobs:
 
       - name: Semantic Release
         id: release
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
         run: |
@@ -74,8 +84,18 @@ jobs:
           after_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
           if [ -n "$after_tag" ] && [ "$after_tag" != "$before_tag" ]; then
             echo "released=true" >> "$GITHUB_OUTPUT"
+            echo "tag=${after_tag}" >> "$GITHUB_OUTPUT"
             echo "Released ${after_tag} (was ${before_tag:-none})"
           else
             echo "released=false" >> "$GITHUB_OUTPUT"
             echo "No release (tag still ${after_tag:-none})"
           fi
+
+      # Anthropic's directory tracks the plugin-release branch, which holds only the files the
+      # plugin runs; marketplace users keep installing main. Publish builds and checks the
+      # package from the tag itself and does nothing when the branch already holds it.
+      - name: Publish the directory package
+        if: steps.release.outputs.released == 'true' || github.event_name == 'workflow_dispatch'
+        env:
+          TAG: ${{ steps.release.outputs.tag || inputs.tag }}
+        run: python3 .github/plugin_package.py publish --tag "$TAG"
