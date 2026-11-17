@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v4.1.3 (2026-11-17)
+
+### Bug Fixes
+
+- Merge a shared finding's groups only when it would lead every one
+  ([#607](https://github.com/liatrio-labs/claude-code-gauntlet/pull/607),
+  [`6873a53`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6873a533d393e7a3c9e9943b06ef06e83d1a4fc4))
+
+
 ## v4.1.2 (2026-11-17)
 
 ### Bug Fixes
