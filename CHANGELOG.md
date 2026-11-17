@@ -2,6 +2,27 @@
 
 <!-- version list -->
 
+## v4.1.2 (2026-11-17)
+
+### Bug Fixes
+
+- Claim shared findings only for kept groups and keep severe leads
+  ([#606](https://github.com/liatrio-labs/claude-code-gauntlet/pull/606),
+  [`8bac9b8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8bac9b8780c11312742358d7631e0c4144a01382))
+
+- Keep the shared finding as lead of the group it merges
+  ([#606](https://github.com/liatrio-labs/claude-code-gauntlet/pull/606),
+  [`8bac9b8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8bac9b8780c11312742358d7631e0c4144a01382))
+
+- Merge a severe shared finding's groups instead of posting its defect twice
+  ([#606](https://github.com/liatrio-labs/claude-code-gauntlet/pull/606),
+  [`8bac9b8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8bac9b8780c11312742358d7631e0c4144a01382))
+
+- Post a multi-defect finding once by letting it join several groups
+  ([#606](https://github.com/liatrio-labs/claude-code-gauntlet/pull/606),
+  [`8bac9b8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8bac9b8780c11312742358d7631e0c4144a01382))
+
+
 ## v4.1.1 (2026-11-17)
 
 ### Bug Fixes
