@@ -75,7 +75,7 @@ test('invalid grouping falls back without dropping members, including dispatch f
   assert.deepEqual(out.gaps, ['grouping: dispatch failed: offline; same-lines grouping used']);
 });
 
-test('a finding placed in two groups joins the first-ranked one and yields its lead', () => {
+test('a finding placed in two groups posts each defect once', () => {
   const at = (id, line, severity = 'low', extra = {}) => makeFinding(id, { file: 'src/auth.ts', line_start: line, line_end: line, severity, ...extra });
   const groupsOf = (findings, groups, grouping_ids) => disposeFindings({ findings, grouping_ids, grouping_reply: { groups } }).groups
     .map((g) => [g.lead_id, ...g.finding_ids.filter((id) => id !== g.lead_id).sort()]).sort();
@@ -91,9 +91,9 @@ test('a finding placed in two groups joins the first-ranked one and yields its l
   const later = [at('both', 61), at('late', 70)];
   assert.deepEqual(groupsOf(later, [{ finding_ids: ['both', 'held'] }, { finding_ids: ['both', 'late'] }], ['both', 'late', 'held']),
     [['both', 'late']]);
-  // A shared finding more severe than every member placed once keeps the lead.
+  // A shared finding more severe than every member placed once leads, and its groups merge into its comment.
   const severe = [at('narrow', 61), at('both', 61, 'critical', { dimension: 'security' }), at('other', 48)];
-  assert.deepEqual(groupsOf(severe, shared), [['both', 'narrow'], ['other']]);
+  assert.deepEqual(groupsOf(severe, shared), [['both', 'narrow', 'other']]);
 });
 
 test('replay filters removed ids after validating the whole grouping reply', () => {

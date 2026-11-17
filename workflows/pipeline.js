@@ -3926,9 +3926,15 @@ function acceptGroupingReply(reply, ids, findings) {
     const alt = single.length ? chooseGroupLead(single) : null;
     return alt && groupSeverityRank(alt) >= groupSeverityRank(top) ? alt : top;
   };
+  let candidates = replyGroups;
+  for (const shared of rankFindings(findings.filter((f) => placements.get(f.id) > 1))) {
+    const holding = candidates.filter((members) => members.includes(shared));
+    if (holding.length < 2 || !holding.some((members) => leadOf(members) === shared)) continue;
+    candidates = [...candidates.filter((members) => !holding.includes(members)), [...new Set(holding.flat())]];
+  }
   const claimed = new Set();
   const groups = [];
-  for (const members of replyGroups.sort((a, b) => compareFindings(leadOf(a), leadOf(b)))) {
+  for (const members of candidates.sort((a, b) => compareFindings(leadOf(a), leadOf(b)))) {
     const open = members.filter((f) => !claimed.has(f.id));
     if (open.length < 2) continue;
     for (const f of open) claimed.add(f.id);

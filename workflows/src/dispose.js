@@ -4,7 +4,7 @@ import { locationAllows, deliveryAllows } from './location.js';
 import { consolidateCrossAgent } from './filterFindings.js';
 import { eliminationDecisions, traceDecision, admissionDetail } from './measurementTrace.js';
 import { hasAdmission } from './admission.js';
-import { chooseGroupLead, compareFindings, groupDelivery, groupSeverityRank } from './groupRanking.js';
+import { chooseGroupLead, compareFindings, groupDelivery, groupSeverityRank, rankFindings } from './groupRanking.js';
 
 const DELIVERABLE_CHALLENGES = ['survived'];
 
@@ -146,17 +146,24 @@ export function acceptGroupingReply(reply, ids, findings) {
     .filter((members) => members.length >= 2);
   const placements = new Map();
   for (const members of replyGroups) for (const f of members) placements.set(f.id, (placements.get(f.id) ?? 0) + 1);
-  // A finding placed in several groups reports several defects and joins only one of them. It yields
-  // the lead to a member placed once unless it is more severe, so each defect posts once at its severity.
+  // A finding placed in several groups reports several defects. It yields the lead to a member placed
+  // once that is as severe and joins one group. When it must lead, its text covers every defect, so
+  // its groups merge into one comment. Either way each defect posts once at its own severity.
   const leadOf = (members) => {
     const top = chooseGroupLead(members);
     const single = members.filter((f) => placements.get(f.id) === 1);
     const alt = single.length ? chooseGroupLead(single) : null;
     return alt && groupSeverityRank(alt) >= groupSeverityRank(top) ? alt : top;
   };
+  let candidates = replyGroups;
+  for (const shared of rankFindings(findings.filter((f) => placements.get(f.id) > 1))) {
+    const holding = candidates.filter((members) => members.includes(shared));
+    if (holding.length < 2 || !holding.some((members) => leadOf(members) === shared)) continue;
+    candidates = [...candidates.filter((members) => !holding.includes(members)), [...new Set(holding.flat())]];
+  }
   const claimed = new Set();
   const groups = [];
-  for (const members of replyGroups.sort((a, b) => compareFindings(leadOf(a), leadOf(b)))) {
+  for (const members of candidates.sort((a, b) => compareFindings(leadOf(a), leadOf(b)))) {
     const open = members.filter((f) => !claimed.has(f.id));
     if (open.length < 2) continue;
     for (const f of open) claimed.add(f.id);
