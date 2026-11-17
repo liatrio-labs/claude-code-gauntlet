@@ -151,8 +151,60 @@ class PooledMetric:
     pooled: str
     count: str | None = None
 
-    def title(self, pooled):
-        return self.label.format(prs=pooled["prs"], bugs=pooled["bugs"])
+    def title(self, release):
+        return self.label.format(prs=release.prs, bugs=release.bugs)
+
+
+@dataclass(frozen=True, slots=True)
+class PooledRelease:
+    """A release measured as several lanes, each pooling PRs from more than one run.
+
+    Construction refuses an entry whose parts disagree, so a typo fails on import.
+    """
+
+    lanes: tuple[tuple[str, ...], ...]
+    prs: int
+    bugs: int
+    claude_code: str
+    session: str
+    judge: str
+    metrics: tuple[PooledMetric, ...]
+    minutes: dict[str, float]  # median, low and high wall minutes per review
+    cost_usd: dict[str, float]  # median, p10 and p90 of Claude Code's total_cost_usd
+    auth_modes: dict[str, int]  # reviews per auth mode: subscription and api
+    note: str
+    readme_note: tuple[str, ...]
+    history_note: tuple[str, ...]
+
+    def __post_init__(self):
+        keys = [m.key for m in self.metrics]
+        problems = [
+            "repeated metric keys" if len(set(keys)) != len(keys) else "",
+            "a metric lacks a value per lane"
+            if any(len(m.lanes) != len(self.lanes) for m in self.metrics)
+            else "",
+            "a pooled value disagrees with its count"
+            if any(
+                m.count and m.pooled != f"{100 * _ratio(m.count):.1f}%"
+                for m in self.metrics
+            )
+            else "",
+            "minutes, cost or auth modes lack a field"
+            if set(self.minutes) != {"median", "low", "high"}
+            or set(self.cost_usd) != {"median", "p10", "p90"}
+            or set(self.auth_modes) != {"subscription", "api"}
+            else "",
+            "auth modes do not cover every review"
+            if sum(self.auth_modes.values()) != len(self.lanes) * self.prs
+            else "",
+        ]
+        if any(problems):
+            raise ValueError("; ".join(filter(None, problems)))
+
+
+def _ratio(count):
+    numerator, denominator = count.split("/")
+    return int(numerator) / int(denominator)
 
 
 # Long-term release-progression ledger — the headline section of the report.
@@ -165,8 +217,8 @@ RELEASES = (
     {
         "label": "v4.0",
         "epoch_id": "e616e84-v1",
-        "pooled": {
-            "lanes": (
+        "pooled": PooledRelease(
+            lanes=(
                 (
                     "subset-20261115-230910-3bab948e",
                     "custom-20261116-034129-3911db9e",
@@ -180,12 +232,12 @@ RELEASES = (
                     "custom-20261116-034141-3911db9e",
                 ),
             ),
-            "prs": 15,
-            "bugs": 66,
-            "claude_code": "2.1.323",
-            "session": "Sonnet at low effort",
-            "judge": "claude-opus-4-5-20251101",
-            "metrics": (
+            prs=15,
+            bugs=66,
+            claude_code="2.1.323",
+            session="Sonnet at low effort",
+            judge="claude-opus-4-5-20251101",
+            metrics=(
                 PooledMetric(
                     "full",
                     "Known bugs caught, all {prs} PRs ({bugs} bugs)",
@@ -218,15 +270,15 @@ RELEASES = (
                 ),
             ),
             # Over every pooled review: wall minutes and Claude Code's total_cost_usd.
-            "minutes": {"median": 11.8, "low": 3.5, "high": 22.4},
-            "cost_usd": {"median": 4.97, "p10": 2.49, "p90": 8.55},
-            "auth_modes": {"subscription": 33, "api": 12},
-            "note": (
+            minutes={"median": 11.8, "low": 3.5, "high": 22.4},
+            cost_usd={"median": 4.97, "p10": 2.49, "p90": 8.55},
+            auth_modes={"subscription": 33, "api": 12},
+            note=(
                 "Each lane pools the four PRs from its custom run at 3911db9e "
                 "with the other eleven PRs from its subset run at 3bab948e."
             ),
             # Release-specific limits the README states under the results table.
-            "readme_note": (
+            readme_note=(
                 "Eleven of the PRs ran on a pre-release build.",
                 "The fixes made after it matter only for reviews with more than 40 "
                 "findings, and the four PRs that large were rerun after the fixes.",
@@ -235,7 +287,7 @@ RELEASES = (
                 "changed between the builds.",
             ),
             # Release-specific notes the run history states under the lane table.
-            "history_note": (
+            history_note=(
                 "Pooled noise is not reported.",
                 "Three fixes separate 3bab948e from 3911db9e.",
                 "A review whose returned payload passed about 1,000,000 characters "
@@ -248,7 +300,7 @@ RELEASES = (
                 "The release adds one later change, a clearer error when the session "
                 "sends malformed arguments.",
             ),
-        },
+        ),
     },
     {
         "label": "v3.1",
@@ -1050,10 +1102,10 @@ def _release_leg_html(rows, leg):
 def _pooled_release_html(rel, rows):
     pooled = rel["pooled"]
     available = {row.get("run_id") for row in rows}
-    if not all(run_id in available for lane in pooled["lanes"] for run_id in lane):
+    if not all(run_id in available for lane in pooled.lanes for run_id in lane):
         return ""
     headers = "".join(
-        f'<th scope="col">Lane {i}</th>' for i in range(1, len(pooled["lanes"]) + 1)
+        f'<th scope="col">Lane {i}</th>' for i in range(1, len(pooled.lanes) + 1)
     )
     metrics = "".join(
         f'<tr><th scope="row">{html.escape(name)}</th>'
@@ -1063,24 +1115,24 @@ def _pooled_release_html(rel, rows):
         )
         + "</tr>"
         for name, lanes, total, count in (
-            (m.title(pooled), m.lanes, m.pooled, m.count) for m in pooled["metrics"]
+            (m.title(pooled), m.lanes, m.pooled, m.count) for m in pooled.metrics
         )
     )
     sources = "".join(
         f'<p class="release-leg-run">Lane {i}: '
         + " + ".join(f'<span class="mono">{html.escape(r)}</span>' for r in lane)
         + "</p>"
-        for i, lane in enumerate(pooled["lanes"], 1)
+        for i, lane in enumerate(pooled.lanes, 1)
     )
     return (
         '<article class="release-card">'
         f'<h3 class="release-label">{html.escape(rel["label"])}</h3>'
-        f"<p>Session: {html.escape(pooled['session'])} · judge "
-        f'<span class="mono">{html.escape(pooled["judge"])}</span></p>'
+        f"<p>Session: {html.escape(pooled.session)} · judge "
+        f'<span class="mono">{html.escape(pooled.judge)}</span></p>'
         '<div class="table-wrap"><table><thead><tr><th scope="col">Measure</th>'
         f'{headers}<th scope="col">Pooled</th></tr></thead>'
         f"<tbody>{metrics}</tbody></table></div>"
-        f'<p class="release-note">{html.escape(pooled["note"])}</p>'
+        f'<p class="release-note">{html.escape(pooled.note)}</p>'
         f"{sources}</article>"
     )
 
