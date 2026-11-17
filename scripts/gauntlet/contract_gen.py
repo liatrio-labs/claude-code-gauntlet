@@ -309,9 +309,11 @@ def discovery_targets(registry: Mapping[str, Any]) -> dict[str, str]:
     for contract in registry["discoveryContracts"]:
         agent = contract["agentType"]
         schema = contract["schema"]
+        # Spaced separators: the plugin directory's validator reads a compact `{a,b,...}`
+        # run as a shell brace pattern it cannot expand and holds the plugin for review.
         parts = [
             "Return findings by value as JSON:",
-            "```json\n" + json.dumps(schema, separators=(",", ":")) + "\n```",
+            "```json\n" + json.dumps(schema) + "\n```",
         ]
         path = f"agents/{agent.split(':', 1)[1]}.md"
         targets[path] = "\n\n".join(parts)

@@ -940,11 +940,12 @@ def test_command_drift(registry_tree, invoke):
     original = target.read_bytes()
     target.write_text(
         original.decode().replace(
-            '"criticality":{"type":"number"', '"criticality":{"type":"string"'
+            '"criticality": {"type": "number"', '"criticality": {"type": "string"'
         ),
         encoding="utf-8",
     )
     broken = target.read_bytes()
+    assert broken != original
     stale = invoke(
         "generate_contract_requirements",
         ["--repo-root", str(registry_tree), "--check"],
