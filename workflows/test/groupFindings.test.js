@@ -87,16 +87,23 @@ test('a finding placed in two groups posts each defect once', () => {
   assert.equal(out.stats.grouping, 'model');
   assert.deepEqual(disposeFindings(out), out);
   assert.deepEqual(groupsOf(findings, [{ finding_ids: ['narrow', 'both'] }, { finding_ids: ['both', 'narrow'] }]), [['both', 'narrow'], ['other']]);
-  // A group left with one actionable member claims nothing, so the shared finding still joins its other group.
+  // A group left with one member claims nothing, whether a held finding shrank it or an earlier group did.
   const later = [at('both', 61), at('late', 70)];
   assert.deepEqual(groupsOf(later, [{ finding_ids: ['both', 'held'] }, { finding_ids: ['both', 'late'] }], ['both', 'late', 'held']),
     [['both', 'late']]);
+  const chain = [at('a', 10), at('s', 20), at('b', 30), at('c', 40)];
+  assert.deepEqual(groupsOf(chain, [{ finding_ids: ['s', 'a'] }, { finding_ids: ['s', 'b'] }, { finding_ids: ['b', 'c'] }]),
+    [['a', 's'], ['c', 'b']]);
   // A shared finding more severe than every member placed once leads, and its groups merge into its comment.
   const severe = [at('narrow', 61), at('both', 61, 'critical', { dimension: 'security' }), at('other', 48)];
   assert.deepEqual(groupsOf(severe, shared), [['both', 'narrow', 'other']]);
-  // The merged comment keeps that lead even beside an equally severe member placed once.
+  // It merges only groups it would lead. Beside a member placed once that is as severe, it joins that group.
   const peer = [...severe.slice(0, 2), at('other', 48, 'critical', { dimension: 'security' })];
-  assert.deepEqual(groupsOf(peer, shared), [['both', 'narrow', 'other']]);
+  assert.deepEqual(groupsOf(peer, shared), [['narrow'], ['other', 'both']]);
+  // A second shared finding never merges into a group the first one leads, so its partner posts alone.
+  const hubs = [at('s1', 10, 'critical'), at('s2', 20, 'high'), at('x', 30), at('y', 40)];
+  assert.deepEqual(groupsOf(hubs, [{ finding_ids: ['s1', 's2'] }, { finding_ids: ['s1', 'x'] }, { finding_ids: ['s2', 'y'] }]),
+    [['s1', 's2', 'x'], ['y']]);
 });
 
 test('replay filters removed ids after validating the whole grouping reply', () => {

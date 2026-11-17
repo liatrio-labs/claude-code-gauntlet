@@ -3930,11 +3930,9 @@ function acceptGroupingReply(reply, ids, findings) {
   const leadFor = (group, members = group.members) => group.lead && members.includes(group.lead) ? group.lead : leadOf(members);
   for (const shared of rankFindings(findings.filter((f) => placements.get(f.id) > 1))) {
     const holding = candidates.filter((group) => group.members.includes(shared));
-    if (holding.length < 2 || !holding.some((group) => leadFor(group) === shared)) continue;
-    candidates = [...candidates.filter((group) => !holding.includes(group)), {
-      members: [...new Set(holding.flatMap((group) => group.members))],
-      lead: holding.find((group) => group.lead)?.lead ?? shared,
-    }];
+    if (holding.length < 2 || !holding.every((group) => leadFor(group) === shared)) continue;
+    candidates = [...candidates.filter((group) => !holding.includes(group)),
+      { members: [...new Set(holding.flatMap((group) => group.members))], lead: shared }];
   }
   const claimed = new Set();
   const groups = [];
