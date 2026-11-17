@@ -2,6 +2,43 @@
 
 <!-- version list -->
 
+## v4.1.0 (2026-11-17)
+
+### Bug Fixes
+
+- Harden the directory package publish after review
+  ([#603](https://github.com/liatrio-labs/claude-code-gauntlet/pull/603),
+  [`be57020`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/be57020a9b018f5019f430b7e60216718cbf4e0c))
+
+- Link a packaged release to its own tag, not main
+  ([#603](https://github.com/liatrio-labs/claude-code-gauntlet/pull/603),
+  [`be57020`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/be57020a9b018f5019f430b7e60216718cbf4e0c))
+
+- Polish the directory publish after the second review
+  ([#603](https://github.com/liatrio-labs/claude-code-gauntlet/pull/603),
+  [`be57020`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/be57020a9b018f5019f430b7e60216718cbf4e0c))
+
+- Publish only tags whose commit is on main
+  ([#603](https://github.com/liatrio-labs/claude-code-gauntlet/pull/603),
+  [`be57020`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/be57020a9b018f5019f430b7e60216718cbf4e0c))
+
+### Features
+
+- Give the plugin its directory icon
+  ([#603](https://github.com/liatrio-labs/claude-code-gauntlet/pull/603),
+  [`be57020`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/be57020a9b018f5019f430b7e60216718cbf4e0c))
+
+- Publish a slim plugin package for the Claude directory
+  ([#603](https://github.com/liatrio-labs/claude-code-gauntlet/pull/603),
+  [`be57020`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/be57020a9b018f5019f430b7e60216718cbf4e0c))
+
+### Refactoring
+
+- Pass the subprocess environment by keyword
+  ([#603](https://github.com/liatrio-labs/claude-code-gauntlet/pull/603),
+  [`be57020`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/be57020a9b018f5019f430b7e60216718cbf4e0c))
+
+
 ## v4.0.2 (2026-11-17)
 
 ### Bug Fixes
