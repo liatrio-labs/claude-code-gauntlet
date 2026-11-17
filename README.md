@@ -18,7 +18,7 @@ claude plugin install code-gauntlet@code-gauntlet
 
 ## Why Code Gauntlet
 
-- **It catches real bugs.** On a [public benchmark](#benchmark-results) of 15 real PRs with 66 known bugs, it caught 79% of them over three runs, and 73% on the PRs outside our tuning set.
+- **It catches real bugs.** On a [public benchmark](#benchmark-results) of 15 real PRs with 66 known bugs, it caught 79% of them over three runs, and 73% on the PRs outside our tuning set. <!-- bench:pitch -->
 - **Its findings hold up.** Each one is checked against the source, attacked by a skeptical validator, and re-examined by a blind challenger before it can post.
 - **It keeps your PR readable.** When several agents report the same defect, you get one short comment, with a suggested fix when there is one.
 - **It reviews where you work.** It handles GitHub PRs, GitLab MRs, and local changes, in your session or headless in CI.
@@ -72,7 +72,7 @@ Update later with `claude plugin update code-gauntlet@code-gauntlet`, and remove
 
 ### Requirements
 
-- You need Claude Code 2.1.154 or newer. The benchmark below ran on 2.1.323.
+- You need Claude Code 2.1.154 or newer.
 - Claude Code's workflows must be on. On a Pro plan, turn on Dynamic workflows in `/config`.
 - The review agents run on Sonnet and Opus, so your Claude Code access must include both models.
 - You need git on your path, and Python 3.10 or newer reachable as `python3`, `python`, or `py -3`. There is nothing to `pip install`.
@@ -102,11 +102,14 @@ Two settings do change the models.
 On Bedrock, Vertex, or Foundry, your deployment's model mapping applies.
 The session only prepares the review and delivers the result, so we recommend Sonnet at low effort for it.
 
-The benchmark below ran from a Sonnet session at low effort.
+<!-- bench:cost:begin -->
+The benchmark below ran from a session on Sonnet at low effort.
 There, a review took a median of 12 minutes, from 4 to 22.
 Claude Code's own cost estimate at API prices had a median of $4.97 per review, and 80% fell between $2.49 and $8.55.
+<!-- bench:cost:end -->
+
 On a subscription, the review counts against your plan's usage instead.
-Larger changes take longer and cost more ([run history](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.3/bench/README.md#measurement-history)).
+Larger changes take longer and cost more ([run history](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.4/bench/README.md#measurement-history)).
 
 ## How it reviews
 
@@ -128,7 +131,7 @@ The gap hunter works within a fixed read budget.
 A coverage file saved beside the report records the changed code it did not reach.
 It does not run when the specialists' findings already cover every change.
 
-The security reviewer runs on Opus, a judgment call that the [routing research](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.3/docs/research/artifacts/12-model-routing-for-code-review.md) explains.
+The security reviewer runs on Opus, a judgment call that the [routing research](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.4/docs/research/artifacts/12-model-routing-for-code-review.md) explains.
 The session rates each changed file's risk.
 When every file is low risk and the change is under 50 lines, the plugin offers a light review.
 A light review runs only `bug-detector` and `security-reviewer`, with no gap hunter.
@@ -161,7 +164,7 @@ The older ones drop one severity level and are marked as pre-existing in the rep
 When a PR or MR with a posted review gets new commits, an interactive run offers to review only what changed.
 If the earlier reviewed commit is no longer in the branch history, it runs a full review instead.
 
-[How it works](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.3/docs/how-it-works.md) shows the full design, stage by stage.
+[How it works](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.4/docs/how-it-works.md) shows the full design, stage by stage.
 
 ## What it posts
 
@@ -196,7 +199,7 @@ It needs the workflow rule above plus permission to run git, `gh` or `glab`, and
 
 The plugin reads project rules as prose from `REVIEW.md`, `CLAUDE.md`, `AGENTS.md`, and `QODO.md`.
 No `REVIEW.md` is required, and it holds rules only, not settings.
-The [authoring guide](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.3/docs/review-md-authoring.md) covers writing rules.
+The [authoring guide](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.4/docs/review-md-authoring.md) covers writing rules.
 
 ## What it runs, reads, and sends
 
@@ -224,32 +227,35 @@ See [security boundaries](SECURITY.md#trust-boundaries) and [PRIVACY.md](PRIVACY
 ## Benchmark results
 
 Scores come from the MIT-licensed [Martian code review benchmark](https://github.com/withmartian/code-review-benchmark): real PRs from open source projects, each with a list of known bugs.
-We reviewed the same 15 PRs three times from a Sonnet session at low effort, and a pinned judge, `claude-opus-4-5-20251101`, scored every comment.
+
+<!-- bench:results:begin -->
+We reviewed the same 15 PRs three times on Claude Code 2.1.323, from a session on Sonnet at low effort.
+A pinned judge, `claude-opus-4-5-20251101`, scored every comment.
 
 | Measure | v4.0 |
-|---|---|
+| --- | --- |
 | Known bugs caught, all 15 PRs (66 bugs) | 78.8% |
 | Known bugs caught, 13 PRs with no overlap with our prompts (50 bugs) | 80.0% |
 | Known bugs caught, PRs outside our six-PR tuning set (21 bugs) | 73.0% |
 | Comments that match a known bug (strict precision), all 15 PRs | 38.9% |
 | Inline comments per PR | 9.3 |
 
-The benchmark lists only some of each PR's real problems.
-A comment that matches no known bug may still be valid, and we have not measured how many are.
-
-Two limits apply.
 Eleven of the PRs ran on a pre-release build.
 The fixes made after it matter only for reviews with more than 40 findings, and the four PRs that large were rerun after the fixes.
-Only the reruns count, and the [run history](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.3/bench/README.md#measurement-history) lists what changed between the builds.
+Only the reruns count, and the [run history](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.4/bench/README.md#measurement-history) lists what changed between the builds.
+<!-- bench:results:end -->
+
+The benchmark lists only some of each PR's real problems.
+A comment that matches no known bug may still be valid, and we have not measured how many are.
 The judge and the plugin both use Anthropic models, and same-vendor bias has not been measured here.
 
 We run the benchmark by hand, not on every release.
-The [run history](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.3/bench/README.md#measurement-history) lists the runs behind these numbers, and the [method](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.3/bench/MEASUREMENT.md) describes the scoring.
+The [run history](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.4/bench/README.md#measurement-history) lists the runs behind these numbers, and the [method](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.4/bench/MEASUREMENT.md) describes the scoring.
 
 ## Contributing
 
-Start with [CONTRIBUTING.md](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.3/CONTRIBUTING.md) for setup, architecture, and checks.
-[AGENTS.md](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.3/AGENTS.md) holds the repository rules and [docs/research](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.3/docs/research/README.md) the design evidence.
+Start with [CONTRIBUTING.md](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.4/CONTRIBUTING.md) for setup, architecture, and checks.
+[AGENTS.md](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.4/AGENTS.md) holds the repository rules and [docs/research](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.4/docs/research/README.md) the design evidence.
 Report bugs and ask questions in [issues](https://github.com/liatrio-labs/claude-code-gauntlet/issues).
 
 ## License

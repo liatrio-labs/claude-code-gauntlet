@@ -64,7 +64,7 @@ not backported to earlier 4.x minors or to 3.x, and nothing is backported to 2.x
 
 `Branch-Protection` and `Code-Review` score low by design.
 A sole maintainer cannot self-approve and the release workflow needs its bypass, so raising either score would block merges or releases.
-See [the merge policy](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.3/CONTRIBUTING.md#pull-requests).
+See [the merge policy](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.4/CONTRIBUTING.md#pull-requests).
 
 ## Scope
 

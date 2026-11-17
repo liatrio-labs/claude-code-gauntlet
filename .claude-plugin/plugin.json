@@ -2,7 +2,7 @@
   "name": "code-gauntlet",
   "displayName": "Code Gauntlet",
   "icon": "./.claude-plugin/icon.png",
-  "version": "4.1.3",
+  "version": "4.1.4",
   "description": "Adversarial code review for Claude Code. Seven specialist agents review each GitHub PR, GitLab MR or local change for bugs, security, tests and cross-file impact, and an eighth reads the changed code their findings missed. Every finding must survive verification, a skeptical validator and a blind challenge before it posts.",
   "author": {
     "name": "Liatrio Labs",

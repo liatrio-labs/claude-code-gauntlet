@@ -137,7 +137,7 @@ follows `configResult.resolved.post_mode`.)
 
 When `delivery.prIdentity` is set in the args waist, the persisted `artifactPaths.postReview` file
 already is the post_review-ready wrapper (`{ owner, repo, pr_number, sha, platform, web_origin, review_body, review_summary, findings }`).
-Pass that file to `post_review.py` unchanged. Keep its `sha` because it pins the prior-review marker to the reviewed commit. Code-owned byte budgets and folding are documented in [delivery rendering](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.3/docs/delivery-rendering.md).
+Pass that file to `post_review.py` unchanged. Keep its `sha` because it pins the prior-review marker to the reviewed commit. Code-owned byte budgets and folding are documented in [delivery rendering](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.4/docs/delivery-rendering.md).
 
 When the artifact is the legacy bare findings array, invoke `post_review.py` with the identity flags. The script renders the public summary from findings with group values:
 
