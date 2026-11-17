@@ -12,5 +12,5 @@ settings overrides, and `Default Delivery` settings are unsupported. A detected 
 `CODE_GAUNTLET_DELIVERY` as the delivery replacement; it neither fails the review nor creates a comment.
 Delivery channels, tier, and comment caps use the existing environment pins and mode defaults.
 
-See [authoring examples](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.0/docs/review-md-authoring.md) and the
+See [authoring examples](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.1/docs/review-md-authoring.md) and the
 [headless environment reference](headless-mode.md).
