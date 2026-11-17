@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v4.0.2 (2026-11-17)
+
+### Bug Fixes
+
+- Describe the skill without telling Claude to prefer it over other skills
+  ([#604](https://github.com/liatrio-labs/claude-code-gauntlet/pull/604),
+  [`5cf44a7`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5cf44a78ad39aa65aa4e830d6afe05abee54078c))
+
+### Documentation
+
+- Address the gauntlet review of the README pitch
+  ([#602](https://github.com/liatrio-labs/claude-code-gauntlet/pull/602),
+  [`c849b0f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c849b0ff626f9d429a370f79a330ca02c9c43dde))
+
+- Open the README with what Code Gauntlet does and why to install it
+  ([#602](https://github.com/liatrio-labs/claude-code-gauntlet/pull/602),
+  [`c849b0f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c849b0ff626f9d429a370f79a330ca02c9c43dde))
+
+
 ## v4.0.1 (2026-11-16)
 
 ### Bug Fixes
