@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v4.1.4 (2026-11-17)
+
+### Bug Fixes
+
+- **bench**: Build the pooled release as a checked record
+  ([#608](https://github.com/liatrio-labs/claude-code-gauntlet/pull/608),
+  [`6bcaa2b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6bcaa2bb754dd2ed415fc21cab9e9fe0a69ad2e0))
+
+- **bench**: Generate every current-release fact and check the entry first
+  ([#608](https://github.com/liatrio-labs/claude-code-gauntlet/pull/608),
+  [`6bcaa2b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6bcaa2bb754dd2ed415fc21cab9e9fe0a69ad2e0))
+
+### Chores
+
+- **bench**: Publish results from one source; drop stale competitor anchors
+  ([#608](https://github.com/liatrio-labs/claude-code-gauntlet/pull/608),
+  [`6bcaa2b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6bcaa2bb754dd2ed415fc21cab9e9fe0a69ad2e0))
+
+
 ## v4.1.3 (2026-11-17)
 
 ### Bug Fixes
