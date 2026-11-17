@@ -3,10 +3,6 @@
   "judge_sd": null,
   "delta_noise": null,
   "calibration_status": "pending",
-  "anchors": {
-    "rows": {},
-    "status": "pending"
-  },
   "protected": {
     "status": "pending_orchestrator_commit"
   }

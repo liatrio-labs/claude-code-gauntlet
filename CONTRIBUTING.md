@@ -137,7 +137,7 @@ claude-code-gauntlet/
 |-- workflows/               # JS sources, bundler, generated pipeline, Node tests
 |-- scripts/                 # Shipped standard-library Python scripts
 |-- tests/                   # Python tests and cross-runtime fixtures
-|-- bench/                   # Golden PRs, judge, anchors, ledger, reports
+|-- bench/                   # Golden PRs, judge, ledger, reports
 |-- skills/
 |   `-- code-gauntlet/        # Review orchestration and phase references
 `-- docs/research/           # Design evidence

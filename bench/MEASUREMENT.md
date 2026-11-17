@@ -484,8 +484,8 @@ scheduled by this document.
 
 The historical baseline mini has 19/30 recall, 56/77 valid-extra and 5/77 noise on its
 historical epoch. Free replay reproduced the buckets; missing pair judgments prevent
-exact recall replay. Both new-epoch mini rejudgments, rebuilt anchors and judge
-variability/noise calibration remain external acceptance. No new paid result is
+exact recall replay. Both new-epoch mini rejudgments and judge variability/noise
+calibration remain external acceptance. No new paid result is
 asserted here.
 
 ## Windowed run validity

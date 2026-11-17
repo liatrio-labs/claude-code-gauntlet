@@ -219,22 +219,6 @@ class TestTiles(unittest.TestCase):
         self.assertIn("59 goldens", out)
 
 
-class TestAnchors(unittest.TestCase):
-    def test_all_four_anchor_tools_present(self):
-        out = _render()
-        self.assertIn("deep-review v2", out)
-        self.assertIn("coderabbit", out)
-        self.assertIn("claude-code", out)
-        # "claude" as a standalone tool label (SVG text node).
-        self.assertRegex(out, r">claude<")
-
-    def test_anchor_metric_titles_present(self):
-        out = _render()
-        self.assertIn("Golden recall", out)
-        self.assertIn("Noise rate", out)
-        self.assertIn("Precision (strict)", out)
-
-
 class TestFootnotes(unittest.TestCase):
     def test_footnotes_content(self):
         out = _render()
@@ -692,21 +676,27 @@ def test_current_release_renders_published_pool_separately_from_raw_scores():
     release, ledger = active.split("<h2>Run ledger</h2>")
     assert "<h2>Current release</h2>" in release
     assert '<h3 class="release-label">v4.0</h3>' in release
-    assert "Sonnet at effort low" in release
+    assert "Sonnet at low effort" in release
     assert "claude-opus-4-5-20251101" in release
-    assert "four PRs from the custom run at 3911db9e" in release
-    assert "other eleven PRs from the subset run at 3bab948e" in release
+    assert "four PRs from its custom run at 3911db9e" in release
+    assert "other eleven PRs from its subset run at 3bab948e" in release
     for name, values in (
         (
-            "Full test set recall (15 PRs, 66 bugs)",
+            "Known bugs caught, all 15 PRs (66 bugs)",
             ("80.3%", "78.8%", "77.3%", "78.8% (156/198)"),
         ),
         (
-            "Fair test set recall (13 PRs, 50 bugs)",
+            "Known bugs caught, 13 PRs with no overlap with our prompts (50 bugs)",
             ("80.0%", "80.0%", "80.0%", "80.0% (120/150)"),
         ),
-        ("Unseen PRs recall (21 bugs)", ("71.4%", "76.2%", "71.4%", "73.0% (46/63)")),
-        ("Strict precision", ("40.2%", "40.0%", "36.7%", "38.9%")),
+        (
+            "Known bugs caught, PRs outside our six-PR tuning set (21 bugs)",
+            ("71.4%", "76.2%", "71.4%", "73.0% (46/63)"),
+        ),
+        (
+            "Comments that match a known bug (strict precision), all 15 PRs",
+            ("40.2%", "40.0%", "36.7%", "38.9%"),
+        ),
         ("Inline comments per PR", ("9.3", "9.1", "9.5", "9.3")),
     ):
         assert (

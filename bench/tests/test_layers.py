@@ -9,7 +9,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 LAYERS = [
     "__init__ contracts decode epochs costs citations mirrors scorer_source cli",
-    "scorer score observations provenance stages ledger anchors scoring_costs profiles",
+    "scorer score observations provenance stages ledger scoring_costs profiles",
     "validity invoke check checkpoint run description_eval delivery_replay validate_replay validation_replay",
     "leaks",
     "populations looks audit compare simulation report windows verdict_analysis",
