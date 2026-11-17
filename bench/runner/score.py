@@ -418,15 +418,13 @@ def _candidate_context(info, candidate):
     return hunk, ctx, status, False
 
 
-def _capture_adjudications(
-    request, matched, per_pr, api_key, adjudicator, context_builder=_candidate_context
-):
+def _capture_adjudications(request, matched, per_pr, api_key, adjudicator):
     contexts, verdicts, usage = [], [], []
     pin = request.evaluator.adjudicator_pin
     for c in request.candidates:
         if c.candidate_id in matched:
             continue
-        hunk, ctx, status, truncated = context_builder(per_pr[c.pr_url], asdict(c))
+        hunk, ctx, status, truncated = _candidate_context(per_pr[c.pr_url], asdict(c))
         context = AdjudicationContext(c.candidate_id, hunk, ctx, status, truncated)
         contexts.append(context)
         verdict = adjudicator(c.text, hunk, ctx, pin, api_key)

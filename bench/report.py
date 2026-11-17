@@ -19,6 +19,7 @@ import json
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -66,8 +67,8 @@ METRIC_KEYS = (
 )
 
 # Tools plotted as points on the over-runs chart (in time order). Anchor rows
-# (anchor-claude, …) are excluded here — they surface only as the historical
-# top-anchor reference line, not as our runs.
+# (anchor-claude, …) are not plotted as our runs: the chart shows them only as
+# the historical top-anchor reference line, and the run ledger table marks them.
 TRACKED_TOOLS = ("deep-review-v2", "deep-review-v3", "naive-anchor")
 
 # Per-tool display + colour. Colour encodes the *tool identity* on the over-runs
@@ -135,6 +136,25 @@ MILESTONE_LABELS = {
 # run_id up directly rather than taking whatever custom-tier row is newest.
 GATE2_RUN_ID = "custom-20260721-220637-5337f6c"
 
+
+@dataclass(frozen=True, slots=True)
+class PooledMetric:
+    """One measure of a pooled release, per lane and pooled over every lane.
+
+    ``label`` may name the release's ``{prs}`` and ``{bugs}`` so those counts are
+    typed once; ``count`` is the pooled numerator and denominator when there is one.
+    """
+
+    key: str
+    label: str
+    lanes: tuple[str, ...]
+    pooled: str
+    count: str | None = None
+
+    def title(self, pooled):
+        return self.label.format(prs=pooled["prs"], bugs=pooled["bugs"])
+
+
 # Long-term release-progression ledger — the headline section of the report.
 # Newest first. Ordinary legs read their metrics from the ledger. Pooled releases
 # carry published metrics because aggregate ledger rows cannot select PRs within
@@ -165,47 +185,42 @@ RELEASES = (
             "claude_code": "2.1.323",
             "session": "Sonnet at low effort",
             "judge": "claude-opus-4-5-20251101",
-            # Each metric: key, label, per-lane values, pooled value, pooled count.
             "metrics": (
-                (
+                PooledMetric(
                     "full",
-                    "Known bugs caught, all 15 PRs (66 bugs)",
+                    "Known bugs caught, all {prs} PRs ({bugs} bugs)",
                     ("80.3%", "78.8%", "77.3%"),
                     "78.8%",
                     "156/198",
                 ),
-                (
+                PooledMetric(
                     "fair",
                     "Known bugs caught, 13 PRs with no overlap with our prompts (50 bugs)",
                     ("80.0%", "80.0%", "80.0%"),
                     "80.0%",
                     "120/150",
                 ),
-                (
+                PooledMetric(
                     "unseen",
                     "Known bugs caught, PRs outside our six-PR tuning set (21 bugs)",
                     ("71.4%", "76.2%", "71.4%"),
                     "73.0%",
                     "46/63",
                 ),
-                (
+                PooledMetric(
                     "precision",
-                    "Comments that match a known bug (strict precision), all 15 PRs",
+                    "Comments that match a known bug (strict precision), all {prs} PRs",
                     ("40.2%", "40.0%", "36.7%"),
                     "38.9%",
-                    None,
                 ),
-                (
-                    "comments",
-                    "Inline comments per PR",
-                    ("9.3", "9.1", "9.5"),
-                    "9.3",
-                    None,
+                PooledMetric(
+                    "comments", "Inline comments per PR", ("9.3", "9.1", "9.5"), "9.3"
                 ),
             ),
             # Over every pooled review: wall minutes and Claude Code's total_cost_usd.
             "minutes": {"median": 11.8, "low": 3.5, "high": 22.4},
             "cost_usd": {"median": 4.97, "p10": 2.49, "p90": 8.55},
+            "auth_modes": {"subscription": 33, "api": 12},
             "note": (
                 "Each lane pools the four PRs from its custom run at 3911db9e "
                 "with the other eleven PRs from its subset run at 3bab948e."
@@ -218,6 +233,20 @@ RELEASES = (
                 "Only the reruns count, and the "
                 "[run history](bench/README.md#measurement-history) lists what "
                 "changed between the builds.",
+            ),
+            # Release-specific notes the run history states under the lane table.
+            "history_note": (
+                "Pooled noise is not reported.",
+                "Three fixes separate 3bab948e from 3911db9e.",
+                "A review whose returned payload passed about 1,000,000 characters "
+                "now keeps its artifacts.",
+                "The default 40-finding challenge cap is gone.",
+                "The trace budget is now separate from the artifacts, which affects "
+                "benchmark instrumentation only.",
+                "The first two touch only large reviews: the four rerun PRs had 60 "
+                "to 67 findings, and no other PR reached the cap.",
+                "The release adds one later change, a clearer error when the session "
+                "sends malformed arguments.",
             ),
         },
     },
@@ -640,25 +669,6 @@ def scored_run_points(rows, top_anchor, ceiling):
 # ---------------------------------------------------------------------------
 # SVG builders
 # ---------------------------------------------------------------------------
-def _hbar_path(x, y, w, h, r, var):
-    """Horizontal bar rounded on the value (right) end only, square at baseline."""
-    if w <= 0:
-        return ""
-    r = min(r, w, h / 2)
-    if r <= 0:
-        d = f"M{x:.1f},{y:.1f} H{x + w:.1f} V{y + h:.1f} H{x:.1f} Z"
-    else:
-        d = (
-            f"M{x:.1f},{y:.1f} "
-            f"H{x + w - r:.1f} "
-            f"Q{x + w:.1f},{y:.1f} {x + w:.1f},{y + r:.1f} "
-            f"V{y + h - r:.1f} "
-            f"Q{x + w:.1f},{y + h:.1f} {x + w - r:.1f},{y + h:.1f} "
-            f"H{x:.1f} Z"
-        )
-    return f'<path class="bar" d="{d}" style="fill:var({var})" />'
-
-
 def _run_marker(x, y, tier, var, reverted, headline):
     """One data marker: shape = tier, fill = tool colour, faded if reverted,
     haloed if it is a gate headline. Filled marks carry a 2px surface ring."""
@@ -1052,7 +1062,9 @@ def _pooled_release_html(rel, rows):
             for v in (*lanes, f"{total} ({count})" if count else total)
         )
         + "</tr>"
-        for _key, name, lanes, total, count in pooled["metrics"]
+        for name, lanes, total, count in (
+            (m.title(pooled), m.lanes, m.pooled, m.count) for m in pooled["metrics"]
+        )
     )
     sources = "".join(
         f'<p class="release-leg-run">Lane {i}: '
@@ -2051,13 +2063,6 @@ td.vdelta {
 .chart .xtick {
   fill: var(--ink-secondary);
   font-size: 10.5px;
-}
-.chart .toollabel { fill: var(--ink-secondary); font-size: 10.5px; }
-.chart .toollabel.emph { fill: var(--ink-primary); font-weight: 700; }
-.chart .barval {
-  fill: var(--ink-primary);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
 }
 .chart .hit {
   fill: transparent;

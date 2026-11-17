@@ -406,18 +406,17 @@ Each lane pools the four PRs from its custom run at 3911db9e with the other elev
 Time and cost cover the 45 pooled reviews.
 Wall time, from each attempt's recorded start and end, had a median of 11.8 minutes and ranged from 3.5 to 22.4.
 Cost is Claude Code's own `total_cost_usd` for each review: median $4.97, 10th percentile $2.49, 90th percentile $8.55.
-<!-- bench:release:end -->
+33 of the 45 reviews ran on a subscription, so for those the cost figure is Claude Code's estimate at API prices, not billed spend.
+The other 12 are `auth_mode=api` spend.
 
 Pooled noise is not reported.
-Thirty-three of the 45 reviews ran on a subscription, so for those the cost figure is Claude Code's estimate at API prices, not billed spend.
-The other twelve are `auth_mode=api` spend.
-
 Three fixes separate 3bab948e from 3911db9e.
 A review whose returned payload passed about 1,000,000 characters now keeps its artifacts.
 The default 40-finding challenge cap is gone.
 The trace budget is now separate from the artifacts, which affects benchmark instrumentation only.
 The first two touch only large reviews: the four rerun PRs had 60 to 67 findings, and no other PR reached the cap.
 The release adds one later change, a clearer error when the session sends malformed arguments.
+<!-- bench:release:end -->
 
 ### Paired minis
 

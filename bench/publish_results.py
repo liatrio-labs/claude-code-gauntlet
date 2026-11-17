@@ -22,10 +22,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from bench.report import RELEASES  # noqa: E402
+from bench.report import DEFAULT_LEDGER, RELEASES, load_ledger  # noqa: E402
 
 FILES = {"README.md": ("pitch", "cost", "results"), "bench/README.md": ("release",)}
-WORDS = {2: "two", 3: "three", 4: "four", 5: "five", 6: "six"}
+WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six"}
 
 
 def _whole(value):
@@ -37,26 +37,45 @@ def _table(header, rows):
     return "\n".join([*lines, *("| " + " | ".join(row) + " |" for row in rows)])
 
 
-def render(release):
-    """Map each span name to its generated text."""
+def _checked(release, run_ids):
+    """Return the pooled entry once its shape agrees with itself and the ledger."""
     if "pooled" not in release:
         raise ValueError(f"{release['label']}: only a pooled release can be published")
     p = release["pooled"]
-    metrics = {
-        key: (label, lanes, pooled, count)
-        for key, label, lanes, pooled, count in p["metrics"]
-    }
+    keys = [m.key for m in p["metrics"]]
+    missing = [run for lane in p["lanes"] for run in lane if run not in run_ids]
+    problems = [
+        "repeated metric keys" if len(set(keys)) != len(keys) else "",
+        "a metric lacks a value per lane"
+        if any(len(m.lanes) != len(p["lanes"]) for m in p["metrics"])
+        else "",
+        "auth modes do not cover every review"
+        if sum(p["auth_modes"].values()) != len(p["lanes"]) * p["prs"]
+        else "",
+        f"lane runs missing from the ledger: {', '.join(missing)}" if missing else "",
+    ]
+    if any(problems):
+        raise ValueError(f"{release['label']}: " + "; ".join(filter(None, problems)))
+    return p
+
+
+def render(release, run_ids):
+    """Map each span name to its generated text."""
+    p = _checked(release, run_ids)
+    metrics = {m.key: m for m in p["metrics"]}
     lanes = len(p["lanes"])
-    count = WORDS.get(lanes, str(lanes))
-    minutes, cost = p["minutes"], p["cost_usd"]
+    times = "once" if lanes == 1 else f"{WORDS.get(lanes, lanes)} times"
+    runs = "one run" if lanes == 1 else f"{WORDS.get(lanes, lanes)} runs"
+    reviews = lanes * p["prs"]
+    minutes, cost, auth = p["minutes"], p["cost_usd"], p["auth_modes"]
 
     def pct(key):
-        return f"{_whole(metrics[key][2].rstrip('%'))}%"
+        return f"{_whole(metrics[key].pooled.rstrip('%'))}%"
 
     pitch = (
         "- **It catches real bugs.** On a [public benchmark](#benchmark-results) of "
         f"{p['prs']} real PRs with {p['bugs']} known bugs, it caught {pct('full')} of them "
-        f"over {count} runs, and {pct('unseen')} on the PRs outside our tuning set."
+        f"over {runs}, and {pct('unseen')} on the PRs outside our tuning set."
     )
     session = (
         f"The benchmark below ran from a session on {p['session']}.\n"
@@ -68,12 +87,12 @@ def render(release):
     )
     results = "\n\n".join(
         [
-            f"We reviewed the same {p['prs']} PRs {count} times on Claude Code "
+            f"We reviewed the same {p['prs']} PRs {times} on Claude Code "
             f"{p['claude_code']}, from a session on {p['session']}.\n"
             f"A pinned judge, `{p['judge']}`, scored every comment.",
             _table(
                 ("Measure", release["label"]),
-                [(label, pooled) for label, _lanes, pooled, _count in metrics.values()],
+                [(m.title(p), m.pooled) for m in metrics.values()],
             ),
             "\n".join(p["readme_note"]),
         ]
@@ -81,7 +100,7 @@ def render(release):
     history = "\n\n".join(
         [
             f"The {release['label']} result covers the Full test set: {p['prs']} PRs "
-            f"with {p['bugs']} bugs, reviewed {count} times.\n"
+            f"with {p['bugs']} bugs, reviewed {times}.\n"
             f"Session: {p['session']}; judge: `{p['judge']}`; Claude Code {p['claude_code']}.\n"
             + p["note"],
             "\n".join(
@@ -91,16 +110,24 @@ def render(release):
             _table(
                 ("Measure", *(f"Lane {i}" for i in range(1, lanes + 1)), "Pooled"),
                 [
-                    (label, *values, f"{pooled} ({n})" if n else pooled)
-                    for label, values, pooled, n in metrics.values()
+                    (
+                        m.title(p),
+                        *m.lanes,
+                        f"{m.pooled} ({m.count})" if m.count else m.pooled,
+                    )
+                    for m in metrics.values()
                 ],
             ),
-            f"Time and cost cover the {lanes * p['prs']} pooled reviews.\n"
+            f"Time and cost cover the {reviews} pooled reviews.\n"
             "Wall time, from each attempt's recorded start and end, had a median of "
             f"{minutes['median']} minutes and ranged from {minutes['low']} to {minutes['high']}.\n"
             "Cost is Claude Code's own `total_cost_usd` for each review: "
             f"median ${cost['median']:.2f}, 10th percentile ${cost['p10']:.2f}, "
-            f"90th percentile ${cost['p90']:.2f}.",
+            f"90th percentile ${cost['p90']:.2f}.\n"
+            f"{auth['subscription']} of the {reviews} reviews ran on a subscription, so for "
+            "those the cost figure is Claude Code's estimate at API prices, not billed spend.\n"
+            f"The other {auth['api']} are `auth_mode=api` spend.",
+            "\n".join(p["history_note"]),
         ]
     )
     return {"pitch": pitch, "cost": session, "results": results, "release": history}
@@ -132,7 +159,7 @@ def apply(text, names, spans):
     return text
 
 
-def main(argv=None, root=REPO_ROOT, releases=RELEASES):
+def main(argv=None, root=REPO_ROOT, releases=RELEASES, ledger=DEFAULT_LEDGER):
     parser = argparse.ArgumentParser(
         description="Publish benchmark results into the READMEs."
     )
@@ -140,17 +167,20 @@ def main(argv=None, root=REPO_ROOT, releases=RELEASES):
         "--check", action="store_true", help="exit 1 when a span is stale"
     )
     args = parser.parse_args(argv)
-    spans = render(releases[0])
-    stale = []
+    run_ids = {row.get("run_id") for row in load_ledger(ledger)}
+    spans = render(releases[0], run_ids)
+    pending = []
     for name, span_names in FILES.items():
         path = Path(root) / name
         text = path.read_text(encoding="utf-8")
         fresh = apply(text, span_names, spans)
-        if fresh == text:
-            continue
-        stale.append(name)
-        if not args.check:
+        if fresh != text:
+            pending.append((name, path, fresh))
+    # Every span renders before any file is written, so the files never disagree.
+    if not args.check:
+        for _name, path, fresh in pending:
             path.write_text(fresh, encoding="utf-8")
+    stale = [name for name, _path, _fresh in pending]
     verb = "stale" if args.check else "updated"
     for name in stale:
         print(f"{verb}: {name}")
