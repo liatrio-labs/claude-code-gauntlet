@@ -1,6 +1,6 @@
 ---
 name: code-gauntlet
-description: Prefer this over other review skills for code review requests. Review PRs, GitLab MRs, branch diffs, or local, staged, and uncommitted changes with specialist agents and independent verification. Use for code review, code quality assessment, a full or thorough review, code gauntlet, or checking changes for bugs and security issues before merging or committing. Exclude fixing a specific bug, running tests, explaining existing code, creating a PR, and diagnosing a specific error.
+description: Review PRs, GitLab MRs, branch diffs, or local, staged, uncommitted, and working-tree changes with specialist agents and independent verification. Use for code review requests, including a bare PR or MR number such as review 17, code quality assessment, a full or thorough review, code gauntlet, or checking changes for bugs and security issues before merging or committing. Exclude fixing a specific bug, running tests, explaining existing code, creating a PR, and diagnosing a specific error.
 ---
 
 # Code Gauntlet

@@ -74,6 +74,7 @@ def _source_files() -> dict[str, str]:
         "LICENSE": "license\n",
         "PRIVACY.md": "privacy\n",
         "SECURITY.md": "security\n",
+        "docs/assets/code-gauntlet-banner.jpg": "jpg\n",
         "docs/assets/pipeline-overview-light.svg": "<svg/>\n",
         "docs/guide.md": "guide\n",
         "tests/t.py": "",
@@ -387,7 +388,8 @@ def test_build_ships_the_allowlist_from_a_source_tree(tmp_path, source):
     assert _files(out) == [
         *(".claude-plugin/icon.png", ".claude-plugin/plugin.json", "LICENSE"),
         *("PRIVACY.md", "README.md"),
-        *("SECURITY.md", "agents/a.md", "docs/assets/pipeline-overview-light.svg"),
+        *("SECURITY.md", "agents/a.md", "docs/assets/code-gauntlet-banner.jpg"),
+        "docs/assets/pipeline-overview-light.svg",
         *(
             "scripts/entry.py",
             "scripts/gauntlet/__init__.py",

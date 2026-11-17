@@ -59,6 +59,7 @@ SHIPPED = (
     "LICENSE",
     "PRIVACY.md",
     "SECURITY.md",
+    "docs/assets/code-gauntlet-banner.jpg",
     "docs/assets/pipeline-overview-light.svg",
 )
 # Maintainer tooling inside shipped directories that no shipped command runs. The contract
