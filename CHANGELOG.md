@@ -2,6 +2,21 @@
 
 <!-- version list -->
 
+## v4.1.1 (2026-11-17)
+
+### Bug Fixes
+
+- Print agent output schemas with spaced JSON separators
+  ([#605](https://github.com/liatrio-labs/claude-code-gauntlet/pull/605),
+  [`f3238a4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f3238a4ea204cde96aad70c9e1f5bde22b6b478a))
+
+### Testing
+
+- Pin spaced JSON in generated agent schemas
+  ([#605](https://github.com/liatrio-labs/claude-code-gauntlet/pull/605),
+  [`f3238a4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f3238a4ea204cde96aad70c9e1f5bde22b6b478a))
+
+
 ## v4.1.0 (2026-11-17)
 
 ### Bug Fixes
