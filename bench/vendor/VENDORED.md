@@ -31,5 +31,5 @@ vendored scorer changes. Every matched dedup sibling leaves adjudication.
 The old epoch `dfc6cb4-v1` is available only in git history. Its recorded ledger
 rows and baseline scores retain that epoch and are never compared with active
 scores. `bench/golden/historical_baselines.json` preserves the recorded baseline
-scores for historical reporting. Active anchors, calibration and paid rescoring
-remain pending; no new paid measurement is claimed here.
+scores for historical reporting. Calibration and paid rescoring remain
+pending; no new paid measurement is claimed here.

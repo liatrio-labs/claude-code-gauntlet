@@ -66,8 +66,8 @@ METRIC_KEYS = (
 )
 
 # Tools plotted as points on the over-runs chart (in time order). Anchor rows
-# (anchor-claude, …) are excluded here — they surface as the reference *lines*
-# (top-anchor recall) and in the vs-anchors small multiples, not as our runs.
+# (anchor-claude, …) are excluded here — they surface only as the historical
+# top-anchor reference line, not as our runs.
 TRACKED_TOOLS = ("deep-review-v2", "deep-review-v3", "naive-anchor")
 
 # Per-tool display + colour. Colour encodes the *tool identity* on the over-runs
@@ -139,7 +139,8 @@ GATE2_RUN_ID = "custom-20260721-220637-5337f6c"
 # Newest first. Ordinary legs read their metrics from the ledger. Pooled releases
 # carry published metrics because aggregate ledger rows cannot select PRs within
 # a run; their source lanes bind the literals to an epoch's recorded runs.
-# Adding a future release is one more entry in this list.
+# Adding a future release is one more entry in this list, and the first entry is
+# what bench/publish_results.py writes into README.md and bench/README.md.
 RELEASES = (
     {
         "label": "v4.0",
@@ -159,30 +160,64 @@ RELEASES = (
                     "custom-20261116-034141-3911db9e",
                 ),
             ),
+            "prs": 15,
+            "bugs": 66,
+            "claude_code": "2.1.323",
+            "session": "Sonnet at low effort",
+            "judge": "claude-opus-4-5-20251101",
+            # Each metric: key, label, per-lane values, pooled value, pooled count.
             "metrics": (
                 (
-                    "Full test set recall (15 PRs, 66 bugs)",
+                    "full",
+                    "Known bugs caught, all 15 PRs (66 bugs)",
                     ("80.3%", "78.8%", "77.3%"),
-                    "78.8% (156/198)",
+                    "78.8%",
+                    "156/198",
                 ),
                 (
-                    "Fair test set recall (13 PRs, 50 bugs)",
+                    "fair",
+                    "Known bugs caught, 13 PRs with no overlap with our prompts (50 bugs)",
                     ("80.0%", "80.0%", "80.0%"),
-                    "80.0% (120/150)",
+                    "80.0%",
+                    "120/150",
                 ),
                 (
-                    "Unseen PRs recall (21 bugs)",
+                    "unseen",
+                    "Known bugs caught, PRs outside our six-PR tuning set (21 bugs)",
                     ("71.4%", "76.2%", "71.4%"),
-                    "73.0% (46/63)",
+                    "73.0%",
+                    "46/63",
                 ),
-                ("Strict precision", ("40.2%", "40.0%", "36.7%"), "38.9%"),
-                ("Inline comments per PR", ("9.3", "9.1", "9.5"), "9.3"),
+                (
+                    "precision",
+                    "Comments that match a known bug (strict precision), all 15 PRs",
+                    ("40.2%", "40.0%", "36.7%"),
+                    "38.9%",
+                    None,
+                ),
+                (
+                    "comments",
+                    "Inline comments per PR",
+                    ("9.3", "9.1", "9.5"),
+                    "9.3",
+                    None,
+                ),
             ),
-            "session": "Sonnet at effort low",
-            "judge": "claude-opus-4-5-20251101",
+            # Over every pooled review: wall minutes and Claude Code's total_cost_usd.
+            "minutes": {"median": 11.8, "low": 3.5, "high": 22.4},
+            "cost_usd": {"median": 4.97, "p10": 2.49, "p90": 8.55},
             "note": (
-                "Per lane, pools the four PRs from the custom run at 3911db9e "
-                "with the other eleven PRs from the subset run at 3bab948e."
+                "Each lane pools the four PRs from its custom run at 3911db9e "
+                "with the other eleven PRs from its subset run at 3bab948e."
+            ),
+            # Release-specific limits the README states under the results table.
+            "readme_note": (
+                "Eleven of the PRs ran on a pre-release build.",
+                "The fixes made after it matter only for reviews with more than 40 "
+                "findings, and the four PRs that large were rerun after the fixes.",
+                "Only the reruns count, and the "
+                "[run history](bench/README.md#measurement-history) lists what "
+                "changed between the builds.",
             ),
         },
     },
@@ -239,26 +274,6 @@ RELEASES = (
         "bar_check": False,
         "extra_note": "",
     },
-)
-
-# vs-anchors bars: (label, CSS var, emphasized, source key). "v3" pulls from the
-# latest v3 gate subset row, "v3_holdout" from the holdout confirmation row, "v2"
-# from baseline_v2, the rest from baselines.anchors.rows[<key>]. Our tool leads on
-# both the gate and the fresh-PR holdout, and both are emphasized.
-ANCHOR_TOOLS = (
-    ("deep-review v3", "--tool-v3", True, "v3"),
-    ("v3 · holdout", "--tool-v3", True, "v3_holdout"),
-    ("deep-review v2", "--tool-deepreview", True, "v2"),
-    ("claude", "--tool-claude", False, "claude"),
-    ("claude-code", "--tool-claude-code", False, "claude-code"),
-    ("coderabbit", "--tool-coderabbit", False, "coderabbit"),
-)
-
-# vs-anchors metrics: (v2/v3 ledger field, anchors.rows field, display title).
-# Recall and noise only — precision is reported-not-gated (see the table footnote).
-ANCHOR_METRICS = (
-    ("golden_recall", "recall", "Golden recall — higher is better"),
-    ("noise_rate", "noise_rate", "Noise rate — lower is better"),
 )
 
 
@@ -852,60 +867,6 @@ def build_runs_svg(points, top_anchor, v2_base, ceiling):
     return "\n".join(parts)
 
 
-def build_anchor_svg(title, bars):
-    """One small-multiple: horizontal bars (our tools + anchors) on a 0..1 scale.
-
-    ``bars`` is a list of ``(label, css_var, emphasized, value)``; None-valued bars
-    are dropped by the caller. Our tools lead and render emphasized."""
-    W = 330
-    label_w = 100
-    bar_x = label_w + 5
-    val_w = 48
-    bar_max_w = W - bar_x - val_w
-    top = 8
-    bar_h = 18
-    gap = 4
-    H = top + len(bars) * (bar_h + gap) + 4
-    parts = [
-        f'<svg class="chart" viewBox="0 0 {W} {H}" width="100%" '
-        f'preserveAspectRatio="xMidYMid meet" role="img" '
-        f'aria-label="{html.escape(title)} by tool">'
-    ]
-    for idx, (label, var, emph, v) in enumerate(bars):
-        y = top + idx * (bar_h + gap)
-        cls = "toollabel emph" if emph else "toollabel"
-        parts.append(
-            f'<text class="{cls}" x="{label_w:.1f}" y="{y + bar_h * 0.68:.1f}" '
-            f'text-anchor="end">{html.escape(label)}</text>'
-        )
-        if v is None:
-            continue
-        w = max(0.0, min(1.0, v)) * bar_max_w
-        parts.append(_hbar_path(bar_x, y, w, bar_h, 4, var))
-        parts.append(
-            f'<text class="barval" x="{bar_x + w + 5:.1f}" '
-            f'y="{y + bar_h * 0.68:.1f}">{fmt_pct(v)}</text>'
-        )
-        tip = html.escape(f"{label} · {title} · {fmt_pct(v)}")
-        parts.append(
-            f'<rect class="hit" x="{bar_x:.1f}" y="{y:.1f}" '
-            f'width="{max(w, 16):.1f}" height="{bar_h:.1f}" tabindex="0" '
-            f'role="img" aria-label="{tip}" data-tip="{tip}" />'
-        )
-    parts.append("</svg>")
-    return "\n".join(parts)
-
-
-def _anchor_value(src, v2v3_key, anchor_key, bv2, v3_row, v3_holdout_row, anchor_rows):
-    if src == "v3":
-        return (v3_row or {}).get(v2v3_key)
-    if src == "v3_holdout":
-        return (v3_holdout_row or {}).get(v2v3_key)
-    if src == "v2":
-        return bv2.get(v2v3_key)
-    return anchor_rows.get(src, {}).get(anchor_key)
-
-
 # ---------------------------------------------------------------------------
 # HTML section builders
 # ---------------------------------------------------------------------------
@@ -1086,9 +1047,12 @@ def _pooled_release_html(rel, rows):
     )
     metrics = "".join(
         f'<tr><th scope="row">{html.escape(name)}</th>'
-        + "".join(f'<td class="num">{html.escape(v)}</td>' for v in (*lanes, total))
+        + "".join(
+            f'<td class="num">{html.escape(v)}</td>'
+            for v in (*lanes, f"{total} ({count})" if count else total)
+        )
         + "</tr>"
-        for name, lanes, total in pooled["metrics"]
+        for _key, name, lanes, total, count in pooled["metrics"]
     )
     sources = "".join(
         f'<p class="release-leg-run">Lane {i}: '
@@ -1351,17 +1315,6 @@ def build_verdict_html(rows, baselines, ceiling):
     )
 
 
-def latest_holdout_row(rows):
-    """Most recent v3 holdout-tier run — the fresh-PR confirmation of the gate."""
-    cands = [
-        r
-        for r in rows
-        if str(r.get("tool", "")).startswith("deep-review")
-        and r.get("tier") == "holdout"
-    ]
-    return max(cands, key=lambda r: r.get("ts", "")) if cands else None
-
-
 def gate2_row(rows):
     """The Gate-2 final-config run, pinned by run_id (GATE2_RUN_ID).
 
@@ -1543,47 +1496,6 @@ def build_tiles_html(row, n_prs, n_goldens, runs=1):
     return f'<div class="tiles">{cells}</div>'
 
 
-def build_anchor_section_html(baselines, v3_row, v3_holdout_row):
-    anchor_rows = baselines.get("anchors", {}).get("rows", {})
-    bv2 = baselines.get("baseline_v2", {})
-    figs = []
-    for v2v3_key, anchor_key, title in ANCHOR_METRICS:
-        bars = [
-            (
-                label,
-                var,
-                emph,
-                _anchor_value(
-                    src, v2v3_key, anchor_key, bv2, v3_row, v3_holdout_row, anchor_rows
-                ),
-            )
-            for label, var, emph, src in ANCHOR_TOOLS
-        ]
-        bars = [b for b in bars if b[3] is not None]
-        figs.append(
-            f'<figure class="anchor-chart"><figcaption>{html.escape(title)}</figcaption>'
-            f"{build_anchor_svg(title, bars)}</figure>"
-        )
-    gate_n = (v3_row or {}).get("n_prs")
-    gate_desc = f"the same {gate_n}-PR gate" if gate_n else "the same gate"
-    holdout_n = (v3_holdout_row or {}).get("n_prs")
-    corroboration = (
-        f" The <em>v3 · holdout</em> bar ({holdout_n} fresh PRs) corroborates the lead "
-        "on unseen PRs."
-        if v3_holdout_row
-        else ""
-    )
-    caption = (
-        f"Every tool judged on {gate_desc}. <em>deep-review v3</em> leads on "
-        "recall while holding noise far below the external tools; <em>claude</em> is "
-        "the published Claude Code CLI row. Anchors are the upstream tools\u2019 stored "
-        "candidates re-judged under our pinned judge." + corroboration
-    )
-    return (
-        f'<div class="anchor-row">{"".join(figs)}</div><p class="caption">{caption}</p>'
-    )
-
-
 def build_table_html(groups, top_anchor, ceiling):
     heads = [
         "",
@@ -1737,9 +1649,6 @@ _DARK_VIZ_VARS = {
     "--series-noise": "#d55181",
     "--series-precision": "#008300",
     "--tool-deepreview": "#3987e5",
-    "--tool-claude": "#008300",
-    "--tool-claude-code": "#d55181",
-    "--tool-coderabbit": "#c98500",
     "--tool-v3": "#d95926",
     "--tool-naive": "#898781",
     "--ref-goal": "#0ca30c",
@@ -1769,9 +1678,6 @@ CSS = (
   --series-noise: #e87ba4;
   --series-precision: #008300;
   --tool-deepreview: #2a78d6;
-  --tool-claude: #008300;
-  --tool-claude-code: #e87ba4;
-  --tool-coderabbit: #eda100;
   --tool-v3: #eb6834;
   --tool-naive: #898781;
   --ref-goal: #006300;
@@ -2163,27 +2069,6 @@ td.vdelta {
   outline-offset: 1px;
   border-radius: 3px;
 }
-/* Anchor small multiples */
-.anchor-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-.anchor-chart {
-  flex: 1 1 260px;
-  min-width: 260px;
-  margin: 0;
-  background: var(--surface);
-  border: 1px solid var(--hairline);
-  border-radius: 10px;
-  padding: 14px 14px 8px;
-}
-.anchor-chart figcaption {
-  color: var(--ink-secondary);
-  font-size: 12.5px;
-  font-weight: 600;
-  margin-bottom: 4px;
-}
 /* Table */
 .table-wrap {
   overflow-x: auto;
@@ -2348,9 +2233,6 @@ def _render_historical_html(rows, baselines, sha, generated, *, active_html=""):
         {"ledger": rows, "baselines": baselines}, ensure_ascii=False
     ).replace("<", "\\u003c")
 
-    _v2_row, v3_gate_row, _ng = subset_comparison(rows, baselines)
-    v3_holdout_row = latest_holdout_row(rows)
-
     # Historical tiles follow a release's defining leg rather than a fixed tier;
     # smaller offline fixtures fall back to their latest gate-grade subset.
     rel, leg, release_row = current_release_leg(rows)
@@ -2435,8 +2317,6 @@ def _render_historical_html(rows, baselines, sha, generated, *, active_html=""):
         build_runs_svg(points, top_anchor, v2_base, ceiling),
         "</div>",
         f'<p class="caption">{runs_caption}</p>',
-        "<h2>vs anchors (judge-only)</h2>",
-        build_anchor_section_html(baselines, v3_gate_row, v3_holdout_row),
         history_html,
         "<h2>Run ledger</h2>",
         build_table_html(groups, top_anchor, ceiling),

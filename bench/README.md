@@ -21,7 +21,7 @@ The active epoch is `e616e84-v1`: 173 bugs over the fixed 50 PRs, with core
 primary (158 full / 66 gate). All (173 / 73) and strict (139 / 58) are also
 reported. `dfc6cb4-v1` survives in git history; its recorded scores retain
 their original epoch and are never compared with active scores.
-New baseline, anchor, variability and diagnostic noise measurements are pending.
+New baseline, variability and diagnostic noise measurements are pending.
 Recorded measurement status is in [MEASUREMENT.md](MEASUREMENT.md).
 
 ```bash
@@ -188,7 +188,7 @@ lands in exactly one of three buckets:
 both from the judge's aggregate counts (not a per-review average). The
 judge and adjudicator are the same pinned, dated snapshot at temperature 0
 (see [Keys and the judge](#keys-and-the-judge)), applied identically to
-bench runs and to the anchor tools — scoring is blind to which tool
+every run, including the naive anchor — scoring is blind to which tool
 produced a candidate.
 
 Canonical observations, precision, ledger rows and promotion inputs remain inline.
@@ -381,10 +381,47 @@ credentials is prohibited by the usage policy.
 
 ## Measurement history
 
-The [release table](../README.md#benchmark-results) reports the current v4.0 benchmark.
-The paired minis below use the same six PRs as the v3.1 baseline.
-The v4.0.0 row is the Full test set (15 PRs, 66 bugs), pooled across three lanes, not a mini.
-The [committed ledger](experiments.jsonl) records these runs:
+The [release table](../README.md#benchmark-results) reports the current release.
+The [committed ledger](experiments.jsonl) records every run below.
+
+### Current release
+
+<!-- bench:release:begin -->
+The v4.0 result covers the Full test set: 15 PRs with 66 bugs, reviewed three times.
+Session: Sonnet at low effort; judge: `claude-opus-4-5-20251101`; Claude Code 2.1.323.
+Each lane pools the four PRs from its custom run at 3911db9e with the other eleven PRs from its subset run at 3bab948e.
+
+- Lane 1: `subset-20261115-230910-3bab948e` + `custom-20261116-034129-3911db9e`
+- Lane 2: `subset-20261115-231648-3bab948e` + `custom-20261116-034135-3911db9e`
+- Lane 3: `subset-20261115-231656-3bab948e` + `custom-20261116-034141-3911db9e`
+
+| Measure | Lane 1 | Lane 2 | Lane 3 | Pooled |
+| --- | --- | --- | --- | --- |
+| Known bugs caught, all 15 PRs (66 bugs) | 80.3% | 78.8% | 77.3% | 78.8% (156/198) |
+| Known bugs caught, 13 PRs with no overlap with our prompts (50 bugs) | 80.0% | 80.0% | 80.0% | 80.0% (120/150) |
+| Known bugs caught, PRs outside our six-PR tuning set (21 bugs) | 71.4% | 76.2% | 71.4% | 73.0% (46/63) |
+| Comments that match a known bug (strict precision), all 15 PRs | 40.2% | 40.0% | 36.7% | 38.9% |
+| Inline comments per PR | 9.3 | 9.1 | 9.5 | 9.3 |
+
+Time and cost cover the 45 pooled reviews.
+Wall time, from each attempt's recorded start and end, had a median of 11.8 minutes and ranged from 3.5 to 22.4.
+Cost is Claude Code's own `total_cost_usd` for each review: median $4.97, 10th percentile $2.49, 90th percentile $8.55.
+<!-- bench:release:end -->
+
+Pooled noise is not reported.
+Thirty-three of the 45 reviews ran on a subscription, so for those the cost figure is Claude Code's estimate at API prices, not billed spend.
+The other twelve are `auth_mode=api` spend.
+
+Three fixes separate 3bab948e from 3911db9e.
+A review whose returned payload passed about 1,000,000 characters now keeps its artifacts.
+The default 40-finding challenge cap is gone.
+The trace budget is now separate from the artifacts, which affects benchmark instrumentation only.
+The first two touch only large reviews: the four rerun PRs had 60 to 67 findings, and no other PR reached the cap.
+The release adds one later change, a clearer error when the session sends malformed arguments.
+
+### Paired minis
+
+These minis use the same six PRs as the v3.1 baseline.
 
 | Release | Date | Run identifiers | Recall | Noise |
 | --- | --- | --- | --- | --- |
@@ -393,32 +430,6 @@ The [committed ledger](experiments.jsonl) records these runs:
 | v3.24 | 2026-09-01 | `mini-20260901-170531-2cb9104` | 0.633 | 0.179 |
 | v3.26 | 2026-09-03 | `mini-20260903-204424-e8b3af7` | 0.667 | 0.138 |
 | v3.42.49 baseline | 2026-10-20 | `mini-20261020-030509-839b1886` | 0.633 | 0.065 |
-| v4.0.0 (Full test set) | 2026-11-16 | Lane 1: `subset-20261115-230910-3bab948e` + `custom-20261116-034129-3911db9e`; Lane 2: `subset-20261115-231648-3bab948e` + `custom-20261116-034135-3911db9e`; Lane 3: `subset-20261115-231656-3bab948e` + `custom-20261116-034141-3911db9e` | 0.788 (156/198) | — |
-
-Each v4.0 lane pools the four PRs from its custom run at 3911db9e with the other eleven PRs from its subset run at 3bab948e.
-Three fixes separate 3bab948e from 3911db9e.
-A review whose returned payload passed about 1,000,000 characters now keeps its artifacts.
-The default 40-finding challenge cap is gone.
-The trace budget is now separate from the artifacts, which affects benchmark instrumentation only.
-The first two touch only large reviews: the four rerun PRs had 60 to 67 findings, and no other PR reached the cap.
-The release adds one later change, a clearer error when the session sends malformed arguments.
-Session: Sonnet at effort low; judge: `claude-opus-4-5-20251101`; Claude Code 2.1.323.
-Pooled noise is not reported.
-
-The other v4.0 measures, pooled over the same three lanes:
-
-| Measure | Lane 1 | Lane 2 | Lane 3 | Pooled |
-| --- | --- | --- | --- | --- |
-| Recall, 13 PRs with no prompt overlap (50 bugs) | 80.0% | 80.0% | 80.0% | 80.0% (120/150) |
-| Recall, PRs outside the six-PR mini set (21 bugs) | 71.4% | 76.2% | 71.4% | 73.0% (46/63) |
-| Strict precision, all 15 PRs | 40.2% | 40.0% | 36.7% | 38.9% |
-| Inline comments per PR, all 15 PRs | 9.3 | 9.1 | 9.5 | 9.3 |
-
-Time and cost cover the 45 pooled reviews.
-Wall time, from each attempt's recorded start and end, had a median of 11.8 minutes and ranged from 3.5 to 22.4.
-Cost is Claude Code's own `total_cost_usd` for each review: median $4.97, 10th percentile $2.49, 90th percentile $8.55.
-Thirty-three of the 45 reviews ran on a subscription, so for those the figure is Claude Code's estimate at API prices, not billed spend.
-The other twelve are `auth_mode=api` spend.
 
 The v3.12 row combines a five-PR mini and its one-PR completion leg.
 The v3.26 mini met the pre-registered 0.24 noise ceiling.
@@ -429,7 +440,8 @@ That matches what we would expect from v3.24's wider injection filtering.
 That change only adds eliminations.
 These mini runs do not establish causation.
 
-`report.py` renders release summaries, run-level recall and noise, tokens, cost, and anchor comparisons from the ledger and baselines.
+`report.py` renders release summaries, run-level recall and noise, tokens and cost from the ledger and baselines.
+Its first `RELEASES` entry is the current release: `python3 bench/publish_results.py` writes it into this file and the top-level README, and a bench test fails when either drifts.
 Active scores and the read-only historical release dashboard appear in separate epoch sections.
 The header identifies the latest ledger entry, so committed inputs reproduce the committed page.
 
