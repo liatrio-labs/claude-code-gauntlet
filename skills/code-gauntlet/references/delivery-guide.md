@@ -133,11 +133,11 @@ wrapper arguments above, but unstamped findings post no comments.
 **Fields:**
 
 The poster prepares text and applies host-specific containment in code. Pass the original fields
-unchanged. See [delivery rendering](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.1/docs/delivery-rendering.md#outbound-text-preparation)
+unchanged. See [delivery rendering](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.2/docs/delivery-rendering.md#outbound-text-preparation)
 when maintaining escaping or host rendering.
 
 - `review_summary` carries prepared counts, ordered `{lead_id, bullet}` records, and remainder data. The poster checks containment, then filters by id. Unsafe or invalid summaries omit the index with a recorded gap; inline comments still post.
-- `review_body`: the public PR summary text: counts, selected findings index, and any remainder. The change summary stays in Change Context. Code applies UTF-8 body budgets and preserves the footer; see [delivery rendering](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.1/docs/delivery-rendering.md#posted-body-budgets).
+- `review_body`: the public PR summary text: counts, selected findings index, and any remainder. The change summary stays in Change Context. Code applies UTF-8 body budgets and preserves the footer; see [delivery rendering](https://github.com/liatrio-labs/claude-code-gauntlet/blob/v4.1.2/docs/delivery-rendering.md#posted-body-budgets).
 - `findings` — selected findings
   - `file` — relative path in repository
   - `line` — line number in diff (new version)
