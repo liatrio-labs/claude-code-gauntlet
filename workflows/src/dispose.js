@@ -147,8 +147,8 @@ export function acceptGroupingReply(reply, ids, findings) {
   const placements = new Map();
   for (const members of replyGroups) for (const f of members) placements.set(f.id, (placements.get(f.id) ?? 0) + 1);
   // A finding placed in several groups reports several defects. It yields the lead to a member placed
-  // once that is as severe and joins one group. When it must lead, its text covers every defect, so
-  // its groups merge into one comment. Either way each defect posts once at its own severity.
+  // once that is as severe and joins one group. When it would lead every group it is in, its text covers
+  // all their defects, so they merge into its comment. Either way each defect posts once at its severity.
   const leadOf = (members) => {
     const top = chooseGroupLead(members);
     const single = members.filter((f) => placements.get(f.id) === 1);
@@ -160,11 +160,9 @@ export function acceptGroupingReply(reply, ids, findings) {
   const leadFor = (group, members = group.members) => group.lead && members.includes(group.lead) ? group.lead : leadOf(members);
   for (const shared of rankFindings(findings.filter((f) => placements.get(f.id) > 1))) {
     const holding = candidates.filter((group) => group.members.includes(shared));
-    if (holding.length < 2 || !holding.some((group) => leadFor(group) === shared)) continue;
-    candidates = [...candidates.filter((group) => !holding.includes(group)), {
-      members: [...new Set(holding.flatMap((group) => group.members))],
-      lead: holding.find((group) => group.lead)?.lead ?? shared,
-    }];
+    if (holding.length < 2 || !holding.every((group) => leadFor(group) === shared)) continue;
+    candidates = [...candidates.filter((group) => !holding.includes(group)),
+      { members: [...new Set(holding.flatMap((group) => group.members))], lead: shared }];
   }
   const claimed = new Set();
   const groups = [];
