@@ -3910,28 +3910,31 @@ function acceptGroupingReply(reply, ids, findings) {
   if (!Array.isArray(reply.groups)) return reject('groups is not an array');
   if (Object.keys(reply).some((key) => key !== 'groups')) return reject('unexpected reply field');
   const known = new Set(ids);
-  const placements = new Map();
   for (const group of reply.groups) {
     if (!object(group) || !Array.isArray(group.finding_ids)) return reject('invalid group');
     if (new Set(group.finding_ids).size !== group.finding_ids.length) return reject('repeated id in a group');
-    for (const id of group.finding_ids) {
-      if (!known.has(id)) return reject('unknown id');
-      placements.set(id, (placements.get(id) ?? 0) + 1);
-    }
+    if (group.finding_ids.some((id) => !known.has(id))) return reject('unknown id');
   }
   const byId = new Map(findings.map((f) => [f.id, f]));
+  const replyGroups = reply.groups.map((group) => group.finding_ids.map((id) => byId.get(id)).filter(Boolean))
+    .filter((members) => members.length >= 2);
+  const placements = new Map();
+  for (const members of replyGroups) for (const f of members) placements.set(f.id, (placements.get(f.id) ?? 0) + 1);
   const leadOf = (members) => {
+    const top = chooseGroupLead(members);
     const single = members.filter((f) => placements.get(f.id) === 1);
-    return chooseGroupLead(single.length ? single : members);
+    const alt = single.length ? chooseGroupLead(single) : null;
+    return alt && groupSeverityRank(alt) >= groupSeverityRank(top) ? alt : top;
   };
   const claimed = new Set();
-  return { error: null, groups: reply.groups
-    .map((group) => group.finding_ids.map((id) => byId.get(id)).filter(Boolean))
-    .filter((members) => members.length)
-    .sort((a, b) => compareFindings(leadOf(a), leadOf(b)))
-    .map((members) => members.filter((f) => !claimed.has(f.id) && claimed.add(f.id)))
-    .filter((members) => members.length >= 2)
-    .map((members) => ({ members, lead: leadOf(members) })) };
+  const groups = [];
+  for (const members of replyGroups.sort((a, b) => compareFindings(leadOf(a), leadOf(b)))) {
+    const open = members.filter((f) => !claimed.has(f.id));
+    if (open.length < 2) continue;
+    for (const f of open) claimed.add(f.id);
+    groups.push({ members: open, lead: leadOf(open) });
+  }
+  return { error: null, groups };
 }
 // --- outboundText.js ---
 const OUTBOUND_NAMED_ENTITIES = deepFreeze({

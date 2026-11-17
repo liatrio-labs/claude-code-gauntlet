@@ -75,20 +75,25 @@ test('invalid grouping falls back without dropping members, including dispatch f
   assert.deepEqual(out.gaps, ['grouping: dispatch failed: offline; same-lines grouping used']);
 });
 
-test('a finding placed in two groups joins one and leads neither', () => {
-  const at = (id, line, severity) => makeFinding(id, { file: 'src/auth.ts', line_start: line, line_end: line, severity });
-  const findings = [at('narrow', 61, 'low'), at('both', 61, 'high'), at('other', 48, 'low')];
-  const out = disposeFindings({ findings, grouping_reply: { groups: [
-    { finding_ids: ['narrow', 'both'] }, { finding_ids: ['both', 'other'] },
-  ] } });
+test('a finding placed in two groups joins the first-ranked one and yields its lead', () => {
+  const at = (id, line, severity = 'low', extra = {}) => makeFinding(id, { file: 'src/auth.ts', line_start: line, line_end: line, severity, ...extra });
+  const groupsOf = (findings, groups, grouping_ids) => disposeFindings({ findings, grouping_ids, grouping_reply: { groups } }).groups
+    .map((g) => [g.lead_id, ...g.finding_ids.filter((id) => id !== g.lead_id).sort()]).sort();
+  // 'both' outranks 'narrow' on its id tie-break, so only the placement rule keeps it from leading.
+  const findings = [at('narrow', 61), at('both', 61), at('other', 48)];
+  const shared = [{ finding_ids: ['narrow', 'both'] }, { finding_ids: ['both', 'other'] }];
+  assert.deepEqual(groupsOf(findings, shared), [['narrow'], ['other', 'both']]);
+  const out = disposeFindings({ findings, grouping_reply: { groups: shared } });
   assert.equal(out.stats.grouping, 'model');
-  assert.deepEqual(out.groups.map((g) => g.lead_id).sort(), ['narrow', 'other']);
-  assert.equal(out.groups.filter((g) => g.finding_ids.includes('both')).length, 1);
   assert.deepEqual(disposeFindings(out), out);
-  const same = disposeFindings({ findings, grouping_reply: { groups: [
-    { finding_ids: ['narrow', 'both'] }, { finding_ids: ['both', 'narrow'] },
-  ] } });
-  assert.deepEqual(same.groups.map((g) => g.finding_ids.length).sort(), [1, 2]);
+  assert.deepEqual(groupsOf(findings, [{ finding_ids: ['narrow', 'both'] }, { finding_ids: ['both', 'narrow'] }]), [['both', 'narrow'], ['other']]);
+  // A group left with one actionable member claims nothing, so the shared finding still joins its other group.
+  const later = [at('both', 61), at('late', 70)];
+  assert.deepEqual(groupsOf(later, [{ finding_ids: ['both', 'held'] }, { finding_ids: ['both', 'late'] }], ['both', 'late', 'held']),
+    [['both', 'late']]);
+  // A shared finding more severe than every member placed once keeps the lead.
+  const severe = [at('narrow', 61), at('both', 61, 'critical', { dimension: 'security' }), at('other', 48)];
+  assert.deepEqual(groupsOf(severe, shared), [['both', 'narrow'], ['other']]);
 });
 
 test('replay filters removed ids after validating the whole grouping reply', () => {
