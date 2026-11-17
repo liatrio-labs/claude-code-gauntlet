@@ -6,7 +6,7 @@ function groupTier(finding) {
   return (finding.report_tag ?? finding.report_destination ?? finding.admission?.tier ?? 'main') === 'main' ? 1 : 0;
 }
 
-function groupSeverityRank(finding) {
+export function groupSeverityRank(finding) {
   const index = SEVERITY_ORDER.indexOf(asText(finding.severity).trim().toLowerCase());
   return index < 0 ? 0 : SEVERITY_ORDER.length - index;
 }

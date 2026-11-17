@@ -4,7 +4,7 @@ import { locationAllows, deliveryAllows } from './location.js';
 import { consolidateCrossAgent } from './filterFindings.js';
 import { eliminationDecisions, traceDecision, admissionDetail } from './measurementTrace.js';
 import { hasAdmission } from './admission.js';
-import { chooseGroupLead, groupDelivery } from './groupRanking.js';
+import { chooseGroupLead, compareFindings, groupDelivery, groupSeverityRank, rankFindings } from './groupRanking.js';
 
 const DELIVERABLE_CHALLENGES = ['survived'];
 
@@ -76,7 +76,7 @@ export function disposeFindings(challenged) {
       members: [primary, ...corroborators], consolidation_key: primary.consolidation_key,
     })) : accepted.groups;
   for (const group of candidates) {
-    const primary = chooseGroupLead(group.members);
+    const primary = group.lead ?? chooseGroupLead(group.members);
     for (const member of group.members) {
       member.consolidation_key = group.consolidation_key ?? primary.id;
       member.consolidation_primary = member === primary;
@@ -136,17 +136,43 @@ export function acceptGroupingReply(reply, ids, findings) {
   if (!Array.isArray(reply.groups)) return reject('groups is not an array');
   if (Object.keys(reply).some((key) => key !== 'groups')) return reject('unexpected reply field');
   const known = new Set(ids);
-  const seen = new Set();
   for (const group of reply.groups) {
     if (!object(group) || !Array.isArray(group.finding_ids)) return reject('invalid group');
-    for (const id of group.finding_ids) {
-      if (!known.has(id)) return reject('unknown id');
-      if (seen.has(id)) return reject('overlapping id');
-      seen.add(id);
-    }
+    if (new Set(group.finding_ids).size !== group.finding_ids.length) return reject('repeated id in a group');
+    if (group.finding_ids.some((id) => !known.has(id))) return reject('unknown id');
   }
   const byId = new Map(findings.map((f) => [f.id, f]));
-  return { error: null, groups: reply.groups.map((group) => ({
-    members: group.finding_ids.map((id) => byId.get(id)).filter(Boolean),
-  })).filter((group) => group.members.length >= 2) };
+  const replyGroups = reply.groups.map((group) => group.finding_ids.map((id) => byId.get(id)).filter(Boolean))
+    .filter((members) => members.length >= 2);
+  const placements = new Map();
+  for (const members of replyGroups) for (const f of members) placements.set(f.id, (placements.get(f.id) ?? 0) + 1);
+  // A finding placed in several groups reports several defects. It yields the lead to a member placed
+  // once that is as severe and joins one group. When it must lead, its text covers every defect, so
+  // its groups merge into one comment. Either way each defect posts once at its own severity.
+  const leadOf = (members) => {
+    const top = chooseGroupLead(members);
+    const single = members.filter((f) => placements.get(f.id) === 1);
+    const alt = single.length ? chooseGroupLead(single) : null;
+    return alt && groupSeverityRank(alt) >= groupSeverityRank(top) ? alt : top;
+  };
+  // A merged group keeps the shared finding as its lead, since only its text covers every merged defect.
+  let candidates = replyGroups.map((members) => ({ members, lead: null }));
+  const leadFor = (group, members = group.members) => group.lead && members.includes(group.lead) ? group.lead : leadOf(members);
+  for (const shared of rankFindings(findings.filter((f) => placements.get(f.id) > 1))) {
+    const holding = candidates.filter((group) => group.members.includes(shared));
+    if (holding.length < 2 || !holding.some((group) => leadFor(group) === shared)) continue;
+    candidates = [...candidates.filter((group) => !holding.includes(group)), {
+      members: [...new Set(holding.flatMap((group) => group.members))],
+      lead: holding.find((group) => group.lead)?.lead ?? shared,
+    }];
+  }
+  const claimed = new Set();
+  const groups = [];
+  for (const group of candidates.sort((a, b) => compareFindings(leadFor(a), leadFor(b)))) {
+    const open = group.members.filter((f) => !claimed.has(f.id));
+    if (open.length < 2) continue;
+    for (const f of open) claimed.add(f.id);
+    groups.push({ members: open, lead: leadFor(group, open) });
+  }
+  return { error: null, groups };
 }
