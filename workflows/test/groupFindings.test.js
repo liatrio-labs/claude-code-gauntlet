@@ -94,6 +94,9 @@ test('a finding placed in two groups posts each defect once', () => {
   // A shared finding more severe than every member placed once leads, and its groups merge into its comment.
   const severe = [at('narrow', 61), at('both', 61, 'critical', { dimension: 'security' }), at('other', 48)];
   assert.deepEqual(groupsOf(severe, shared), [['both', 'narrow', 'other']]);
+  // The merged comment keeps that lead even beside an equally severe member placed once.
+  const peer = [...severe.slice(0, 2), at('other', 48, 'critical', { dimension: 'security' })];
+  assert.deepEqual(groupsOf(peer, shared), [['both', 'narrow', 'other']]);
 });
 
 test('replay filters removed ids after validating the whole grouping reply', () => {

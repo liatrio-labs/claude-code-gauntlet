@@ -3926,19 +3926,23 @@ function acceptGroupingReply(reply, ids, findings) {
     const alt = single.length ? chooseGroupLead(single) : null;
     return alt && groupSeverityRank(alt) >= groupSeverityRank(top) ? alt : top;
   };
-  let candidates = replyGroups;
+  let candidates = replyGroups.map((members) => ({ members, lead: null }));
+  const leadFor = (group, members = group.members) => group.lead && members.includes(group.lead) ? group.lead : leadOf(members);
   for (const shared of rankFindings(findings.filter((f) => placements.get(f.id) > 1))) {
-    const holding = candidates.filter((members) => members.includes(shared));
-    if (holding.length < 2 || !holding.some((members) => leadOf(members) === shared)) continue;
-    candidates = [...candidates.filter((members) => !holding.includes(members)), [...new Set(holding.flat())]];
+    const holding = candidates.filter((group) => group.members.includes(shared));
+    if (holding.length < 2 || !holding.some((group) => leadFor(group) === shared)) continue;
+    candidates = [...candidates.filter((group) => !holding.includes(group)), {
+      members: [...new Set(holding.flatMap((group) => group.members))],
+      lead: holding.find((group) => group.lead)?.lead ?? shared,
+    }];
   }
   const claimed = new Set();
   const groups = [];
-  for (const members of candidates.sort((a, b) => compareFindings(leadOf(a), leadOf(b)))) {
-    const open = members.filter((f) => !claimed.has(f.id));
+  for (const group of candidates.sort((a, b) => compareFindings(leadFor(a), leadFor(b)))) {
+    const open = group.members.filter((f) => !claimed.has(f.id));
     if (open.length < 2) continue;
     for (const f of open) claimed.add(f.id);
-    groups.push({ members: open, lead: leadOf(open) });
+    groups.push({ members: open, lead: leadFor(group, open) });
   }
   return { error: null, groups };
 }
