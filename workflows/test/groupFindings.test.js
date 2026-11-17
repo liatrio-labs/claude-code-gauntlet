@@ -62,7 +62,6 @@ test('invalid grouping falls back without dropping members, including dispatch f
   for (const grouping_reply of [undefined, null, [], {}, { groups: null }, { groups: [], extra: 1 },
     { groups: [null] },
     { groups: [{ finding_ids: ['F107', 'unknown'] }] },
-    { groups: [{ finding_ids: ['F107', 'F114'] }, { finding_ids: ['F114', 'F107'] }] },
     { groups: [{ finding_ids: ['F107', 'F107'] }] },
   ]) {
     const out = disposeFindings({ findings, grouping_reply });
@@ -74,6 +73,22 @@ test('invalid grouping falls back without dropping members, including dispatch f
   const out = disposeFindings({ findings, ...failed });
   assertPositional(out);
   assert.deepEqual(out.gaps, ['grouping: dispatch failed: offline; same-lines grouping used']);
+});
+
+test('a finding placed in two groups joins one and leads neither', () => {
+  const at = (id, line, severity) => makeFinding(id, { file: 'src/auth.ts', line_start: line, line_end: line, severity });
+  const findings = [at('narrow', 61, 'low'), at('both', 61, 'high'), at('other', 48, 'low')];
+  const out = disposeFindings({ findings, grouping_reply: { groups: [
+    { finding_ids: ['narrow', 'both'] }, { finding_ids: ['both', 'other'] },
+  ] } });
+  assert.equal(out.stats.grouping, 'model');
+  assert.deepEqual(out.groups.map((g) => g.lead_id).sort(), ['narrow', 'other']);
+  assert.equal(out.groups.filter((g) => g.finding_ids.includes('both')).length, 1);
+  assert.deepEqual(disposeFindings(out), out);
+  const same = disposeFindings({ findings, grouping_reply: { groups: [
+    { finding_ids: ['narrow', 'both'] }, { finding_ids: ['both', 'narrow'] },
+  ] } });
+  assert.deepEqual(same.groups.map((g) => g.finding_ids.length).sort(), [1, 2]);
 });
 
 test('replay filters removed ids after validating the whole grouping reply', () => {

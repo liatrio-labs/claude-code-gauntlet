@@ -4,7 +4,7 @@ import { locationAllows, deliveryAllows } from './location.js';
 import { consolidateCrossAgent } from './filterFindings.js';
 import { eliminationDecisions, traceDecision, admissionDetail } from './measurementTrace.js';
 import { hasAdmission } from './admission.js';
-import { chooseGroupLead, groupDelivery } from './groupRanking.js';
+import { chooseGroupLead, compareFindings, groupDelivery } from './groupRanking.js';
 
 const DELIVERABLE_CHALLENGES = ['survived'];
 
@@ -76,7 +76,7 @@ export function disposeFindings(challenged) {
       members: [primary, ...corroborators], consolidation_key: primary.consolidation_key,
     })) : accepted.groups;
   for (const group of candidates) {
-    const primary = chooseGroupLead(group.members);
+    const primary = group.lead ?? chooseGroupLead(group.members);
     for (const member of group.members) {
       member.consolidation_key = group.consolidation_key ?? primary.id;
       member.consolidation_primary = member === primary;
@@ -136,17 +136,28 @@ export function acceptGroupingReply(reply, ids, findings) {
   if (!Array.isArray(reply.groups)) return reject('groups is not an array');
   if (Object.keys(reply).some((key) => key !== 'groups')) return reject('unexpected reply field');
   const known = new Set(ids);
-  const seen = new Set();
+  const placements = new Map();
   for (const group of reply.groups) {
     if (!object(group) || !Array.isArray(group.finding_ids)) return reject('invalid group');
+    if (new Set(group.finding_ids).size !== group.finding_ids.length) return reject('repeated id in a group');
     for (const id of group.finding_ids) {
       if (!known.has(id)) return reject('unknown id');
-      if (seen.has(id)) return reject('overlapping id');
-      seen.add(id);
+      placements.set(id, (placements.get(id) ?? 0) + 1);
     }
   }
+  // A finding placed in several groups reports several defects. It joins one group and leads none,
+  // so each defect posts once, by a finding that reports only that defect.
   const byId = new Map(findings.map((f) => [f.id, f]));
-  return { error: null, groups: reply.groups.map((group) => ({
-    members: group.finding_ids.map((id) => byId.get(id)).filter(Boolean),
-  })).filter((group) => group.members.length >= 2) };
+  const leadOf = (members) => {
+    const single = members.filter((f) => placements.get(f.id) === 1);
+    return chooseGroupLead(single.length ? single : members);
+  };
+  const claimed = new Set();
+  return { error: null, groups: reply.groups
+    .map((group) => group.finding_ids.map((id) => byId.get(id)).filter(Boolean))
+    .filter((members) => members.length)
+    .sort((a, b) => compareFindings(leadOf(a), leadOf(b)))
+    .map((members) => members.filter((f) => !claimed.has(f.id) && claimed.add(f.id)))
+    .filter((members) => members.length >= 2)
+    .map((members) => ({ members, lead: leadOf(members) })) };
 }
