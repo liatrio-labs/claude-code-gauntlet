@@ -205,6 +205,13 @@ def test_quality_basis_contract(
         )
 
 
+def test_agent_schemas_print_spaced_json():
+    # The directory's Validate check holds a plugin whose files carry a compact {a,b} run.
+    for path, contract in gen.discovery_targets(gen.load_registry(str(ROOT))).items():
+        block = re.search(r"```json\n(.*?)\n```", contract, re.DOTALL)[1]
+        assert block == json.dumps(json.loads(block)), path
+
+
 def test_disposition_row_generates_consumers(registry_tree, invoke):
     source = registry_tree / "workflows/src/registry.js"
     original = source.read_text(encoding="utf-8")

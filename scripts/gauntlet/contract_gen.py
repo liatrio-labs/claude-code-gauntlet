@@ -309,8 +309,8 @@ def discovery_targets(registry: Mapping[str, Any]) -> dict[str, str]:
     for contract in registry["discoveryContracts"]:
         agent = contract["agentType"]
         schema = contract["schema"]
-        # Spaced separators: the plugin directory's validator reads a compact `{a,b,...}`
-        # run as a shell brace pattern it cannot expand and holds the plugin for review.
+        # Spaced separators: the plugin directory's Validate check read a compact
+        # `{a,b,...}` run here as a shell brace pattern and held the plugin for review.
         parts = [
             "Return findings by value as JSON:",
             "```json\n" + json.dumps(schema) + "\n```",
@@ -421,7 +421,7 @@ def rewrite_required_column(text: str, registry: Mapping[str, Any]) -> str:
             for field, schema in structural.items():
                 if field != "anchor" and field in registry["discoveryFindingTypes"]:
                     out_lines.append(
-                        f"| `{field}` | {schema['type']} | {field_required_status(field, registry)} | {schema.get('description', json.dumps(schema, separators=(',', ':')))} |"
+                        f"| `{field}` | {schema['type']} | {field_required_status(field, registry)} | {schema.get('description', json.dumps(schema))} |"
                     )
     text_out = "\n".join(out_lines)
     if text.endswith("\n"):
