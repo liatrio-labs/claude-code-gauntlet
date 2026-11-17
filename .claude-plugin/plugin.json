@@ -1,0 +1,48 @@
+{
+  "name": "code-gauntlet",
+  "displayName": "Code Gauntlet",
+  "icon": "./.claude-plugin/icon.png",
+  "version": "4.1.0",
+  "description": "Adversarial code review for Claude Code. Seven specialist agents review each GitHub PR, GitLab MR or local change for bugs, security, tests and cross-file impact, and an eighth reads the changed code their findings missed. Every finding must survive verification, a skeptical validator and a blind challenge before it posts.",
+  "author": {
+    "name": "Liatrio Labs",
+    "url": "https://github.com/liatrio-labs"
+  },
+  "homepage": "https://github.com/liatrio-labs/claude-code-gauntlet",
+  "repository": "https://github.com/liatrio-labs/claude-code-gauntlet",
+  "license": "Apache-2.0",
+  "documentationUrl": "https://github.com/liatrio-labs/claude-code-gauntlet/blob/main/README.md",
+  "supportUrl": "https://github.com/liatrio-labs/claude-code-gauntlet/issues",
+  "privacyPolicyUrl": "https://github.com/liatrio-labs/claude-code-gauntlet/blob/main/PRIVACY.md",
+  "agents": [
+    "./agents/artifact-writer.md",
+    "./agents/bug-detector.md",
+    "./agents/challenger.md",
+    "./agents/change-summarizer.md",
+    "./agents/code-simplifier.md",
+    "./agents/conventions-and-intent.md",
+    "./agents/cross-file-impact.md",
+    "./agents/executor.md",
+    "./agents/gap-hunter.md",
+    "./agents/grouper.md",
+    "./agents/security-reviewer.md",
+    "./agents/test-analyzer.md",
+    "./agents/type-design-analyzer.md",
+    "./agents/validator.md"
+  ],
+  "keywords": [
+    "adversarial",
+    "ai-agents",
+    "ai-code-review",
+    "claude",
+    "claude-code",
+    "claude-code-plugin",
+    "code-review",
+    "developer-tools",
+    "github",
+    "gitlab",
+    "multi-agent",
+    "pull-requests",
+    "security"
+  ]
+}
